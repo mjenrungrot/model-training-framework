@@ -252,13 +252,14 @@ class SBATCHTemplateEngine:
             double_brace_pattern = re.compile(r"\{\{(\w+)\}\}")
             content = double_brace_pattern.sub(r"${\1}", template_content)
 
-            # Second pass: substitute variables in {VAR} format
-            single_brace_pattern = re.compile(r"\{(\w+)\}")
+            # Second pass: substitute variables in {VAR} format (but not ${VAR})
+            # Use negative lookbehind to avoid matching ${VAR}
+            single_brace_pattern = re.compile(r"(?<!\$)\{(\w+)\}")
             content = single_brace_pattern.sub(r"${\1}", content)
 
             # Create template and substitute
             template = string.Template(content)
-            rendered = template.safe_substitute(context_dict)
+            rendered = template.substitute(context_dict)
 
             # Check for unsubstituted variables
             unsubstituted = re.findall(r"\$\{(\w+)\}", rendered)

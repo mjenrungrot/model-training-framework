@@ -62,8 +62,9 @@ def timeout(seconds: float) -> Iterator[None]:
     # Save original handler
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
 
-    # Set alarm
-    signal.alarm(int(seconds))
+    # Set alarm (minimum 1 second for signal.alarm)
+    alarm_seconds = max(1, int(seconds))
+    signal.alarm(alarm_seconds)
 
     try:
         yield
