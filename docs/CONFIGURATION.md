@@ -246,7 +246,7 @@ experiments = list(grid_search.generate_experiments())
       }
     },
     {
-      "name": "optimization_search", 
+      "name": "optimization_search",
       "description": "Optimization hyperparameters",
       "parameters": {
         "training.learning_rate": [1e-5, 5e-5, 1e-4, 5e-4],
@@ -296,46 +296,46 @@ slurm:
   # Job identification
   job_name: "large_model_training"
   account: "research_group"
-  
+
   # Resource allocation
   nodes: 2
   ntasks_per_node: 4
   cpus_per_task: 8
   mem: "128G"
   mem_per_cpu: "4G"
-  
+
   # GPU configuration
   gres: "gpu:v100:4"
   gpu_bind: "closest"
-  
+
   # Time limits
   time_limit: "72:00:00"
   begin: "now+1hour"
-  
+
   # Partitions and QoS
   partition: "gpu_large"
   qos: "high_priority"
   reservation: "special_event"
-  
+
   # Constraints and features
   constraint: "v100&nvlink"
   exclude: "node001,node002"
   nodelist: "node[010-020]"
-  
+
   # Notifications
   mail_type: "BEGIN,END,FAIL,TIME_LIMIT"
   mail_user: "researcher@university.edu"
-  
+
   # Advanced options
   exclusive: true
   requeue: false
   array: "1-10%5"  # Array job with 10 tasks, max 5 concurrent
   dependency: "afterok:12345"
-  
+
   # Output and error files
   output: "/path/to/logs/%j_%a.out"
   error: "/path/to/logs/%j_%a.err"
-  
+
   # Additional SBATCH directives
   additional_args:
     - "--signal=USR1@300"  # Send signal 5 minutes before timeout
@@ -422,7 +422,7 @@ logging:
 slurm:
   account: "${SLURM_ACCOUNT}"
   partition: "${SLURM_PARTITION}"
-  
+
 custom_params:
   model_path: "${MODEL_CACHE}/pretrained_models"
   output_path: "${RESULTS_DIR}/${experiment_name}"
@@ -484,7 +484,7 @@ final_config = config_manager.compose_configs(
 model:
   hidden_size: 1024
   num_layers: 24
-  
+
 training:
   batch_size: 16  # Smaller batch size for large model
   gradient_accumulation_steps: 4
@@ -498,7 +498,7 @@ performance:
 slurm:
   gres: "gpu:a100:2"
   mem: "64G"
-  
+
 performance:
   num_workers: 8
   pin_memory: true
@@ -586,11 +586,11 @@ model:
   hidden_size: 512
   num_layers: 6
   num_heads: 8
-  
+
   # Regularization
   dropout: 0.1
   layer_norm_eps: 1e-12
-  
+
   # Initialization
   initializer_range: 0.02
 ```

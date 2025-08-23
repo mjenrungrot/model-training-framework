@@ -31,6 +31,7 @@ ModelTrainingFramework(
 ```
 
 **Parameters:**
+
 - `project_root`: Root directory of your project
 - `config_dir`: Directory containing configuration files (default: `{project_root}/configs`)
 - `slurm_template_path`: Path to SLURM template file (optional)
@@ -53,6 +54,7 @@ run_grid_search(
 ```
 
 **Parameters:**
+
 - `parameter_grids`: List of parameter grids to explore
 - `base_config`: Base configuration as dictionary
 - `base_config_path`: Path to base configuration file
@@ -143,6 +145,7 @@ add_parameter(key: str, values: List[Any]) -> None
 ```
 
 **Parameters:**
+
 - `key`: Parameter key (supports dot notation, e.g., "model.hidden_size")
 - `values`: List of possible values to explore
 
@@ -211,6 +214,7 @@ set_naming_strategy(strategy: NamingStrategy) -> None
 ```
 
 **Naming Strategies:**
+
 - `NamingStrategy.HASH_BASED`: Use hash of parameters
 - `NamingStrategy.DESCRIPTIVE`: Use parameter names and values
 - `NamingStrategy.SEQUENTIAL`: Use sequential numbering

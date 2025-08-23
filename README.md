@@ -2,6 +2,7 @@
 Tests for the SLURM launcher script (`slurm/launcher.py`).
 
 This test suite verifies the functionality of the SLURM job launcher, covering:
+
 - Configuration file handling (YAML parsing, validation).
 - SBATCH script generation (template rendering, placeholder substitution).
 - Main execution flow (argument parsing, pre-flight checks, conditional logic based on flags like --generate-sbatch-only and --dry-run, job submission).
@@ -38,6 +39,7 @@ from pytest_mock import MockerFixture
 from slurm import launcher
 
 # --- Constants for Testing ---
+
 TEST_JOB_NAME = "test_experiment_job"
 TEST_PYTHON_SCRIPT_REL_PATH = "scripts/test_train.py"  # Relative path used in launcher
 TEST_CONFIG_NAME = TEST_JOB_NAME
@@ -58,10 +60,10 @@ model:
   type: resnet
 """
 TEST_TEMPLATE_CONTENT = """#!/bin/bash
-#SBATCH --job-name={{JOB_NAME}}
-#SBATCH --output={{OUTPUT}}
-#SBATCH --error={{ERROR}}
-#SBATCH --comment={{COMMIT_HASH}}
+# SBATCH --job-name={{JOB_NAME}}
+# SBATCH --output={{OUTPUT}}
+# SBATCH --error={{ERROR}}
+# SBATCH --comment={{COMMIT_HASH}}
 {{REQUEUE_DIRECTIVE}}
 
 echo "Running {{PYTHON_SCRIPT_PATH}} with config {{CONFIG_NAME}} at commit {{COMMIT_HASH}}"
@@ -70,7 +72,6 @@ srun python {{PYTHON_SCRIPT_PATH}} --config-name={{CONFIG_NAME}}
 FAKE_COMMIT_HASH = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f60000"
 
 # --- Fixture for Test Environment Setup/Teardown ---
-
 
 @pytest.fixture
 def test_env(mocker: MockerFixture) -> Iterator[dict[str, Any]]:
@@ -136,9 +137,7 @@ def test_env(mocker: MockerFixture) -> Iterator[dict[str, Any]]:
     # Teardown: Remove the temporary directory
     shutil.rmtree(test_dir)
 
-
 # --- Tests for load_yaml_config ---
-
 
 def test_load_yaml_config_valid(test_env: dict[str, Any], mocker: MockerFixture) -> None:
     """Test `load_yaml_config` successfully loads a valid YAML file."""
@@ -154,7 +153,6 @@ def test_load_yaml_config_valid(test_env: dict[str, Any], mocker: MockerFixture)
     # builtins.open mock check might be less straightforward with mocker,
     # focus on the result and is_file call.
 
-
 def test_load_yaml_config_not_found(mocker: MockerFixture) -> None:
     """Test `load_yaml_config` exits when the YAML file is not found."""
     mock_is_file = mocker.patch("pathlib.Path.is_file", return_value=False)
@@ -167,7 +165,6 @@ def test_load_yaml_config_not_found(mocker: MockerFixture) -> None:
     assert mock_exit.call_count == 2
     mock_exit.assert_called_with(1)  # Check the argument of the *last* call
 
-
 def test_load_yaml_config_empty(test_env: dict[str, Any], mocker: MockerFixture) -> None:
     """Test `load_yaml_config` returns an empty dict for an empty YAML file."""
     mocker.patch("pathlib.Path.is_file", return_value=True)
@@ -175,7 +172,6 @@ def test_load_yaml_config_empty(test_env: dict[str, Any], mocker: MockerFixture)
 
     config = launcher.load_yaml_config(test_env["config_path"])
     assert config == {}  # Expect an empty dict
-
 
 def test_load_yaml_config_invalid_syntax(test_env: dict[str, Any], mocker: MockerFixture) -> None:
     """Test `load_yaml_config` exits when the YAML file has syntax errors."""
@@ -186,9 +182,7 @@ def test_load_yaml_config_invalid_syntax(test_env: dict[str, Any], mocker: Mocke
     launcher.load_yaml_config(test_env["config_path"])
     mock_exit.assert_called_once_with(1)
 
-
 # --- Tests for generate_sbatch_script ---
-
 
 def test_generate_sbatch_script_success(test_env: dict[str, Any]) -> None:
     """
@@ -221,17 +215,17 @@ def test_generate_sbatch_script_success(test_env: dict[str, Any]) -> None:
 
     # Modify the template content for this test to include SLURM placeholders
     template_with_slurm = """#!/bin/bash
-#SBATCH --job-name={{JOB_NAME}}
-#SBATCH --output={{OUTPUT}}
-#SBATCH --error={{ERROR}}
-#SBATCH --account={{ACCOUNT}}
-#SBATCH --partition={{PARTITION}}
-#SBATCH --nodes={{NODES}}
-#SBATCH --ntasks-per-node={{NTASKS_PER_NODE}}
-#SBATCH --gpus-per-node={{GPUS_PER_NODE}}
-#SBATCH --cpus-per-task={{CPUS_PER_TASK}}
-#SBATCH --mem={{MEM}}
-#SBATCH --time={{TIME}}
+# SBATCH --job-name={{JOB_NAME}}
+# SBATCH --output={{OUTPUT}}
+# SBATCH --error={{ERROR}}
+# SBATCH --account={{ACCOUNT}}
+# SBATCH --partition={{PARTITION}}
+# SBATCH --nodes={{NODES}}
+# SBATCH --ntasks-per-node={{NTASKS_PER_NODE}}
+# SBATCH --gpus-per-node={{GPUS_PER_NODE}}
+# SBATCH --cpus-per-task={{CPUS_PER_TASK}}
+# SBATCH --mem={{MEM}}
+# SBATCH --time={{TIME}}
 {{REQUEUE_DIRECTIVE}}
 
 echo "Running {{PYTHON_SCRIPT_PATH}} with config {{CONFIG_NAME}}"
@@ -283,7 +277,6 @@ srun python {{PYTHON_SCRIPT_PATH}} --config-name={{CONFIG_NAME}}
     assert "{{ERROR}}" not in content
     assert "{{REQUEUE_DIRECTIVE}}" not in content
 
-
 def test_generate_sbatch_script_template_not_found(test_env: dict[str, Any], mocker: MockerFixture) -> None:
     """Test `generate_sbatch_script` exits if the template file is not found."""
     # Mock sys.exit without side effect to prevent test abortion
@@ -300,7 +293,6 @@ def test_generate_sbatch_script_template_not_found(test_env: dict[str, Any], moc
     )
     # Expect 1 call: generate_sbatch_script catches the FileNotFoundError and exits
     mock_exit.assert_called_once_with(1)
-
 
 def test_generate_sbatch_script_write_error(test_env: dict[str, Any], mocker: MockerFixture) -> None:
     """Test `generate_sbatch_script` exits if writing the output file fails."""
@@ -350,11 +342,10 @@ def test_generate_sbatch_script_write_error(test_env: dict[str, Any], mocker: Mo
     # Expect 1 call: only for the write OSError
     mock_exit.assert_called_once_with(1)
 
-
 # --- Tests for main execution flow ---
 
-
 # Helper function to create mock args namespace
+
 def create_mock_args(**kwargs: Any) -> argparse.Namespace:
     """
     Helper function to create a mock `argparse.Namespace` object.
@@ -404,8 +395,8 @@ def create_mock_args(**kwargs: Any) -> argparse.Namespace:
 
     return argparse.Namespace(**base_args)
 
-
 # Use a class to group main tests for better organization (optional)
+
 class TestMainFlow:
     """
     Groups tests for the main execution flow (`launcher.main`) of the launcher script.
@@ -1757,9 +1748,7 @@ parameters:
         switch_calls = [c for c in self.mock_run.call_args_list if c.args[0][0:2] == ["git", "switch"]]
         assert not switch_calls
 
-
 # --- Tests for Branch Management ---
-
 
 class TestBranchManagement:
     """Tests for the branch management functionality (cleanup, parsing, etc.)."""
@@ -1801,7 +1790,7 @@ class TestBranchManagement:
         git_output = """
   main
   feature/some-feature
-* slurm-job/experiment1/1736865600/abc12345
+- slurm-job/experiment1/1736865600/abc12345
   slurm-job/experiment2/1736865700/def67890
   slurm-job/experiments/deep/test/1736865800/12345678
 """
@@ -2149,7 +2138,6 @@ class TestBranchManagement:
         assert created_branch is not None
         assert delete_branch_calls[0].args[0][3] == created_branch
 
-
 class TestGitLockingMechanism:
     """Tests for git lock file management and checking."""
 
@@ -2257,7 +2245,6 @@ class TestGitLockingMechanism:
         # Verify sbatch was never called (job submission was blocked)
         sbatch_calls = [call for call in mock_run.call_args_list if "sbatch" in str(call)]
         assert len(sbatch_calls) == 0
-
 
 class TestExpandConfigPatterns:
     """Test the expand_config_patterns function for glob pattern support."""
@@ -2443,7 +2430,6 @@ class TestExpandConfigPatterns:
         assert "experiments/experiment15_test" in result
         assert "experiments/experiment16_test" not in result
         assert "experiments/experiment20_test" not in result
-
 
 if __name__ == "__main__":
     pytest.main([__file__])

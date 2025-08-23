@@ -14,7 +14,7 @@ repos:
         description: "Run Ruff linter on Python files"
         args: [--fix, --exit-non-zero-on-fix]
         types_or: [python, pyi]
-        
+
       # Run the formatter
       - id: ruff-format
         name: ruff (format)
@@ -29,76 +29,76 @@ repos:
       - id: trailing-whitespace
         name: trim trailing whitespace
         description: Trim trailing whitespace
-        
+
       - id: end-of-file-fixer
         name: fix end of files
         description: Ensure files end with a newline
-        
+
       - id: check-merge-conflict
         name: check for merge conflicts
         description: Check for files that contain merge conflict strings
-        
+
       - id: check-case-conflict
         name: check for case conflicts
         description: Check for files with names that would conflict on case-insensitive filesystems
-        
+
       # YAML/JSON checks
       - id: check-yaml
         name: check yaml
         description: Check YAML file syntax
         args: [--allow-multiple-documents]
-        
+
       - id: check-json
         name: check json
         description: Check JSON file syntax
-        
+
       - id: check-toml
         name: check toml
         description: Check TOML file syntax
-        
+
       # Python-specific checks
       - id: check-ast
         name: check python ast
         description: Check whether files parse as valid Python
-        
+
       - id: check-docstring-first
         name: check docstring is first
         description: Check that docstrings come first in Python modules
-        
+
       - id: debug-statements
         name: debug statements (Python)
         description: Check for debugger imports and py37+ breakpoint() calls
-        
+
       - id: name-tests-test
         name: name tests test
         description: Verify test files are named correctly
         args: [--pytest-test-first]
-        
+
       # Security checks
       - id: detect-private-key
         name: detect private key
         description: Detect presence of private keys
-        
+
       # File size checks
       - id: check-added-large-files
         name: check for added large files
         description: Prevent giant files from being committed
         args: ['--maxkb=1000']  # 1MB limit
-        
+
       # Additional checks
       - id: check-symlinks
         name: check symlinks
         description: Check for broken symlinks
-        
+
       - id: destroyed-symlinks
         name: detect destroyed symlinks
         description: Detect symlinks which are changed or deleted
-        
+
       - id: mixed-line-ending
         name: mixed line ending
         description: Check for mixed line endings
         args: [--fix=lf]
-        
+
       - id: fix-byte-order-marker
         name: fix byte order marker
         description: Remove UTF-8 byte order marker
@@ -180,16 +180,6 @@ repos:
         description: Upgrade Python syntax to newer versions
         args: [--py312-plus]
 
-  # Docstring formatting
-  - repo: https://github.com/PyCQA/docformatter
-    rev: v1.7.5
-    hooks:
-      - id: docformatter
-        name: docformatter
-        description: Format docstrings
-        args: [--in-place, --wrap-summaries=88, --wrap-descriptions=88]
-        exclude: ^(tests/|examples/)
-
   # Conventional commits
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v3.4.0  # Updated to latest version
@@ -238,7 +228,7 @@ exclude: |
 ci:
   autofix_commit_msg: |
     [pre-commit.ci] auto fixes from pre-commit.com hooks
-    
+
     for more information, see https://pre-commit.ci
   autofix_prs: true
   autoupdate_branch: ""

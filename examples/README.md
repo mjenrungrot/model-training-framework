@@ -34,16 +34,19 @@ pip install torch lightning-fabric pyyaml gitpython
 **Purpose**: Demonstrates the simplest way to set up and run training with the framework.
 
 **Features**:
+
 - Configuration management
 - Simple model and trainer setup
 - Basic logging and checkpointing
 
 **Run**:
+
 ```bash
 python examples/basic_training.py
 ```
 
 **What it does**:
+
 - Creates a simple MLP model for MNIST-like data
 - Sets up training configuration programmatically
 - Runs training for 10 epochs with checkpointing
@@ -54,17 +57,20 @@ python examples/basic_training.py
 **Purpose**: Shows how to use the parameter grid search functionality for hyperparameter exploration.
 
 **Features**:
+
 - Multiple parameter grids
 - Different naming strategies
 - Experiment generation and validation
 - Advanced grid search configuration
 
 **Run**:
+
 ```bash
 python examples/grid_search.py
 ```
 
 **What it does**:
+
 - Creates multiple parameter grids (learning rates, model sizes, training configs)
 - Demonstrates different naming strategies (hash-based, descriptive)
 - Generates all parameter combinations
@@ -76,17 +82,20 @@ python examples/grid_search.py
 **Purpose**: Demonstrates submitting multiple training jobs to SLURM with automatic management.
 
 **Features**:
+
 - Batch job submission
 - SLURM template generation
 - Git branch management
 - Job monitoring and status checking
 
 **Run**:
+
 ```bash
 python examples/slurm_batch.py
 ```
 
 **What it does**:
+
 - Creates multiple experiment configurations
 - Sets up SLURM launcher with templates
 - Demonstrates dry-run validation
@@ -100,17 +109,20 @@ python examples/slurm_batch.py
 **Purpose**: Shows how to extend the GenericTrainer for specialized training scenarios.
 
 **Features**:
+
 - Multi-task learning implementation
 - Custom training and validation steps
 - Training callbacks (early stopping, LR scheduling)
 - Advanced metric tracking
 
 **Run**:
+
 ```bash
 python examples/custom_trainer.py
 ```
 
 **What it does**:
+
 - Implements a multi-task model with two classification heads
 - Creates a custom trainer with task-specific loss weighting
 - Demonstrates training callbacks for early stopping and LR scheduling
@@ -121,17 +133,20 @@ python examples/custom_trainer.py
 **Purpose**: Demonstrates the framework's fault-tolerant training capabilities with SLURM preemption.
 
 **Features**:
+
 - Preemption signal handling
 - Automatic checkpoint saving and loading
 - Deterministic resume with RNG state
 - Extended training simulation
 
 **Run**:
+
 ```bash
 python examples/preemption_handling.py
 ```
 
 **What it does**:
+
 - Sets up extended training that takes several minutes
 - Simulates SLURM preemption signal (SIGUSR1) after 30 seconds
 - Demonstrates automatic checkpoint saving on preemption
@@ -229,6 +244,7 @@ python -m model_training_framework.scripts.train --config {{config_path}}
 ### Common Patterns
 
 #### Configuration Management
+
 ```python
 from model_training_framework import ModelTrainingFramework
 
@@ -242,18 +258,20 @@ experiment_config = config_manager.create_experiment_config(config_dict)
 ```
 
 #### Custom Training Steps
+
 ```python
 class YourTrainer(GenericTrainer):
     def training_step(self, batch, batch_idx):
         # Your training logic here
         return {'loss': loss, 'accuracy': accuracy}
-    
+
     def validation_step(self, batch, batch_idx):
         # Your validation logic here
         return {'val_loss': val_loss, 'val_accuracy': val_accuracy}
 ```
 
 #### Parameter Grid Search
+
 ```python
 from model_training_framework.config import ParameterGridSearch, ParameterGrid
 

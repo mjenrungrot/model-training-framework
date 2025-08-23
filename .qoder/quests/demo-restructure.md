@@ -7,8 +7,9 @@ This design outlines the restructuring of the `examples/` directory into a `demo
 ## Current State Analysis
 
 The existing `examples/` directory contains:
+
 - `basic_training.py` - Simple training setup
-- `grid_search.py` - Parameter grid search functionality  
+- `grid_search.py` - Parameter grid search functionality
 - `slurm_batch.py` - SLURM job submission and management
 - `custom_trainer.py` - Custom trainer implementation
 - `preemption_handling.py` - Fault-tolerant training
@@ -68,6 +69,7 @@ demo/
 **Scenario Description**: A data scientist wants to quickly prototype and test model training locally before scaling to HPC environments.
 
 **Key Features**:
+
 - Simple local training setup
 - Basic configuration management
 - Single-node training
@@ -77,6 +79,7 @@ demo/
 **Components**:
 
 #### `basic_model_training.py`
+
 ```mermaid
 flowchart TD
     A[Load Configuration] --> B[Create Simple Model]
@@ -88,10 +91,12 @@ flowchart TD
 ```
 
 **Configuration Examples**:
+
 - `mnist_config.yaml` - Complete MNIST training setup
 - `simple_config.yaml` - Minimal configuration template
 
 **Learning Objectives**:
+
 - Framework installation and setup
 - Basic configuration file structure
 - Local training execution
@@ -105,6 +110,7 @@ flowchart TD
 **Scenario Description**: A research team needs to run hyperparameter optimization experiments across multiple compute nodes using SLURM job scheduling.
 
 **Key Features**:
+
 - SLURM integration and job submission
 - Hyperparameter grid search
 - Multi-node distributed training
@@ -114,6 +120,7 @@ flowchart TD
 **Components**:
 
 #### Workflow Architecture
+
 ```mermaid
 flowchart LR
     A[Parameter Grid Definition] --> B[Job Configuration]
@@ -125,23 +132,27 @@ flowchart LR
 ```
 
 #### `distributed_training.py`
+
 - Multi-GPU setup
 - Data parallel training
 - Gradient synchronization
 - Resource allocation optimization
 
 #### `hyperparameter_optimization.py`
+
 - Grid search implementation
 - Bayesian optimization integration
 - Experiment tracking
 - Results comparison
 
 **Configuration Templates**:
+
 - `slurm_template.sh` - SLURM job script template
 - `grid_search_config.yaml` - Parameter grid definitions
 - `distributed_config.yaml` - Multi-node training settings
 
 **Learning Objectives**:
+
 - SLURM job submission workflow
 - Distributed training setup
 - Parameter optimization strategies
@@ -155,6 +166,7 @@ flowchart LR
 **Scenario Description**: A production ML team requires a robust, fault-tolerant training pipeline with custom components, preemption handling, and comprehensive monitoring for continuous model development.
 
 **Key Features**:
+
 - Production-grade fault tolerance
 - Custom trainer implementations
 - Advanced monitoring and logging
@@ -165,6 +177,7 @@ flowchart LR
 **Components**:
 
 #### Production Architecture
+
 ```mermaid
 flowchart TB
     subgraph "Training Pipeline"
@@ -173,19 +186,19 @@ flowchart TB
         C --> D[Fault-Tolerant Training]
         D --> E[Advanced Monitoring]
     end
-    
+
     subgraph "Custom Components"
         F[Custom Callbacks]
         G[Custom Metrics]
         H[Custom Loss Functions]
     end
-    
+
     subgraph "External Systems"
         I[Experiment Tracking]
         J[Model Registry]
         K[Alerting System]
     end
-    
+
     C --> F
     C --> G
     C --> H
@@ -195,28 +208,33 @@ flowchart TB
 ```
 
 #### `production_pipeline.py`
+
 - End-to-end training pipeline
 - Error handling and recovery
 - Performance monitoring
 - Automated experiment management
 
 #### `fault_tolerant_training.py`
+
 - Preemption signal handling
 - Checkpoint recovery mechanisms
 - State preservation
 - Deterministic resume
 
 #### Custom Components
+
 - `custom_trainer.py` - Multi-task learning implementation
 - `custom_callbacks.py` - Production callbacks (early stopping, learning rate scheduling)
 - `custom_metrics.py` - Domain-specific metrics
 
 **Configuration Examples**:
+
 - `production_config.yaml` - Production-ready configuration
 - `preemption_config.yaml` - Fault tolerance settings
 - `monitoring_config.yaml` - Logging and tracking setup
 
 **Learning Objectives**:
+
 - Production pipeline design
 - Fault tolerance implementation
 - Custom component development
@@ -226,11 +244,13 @@ flowchart TB
 ## Migration Strategy
 
 ### Phase 1: Directory Creation and Structure Setup
+
 1. Create new `demo/` directory structure
 2. Set up README files for each scenario
 3. Create configuration templates
 
 ### Phase 2: Content Migration and Enhancement
+
 1. Migrate existing examples to appropriate scenarios:
    - `basic_training.py` → `example1_beginner_local/basic_model_training.py`
    - `grid_search.py` + `slurm_batch.py` → `example2_intermediate_hpc/`
@@ -240,6 +260,7 @@ flowchart TB
 3. Create additional supporting files
 
 ### Phase 3: Documentation and Testing
+
 1. Update README files with comprehensive documentation
 2. Create configuration examples
 3. Test all scenarios independently
@@ -259,21 +280,25 @@ flowchart TB
 ## Implementation Considerations
 
 ### Configuration Management
+
 - Each scenario maintains its own configuration templates
 - Shared configuration patterns documented in main README
 - Progressive complexity in configuration options
 
 ### Code Reusability
+
 - Common utilities shared across scenarios
 - Clear import paths and dependencies
 - Minimal code duplication
 
 ### Documentation Strategy
+
 - Scenario-specific README files with clear learning paths
 - Code comments explaining scenario-specific concepts
 - Cross-references between related scenarios
 
 ### Testing and Validation
+
 - Each scenario includes validation scripts
 - Integration tests for SLURM functionality
 - Local execution fallbacks for development
@@ -286,33 +311,36 @@ flowchart TD
     B -->|Beginner| C[Example 1: Local Development]
     B -->|Intermediate| D[Example 2: HPC Usage]
     B -->|Advanced| E[Example 3: Production Pipeline]
-    
+
     C --> F[Learn Basics]
     F --> G{Ready for HPC?}
     G -->|Yes| D
     G -->|No| H[Continue Local Development]
-    
+
     D --> I[Master HPC Workflows]
     I --> J{Need Production Features?}
     J -->|Yes| E
     J -->|No| K[Scale HPC Usage]
-    
+
     E --> L[Production Deployment]
 ```
 
 ## Benefits of New Structure
 
 ### For Users
+
 - **Clear Learning Path**: Progressive complexity from local to production
 - **Scenario-Based Learning**: Real-world use cases with complete contexts
 - **Reduced Cognitive Load**: Each scenario is self-contained and focused
 
 ### For Maintainers
+
 - **Organized Codebase**: Better separation of concerns
 - **Easier Updates**: Scenario-specific changes don't affect others
 - **Improved Testing**: Independent validation for each use case
 
 ### For Framework Adoption
+
 - **Lower Barrier to Entry**: Beginners can start with simple scenarios
 - **Comprehensive Coverage**: All major use cases are demonstrated
 - **Production Ready**: Advanced scenarios show real-world implementation patterns

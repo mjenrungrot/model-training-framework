@@ -5,7 +5,7 @@ A comprehensive Python package for machine learning model training, job launchin
 ## Features
 
 - **Fault-Tolerant Training**: Preemption-safe training with instruction-level checkpointing
-- **SLURM Integration**: Seamless job launching and management on HPC clusters  
+- **SLURM Integration**: Seamless job launching and management on HPC clusters
 - **Parameter Grid Search**: Automatic enumeration and naming of experiment configurations
 - **Configuration Management**: Structured configuration system with validation
 - **Experiment Tracking**: Comprehensive logging and reproducibility features
@@ -158,7 +158,7 @@ grid1 = ParameterGrid("optimization_search")
 grid1.add_parameter("optimizer.lr", [1e-4, 5e-4, 1e-3])
 grid1.add_parameter("optimizer.weight_decay", [0.0, 0.01])
 
-grid2 = ParameterGrid("architecture_search") 
+grid2 = ParameterGrid("architecture_search")
 grid2.add_parameter("model.dropout", [0.1, 0.2, 0.3])
 grid2.add_parameter("model.hidden_size", [256, 512, 1024])
 
@@ -194,7 +194,7 @@ def training_step(trainer, batch, micro_step):
     return {"loss": loss}
 
 def validation_step(trainer, batch, batch_idx):
-    """Define validation step logic.""" 
+    """Define validation step logic."""
     x, y = batch
     pred = trainer.model(x)
     loss = nn.functional.cross_entropy(pred, y)
@@ -205,24 +205,24 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("config", help="Configuration file")
     args = parser.parse_args()
-    
+
     # Load configuration
     framework = ModelTrainingFramework()
     config = framework.load_experiment_config(args.config)
-    
+
     # Setup distributed training
     fabric = Fabric(devices="auto", accelerator="auto")
-    
+
     # Create model, optimizer, data loaders
     model = create_model(config.model)
     optimizer = create_optimizer(model, config.optimizer)
     train_loader, val_loader = create_data_loaders(config.data)
-    
+
     # Setup with Fabric
     model, optimizer = fabric.setup(model, optimizer)
     train_loader = fabric.setup_dataloaders(train_loader)
     val_loader = fabric.setup_dataloaders(val_loader)
-    
+
     # Create trainer
     trainer_config = GenericTrainerConfig()
     trainer = GenericTrainer(
@@ -231,11 +231,11 @@ def main():
         model=model,
         optimizer=optimizer
     )
-    
+
     # Set step functions
     trainer.set_training_step(training_step)
     trainer.set_validation_step(validation_step)
-    
+
     # Train model
     trainer.fit(
         train_loader=train_loader,
@@ -397,6 +397,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Support
 
-- Documentation: https://model-training-framework.readthedocs.io/
-- Issues: https://github.com/example/model-training-framework/issues
-- Discussions: https://github.com/example/model-training-framework/discussions
+- Documentation: <https://model-training-framework.readthedocs.io/>
+- Issues: <https://github.com/example/model-training-framework/issues>
+- Discussions: <https://github.com/example/model-training-framework/discussions>
