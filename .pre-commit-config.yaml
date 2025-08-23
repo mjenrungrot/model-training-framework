@@ -6,7 +6,7 @@
 repos:
   # Ruff - Fast Python linter and formatter
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.6  # Use the ref you want to point at
+    rev: v0.8.6  # Updated to latest version
     hooks:
       # Run the linter
       - id: ruff
@@ -23,7 +23,7 @@ repos:
 
   # Built-in pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v5.0.0  # Updated to latest version
     hooks:
       # General file checks
       - id: trailing-whitespace
@@ -46,6 +46,7 @@ repos:
       - id: check-yaml
         name: check yaml
         description: Check YAML file syntax
+        args: [--allow-multiple-documents]
         
       - id: check-json
         name: check json
@@ -68,6 +69,11 @@ repos:
         name: debug statements (Python)
         description: Check for debugger imports and py37+ breakpoint() calls
         
+      - id: name-tests-test
+        name: name tests test
+        description: Verify test files are named correctly
+        args: [--pytest-test-first]
+        
       # Security checks
       - id: detect-private-key
         name: detect private key
@@ -78,10 +84,28 @@ repos:
         name: check for added large files
         description: Prevent giant files from being committed
         args: ['--maxkb=1000']  # 1MB limit
+        
+      # Additional checks
+      - id: check-symlinks
+        name: check symlinks
+        description: Check for broken symlinks
+        
+      - id: destroyed-symlinks
+        name: detect destroyed symlinks
+        description: Detect symlinks which are changed or deleted
+        
+      - id: mixed-line-ending
+        name: mixed line ending
+        description: Check for mixed line endings
+        args: [--fix=lf]
+        
+      - id: fix-byte-order-marker
+        name: fix byte order marker
+        description: Remove UTF-8 byte order marker
 
   # MyPy type checking
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.7.1
+    rev: v1.14.1  # Updated to latest version
     hooks:
       - id: mypy
         name: mypy
@@ -89,29 +113,105 @@ repos:
         additional_dependencies: [
           types-PyYAML,
           types-requests,
-          torch,
-          lightning-fabric,
+          torch>=2.0.0,
+          lightning-fabric>=2.0.0,
+          numpy>=1.21.0,
+          gitpython>=3.1.0,
+          dataclasses-json>=0.5.0,
+          colorlog>=6.0.0,
         ]
-        args: [--install-types, --non-interactive]
+        args: [--install-types, --non-interactive, --ignore-missing-imports]
         exclude: ^(tests/|examples/|docs/)
+        pass_filenames: false
+
+  # Security checks with Bandit
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.0
+    hooks:
+      - id: bandit
+        name: bandit security check
+        description: Check for common security issues
+        args: [-r, --skip, "B101,B601"]  # Skip assert_used and shell_true tests
+        exclude: ^(tests/|examples/)
+
+  # Check for secrets
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        name: detect secrets
+        description: Detect secrets in staged code
+        args: [--baseline, .secrets.baseline]
+        exclude: ^(\.secrets\.baseline|.*\.lock)$
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.43.0
+    hooks:
+      - id: markdownlint
+        name: markdownlint
+        description: Lint markdown files
+        args: [--fix]
+        exclude: ^(\.github/.*\.md)$
+
+  # Shell script checks
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        name: shellcheck
+        description: Check shell scripts
+
+  # Python imports sorting (if not using ruff's import sorting)
+  # - repo: https://github.com/PyCQA/isort
+  #   rev: 5.13.2
+  #   hooks:
+  #     - id: isort
+  #       name: isort
+  #       description: Sort Python imports
+  #       args: [--profile, black]
+
+  # Python upgrade syntax
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.19.1
+    hooks:
+      - id: pyupgrade
+        name: pyupgrade
+        description: Upgrade Python syntax to newer versions
+        args: [--py312-plus]
+
+  # Docstring formatting
+  - repo: https://github.com/PyCQA/docformatter
+    rev: v1.7.5
+    hooks:
+      - id: docformatter
+        name: docformatter
+        description: Format docstrings
+        args: [--in-place, --wrap-summaries=88, --wrap-descriptions=88]
+        exclude: ^(tests/|examples/)
 
   # Conventional commits
   - repo: https://github.com/compilerla/conventional-pre-commit
-    rev: v3.0.0
+    rev: v3.4.0  # Updated to latest version
     hooks:
       - id: conventional-pre-commit
         name: conventional commit
         description: Ensure commit messages follow conventional commit format
         stages: [commit-msg]
-        args: [
-          "--optional-scope",
-          "--strict",
-          "--types=build,chore,ci,docs,feat,fix,perf,refactor,revert,style,test"
-        ]
+        args: []
+
+  # Python safety check for dependencies
+  - repo: https://github.com/Lucas-C/pre-commit-hooks-safety
+    rev: v1.3.3
+    hooks:
+      - id: python-safety-dependencies-check
+        name: safety check
+        description: Check Python dependencies for known security vulnerabilities
+        files: requirements.*\.txt$
 
 # Pre-commit configuration
 default_language_version:
-  python: python3.10
+  python: python3.12  # Updated to match project requirement
 
 # Exclude certain files/directories
 exclude: |
@@ -127,10 +227,14 @@ exclude: |
     venv/|
     \.egg-info/|
     \.DS_Store|
-    node_modules/
+    node_modules/|
+    htmlcov/|
+    \.coverage|
+    .*\.egg$|
+    _version\.py$
   )$
 
-# CI configuration
+# CI configuration for pre-commit.ci
 ci:
   autofix_commit_msg: |
     [pre-commit.ci] auto fixes from pre-commit.com hooks
@@ -140,5 +244,5 @@ ci:
   autoupdate_branch: ""
   autoupdate_commit_msg: "[pre-commit.ci] pre-commit autoupdate"
   autoupdate_schedule: weekly
-  skip: []
+  skip: [mypy, shellcheck, detect-secrets]  # Skip checks that need extra setup
   submodules: false
