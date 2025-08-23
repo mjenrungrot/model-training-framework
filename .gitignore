@@ -451,3 +451,7 @@ model_checkpoints/
 # Distributed training temporary files
 dist_*.tmp
 rank_*.log
+
+# ===== Overrides for important configs =====
+!.markdownlint.json
+!.vscode/settings.json
