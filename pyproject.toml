@@ -1,0 +1,298 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "model-training-framework"
+description = "Comprehensive model training, launching, and configuration management framework"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Model Training Framework Team", email = "contact@modeltrainingframework.com"}
+]
+maintainers = [
+    {name = "Model Training Framework Team", email = "contact@modeltrainingframework.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
+keywords = [
+    "machine learning",
+    "deep learning", 
+    "model training",
+    "hyperparameter optimization",
+    "slurm",
+    "distributed training",
+    "configuration management",
+    "experiment management",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "torch>=1.12.0",
+    "lightning-fabric>=1.8.0",
+    "pyyaml>=6.0",
+    "gitpython>=3.1.0",
+    "numpy>=1.21.0",
+    "dataclasses-json>=0.5.0",
+    "typing-extensions>=4.0.0",
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0", 
+    "pytest-mock>=3.8.0",
+    "ruff>=0.1.0",
+    "mypy>=0.991",
+    "pre-commit>=2.20.0",
+]
+docs = [
+    "sphinx>=5.0.0",
+    "sphinx-rtd-theme>=1.0.0",
+    "myst-parser>=0.18.0",
+]
+wandb = ["wandb>=0.13.0"]
+tensorboard = ["tensorboard>=2.10.0"]
+all = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.8.0", 
+    "ruff>=0.1.0",
+    "mypy>=0.991",
+    "pre-commit>=2.20.0",
+    "sphinx>=5.0.0",
+    "sphinx-rtd-theme>=1.0.0",
+    "myst-parser>=0.18.0",
+    "wandb>=0.13.0",
+    "tensorboard>=2.10.0",
+]
+
+[project.scripts]
+mtf-train = "model_training_framework.scripts.train:main"
+mtf-grid-search = "model_training_framework.scripts.grid_search:main"
+mtf-submit = "model_training_framework.scripts.submit:main"
+mtf-status = "model_training_framework.scripts.status:main"
+
+[project.urls]
+Homepage = "https://github.com/your-org/model-training-framework"
+Documentation = "https://model-training-framework.readthedocs.io/"
+Repository = "https://github.com/your-org/model-training-framework"
+"Bug Tracker" = "https://github.com/your-org/model-training-framework/issues"
+
+[tool.setuptools.packages.find]
+exclude = ["tests*", "examples*", "docs*"]
+
+[tool.setuptools.package-data]
+model_training_framework = ["py.typed"]
+
+[tool.setuptools_scm]
+write_to = "model_training_framework/_version.py"
+
+# ===== Ruff Configuration =====
+
+[tool.ruff]
+# Set the maximum line length to 88 characters (Black-compatible)
+line-length = 88
+
+# Directories to include in linting and formatting
+include = ["*.py", "*.pyi", "**/pyproject.toml"]
+
+# Directories and files to exclude
+exclude = [
+    ".bzr",
+    ".direnv", 
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+    "*.egg-info",
+]
+
+# Assume Python 3.8+
+target-version = "py38"
+
+[tool.ruff.lint]
+# Enable comprehensive rule sets
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "PIE", # flake8-pie
+    "SIM", # flake8-simplify
+    "RET", # flake8-return
+    "TCH", # flake8-type-checking
+    "PTH", # flake8-use-pathlib
+    "ERA", # eradicate
+    "PD",  # pandas-vet
+    "PL",  # Pylint
+    "TRY", # tryceratops
+    "NPY", # NumPy-specific rules
+    "RUF", # Ruff-specific rules
+]
+
+# Rules to ignore
+ignore = [
+    "E501",   # Line too long (handled by line-length setting)
+    "B008",   # Do not perform function calls in argument defaults
+    "B905",   # `zip()` without an explicit `strict=` parameter
+    "N806",   # Variable in function should be lowercase
+    "PLR0913", # Too many arguments to function call
+    "PLR0912", # Too many branches  
+    "PLR0915", # Too many statements
+    "TRY003",  # Avoid specifying long messages outside the exception class
+    "PD901",   # `df` is a bad variable name
+]
+
+# Allow unused variables when underscore-prefixed
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+# Allow autofix for all enabled rules (when `--fix`) is provided
+fixable = ["ALL"]
+unfixable = []
+
+# Maximum complexity for mccabe
+mccabe = { max-complexity = 10 }
+
+[tool.ruff.lint.per-file-ignores]
+# Ignore specific rules in test files
+"tests/**/*.py" = [
+    "PLR2004", # Magic value used in comparison
+    "S101",    # Use of assert detected
+    "TRY301",  # Abstract `raise` to an inner function
+]
+
+# Ignore import rules in __init__.py files
+"__init__.py" = ["F401", "F403"]
+
+# Ignore specific rules in example files
+"examples/**/*.py" = [
+    "T201",    # `print` found
+    "PLR2004", # Magic value used in comparison
+]
+
+# Ignore specific rules in setup files
+"setup.py" = ["T201"]
+"validate_package.py" = ["T201"]
+
+[tool.ruff.lint.isort]
+# Import sorting configuration
+combine-as-imports = true
+force-sort-within-sections = true
+force-wrap-aliases = true
+split-on-trailing-comma = true
+
+# Known first-party packages
+known-first-party = ["model_training_framework"]
+
+[tool.ruff.format]
+# Formatter configuration
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+
+# ===== MyPy Configuration =====
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+ignore_missing_imports = true
+strict_equality = true
+
+# ===== Pytest Configuration =====
+
+[tool.pytest.ini_options]
+testpaths = ["model_training_framework/tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config", 
+    "--cov=model_training_framework",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-report=xml",
+    "--cov-fail-under=80",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+filterwarnings = [
+    "error",
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+]
+
+# ===== Coverage Configuration =====
+
+[tool.coverage.run]
+source = ["model_training_framework"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+    "setup.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

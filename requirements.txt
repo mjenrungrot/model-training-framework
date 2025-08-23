@@ -1,0 +1,37 @@
+# Model Training Framework Requirements
+# Core dependencies for the model training framework
+
+# Core ML libraries
+torch>=1.12.0
+lightning-fabric>=1.8.0
+numpy>=1.21.0
+
+# Configuration and data handling
+pyyaml>=6.0
+dataclasses-json>=0.5.0
+typing-extensions>=4.0.0
+
+# Git integration
+gitpython>=3.1.0
+
+# Optional dependencies (install with pip install -e ".[extra]")
+# Development tools - install with: pip install -e ".[dev]"
+# pytest>=7.0.0
+# pytest-cov>=4.0.0
+# pytest-mock>=3.8.0
+# black>=22.0.0
+# isort>=5.10.0
+# flake8>=5.0.0
+# mypy>=0.991
+# pre-commit>=2.20.0
+
+# Documentation tools - install with: pip install -e ".[docs]" 
+# sphinx>=5.0.0
+# sphinx-rtd-theme>=1.0.0
+# myst-parser>=0.18.0
+
+# Logging and monitoring - install with: pip install -e ".[wandb]"
+# wandb>=0.13.0
+
+# TensorBoard support - install with: pip install -e ".[tensorboard]"
+# tensorboard>=2.10.0

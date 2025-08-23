@@ -1,0 +1,144 @@
+# Pre-commit configuration for Model Training Framework
+# Install pre-commit: pip install pre-commit
+# Install hooks: pre-commit install
+# Run on all files: pre-commit run --all-files
+
+repos:
+  # Ruff - Fast Python linter and formatter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.6  # Use the ref you want to point at
+    hooks:
+      # Run the linter
+      - id: ruff
+        name: ruff (lint)
+        description: "Run Ruff linter on Python files"
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
+        
+      # Run the formatter
+      - id: ruff-format
+        name: ruff (format)
+        description: "Run Ruff formatter on Python files"
+        types_or: [python, pyi]
+
+  # Built-in pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      # General file checks
+      - id: trailing-whitespace
+        name: trim trailing whitespace
+        description: Trim trailing whitespace
+        
+      - id: end-of-file-fixer
+        name: fix end of files
+        description: Ensure files end with a newline
+        
+      - id: check-merge-conflict
+        name: check for merge conflicts
+        description: Check for files that contain merge conflict strings
+        
+      - id: check-case-conflict
+        name: check for case conflicts
+        description: Check for files with names that would conflict on case-insensitive filesystems
+        
+      # YAML/JSON checks
+      - id: check-yaml
+        name: check yaml
+        description: Check YAML file syntax
+        
+      - id: check-json
+        name: check json
+        description: Check JSON file syntax
+        
+      - id: check-toml
+        name: check toml
+        description: Check TOML file syntax
+        
+      # Python-specific checks
+      - id: check-ast
+        name: check python ast
+        description: Check whether files parse as valid Python
+        
+      - id: check-docstring-first
+        name: check docstring is first
+        description: Check that docstrings come first in Python modules
+        
+      - id: debug-statements
+        name: debug statements (Python)
+        description: Check for debugger imports and py37+ breakpoint() calls
+        
+      # Security checks
+      - id: detect-private-key
+        name: detect private key
+        description: Detect presence of private keys
+        
+      # File size checks
+      - id: check-added-large-files
+        name: check for added large files
+        description: Prevent giant files from being committed
+        args: ['--maxkb=1000']  # 1MB limit
+
+  # MyPy type checking
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.7.1
+    hooks:
+      - id: mypy
+        name: mypy
+        description: Run MyPy type checker
+        additional_dependencies: [
+          types-PyYAML,
+          types-requests,
+          torch,
+          lightning-fabric,
+        ]
+        args: [--install-types, --non-interactive]
+        exclude: ^(tests/|examples/|docs/)
+
+  # Conventional commits
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.0.0
+    hooks:
+      - id: conventional-pre-commit
+        name: conventional commit
+        description: Ensure commit messages follow conventional commit format
+        stages: [commit-msg]
+        args: [
+          "--optional-scope",
+          "--strict",
+          "--types=build,chore,ci,docs,feat,fix,perf,refactor,revert,style,test"
+        ]
+
+# Pre-commit configuration
+default_language_version:
+  python: python3.10
+
+# Exclude certain files/directories
+exclude: |
+  (?x)^(
+    \.git/|
+    \.mypy_cache/|
+    \.pytest_cache/|
+    \.ruff_cache/|
+    __pycache__/|
+    build/|
+    dist/|
+    \.venv/|
+    venv/|
+    \.egg-info/|
+    \.DS_Store|
+    node_modules/
+  )$
+
+# CI configuration
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit.com hooks
+    
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ""
+  autoupdate_commit_msg: "[pre-commit.ci] pre-commit autoupdate"
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false
