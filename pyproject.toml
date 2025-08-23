@@ -91,7 +91,9 @@ Repository = "https://github.com/your-org/model-training-framework"
 "Bug Tracker" = "https://github.com/your-org/model-training-framework/issues"
 
 [tool.setuptools.packages.find]
-exclude = ["tests*", "examples*", "docs*"]
+where = ["."]
+include = ["model_training_framework*"]
+exclude = ["examples*", "docs*"]
 
 [tool.setuptools.package-data]
 model_training_framework = ["py.typed"]

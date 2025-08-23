@@ -128,7 +128,12 @@ jobs:
     - name: Run tests
       run: |
         echo "::group::Running Tests"
-        python -m pytest -v --tb=short --cov=model_training_framework --cov-report=xml --cov-report=term-missing
+        # Debug: Show test directory structure
+        echo "Test directory structure:"
+        find model_training_framework/tests -name "*.py" -type f | head -20
+        echo ""
+        # Run tests with explicit path
+        python -m pytest model_training_framework/tests -v --tb=short --cov=model_training_framework --cov-report=xml --cov-report=term-missing
         echo "::endgroup::"
 
     - name: Upload coverage to Codecov
