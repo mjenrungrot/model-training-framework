@@ -349,7 +349,7 @@ jobs:
             import model_training_framework
             print('✓ Main package imports successfully')
 
-            from model_training_framework.config import ConfigManager
+            from model_training_framework.config import ConfigurationManager
             print('✓ Config module imports successfully')
 
             from model_training_framework.trainer import GenericTrainerConfig
