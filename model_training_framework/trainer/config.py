@@ -12,9 +12,11 @@ This module defines configuration classes for the training engine:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 import signal
-from typing import Optional, Union
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass
@@ -26,10 +28,10 @@ class CheckpointConfig:
     or manually. Old checkpoints are automatically cleaned up based on max_checkpoints.
     """
 
-    root_dir: Union[str, Path] = "checkpoints"  # Base directory for all checkpoints
-    save_every_n_steps: Optional[int] = None  # Save checkpoint every N optimizer steps
-    save_every_n_epochs: Optional[int] = 1  # Save checkpoint every N epochs
-    save_every_n_minutes: Optional[float] = None  # Save checkpoint every N minutes
+    root_dir: str | Path = "checkpoints"  # Base directory for all checkpoints
+    save_every_n_steps: int | None = None  # Save checkpoint every N optimizer steps
+    save_every_n_epochs: int | None = 1  # Save checkpoint every N epochs
+    save_every_n_minutes: float | None = None  # Save checkpoint every N minutes
     max_checkpoints: int = (
         5  # Maximum number of checkpoints to keep (oldest deleted first)
     )
@@ -39,7 +41,7 @@ class CheckpointConfig:
     filename_template: str = (
         "epoch_{epoch:03d}_step_{step:06d}.ckpt"  # Checkpoint filename pattern
     )
-    monitor_metric: Optional[str] = (
+    monitor_metric: str | None = (
         None  # Metric to monitor for best checkpoint (e.g., "val_loss")
     )
     monitor_mode: str = (
@@ -85,7 +87,7 @@ class PerformanceConfig:
     )
     compile_model: bool = False  # Whether to use torch.compile() for model optimization
     use_amp: bool = True  # Whether to use Automatic Mixed Precision (AMP)
-    clip_grad_norm: Optional[float] = (
+    clip_grad_norm: float | None = (
         1.0  # Maximum gradient norm for clipping (None to disable)
     )
     dataloader_num_workers: int = 4  # Number of worker processes for data loading
@@ -106,17 +108,17 @@ class LoggingConfig:
     """
 
     use_wandb: bool = True  # Whether to use Weights & Biases for experiment tracking
-    wandb_project: Optional[str] = (
+    wandb_project: str | None = (
         None  # W&B project name (uses experiment name if None)
     )
-    wandb_entity: Optional[str] = None  # W&B entity/team name
+    wandb_entity: str | None = None  # W&B entity/team name
     wandb_tags: list[str] = field(default_factory=list)  # Tags for W&B experiment
-    wandb_notes: Optional[str] = None  # Notes for W&B experiment
+    wandb_notes: str | None = None  # Notes for W&B experiment
 
-    log_scalars_every_n_steps: Optional[int] = (
+    log_scalars_every_n_steps: int | None = (
         50  # How often to log scalar metrics (None = every step)
     )
-    log_images_every_n_steps: Optional[int] = (
+    log_images_every_n_steps: int | None = (
         500  # How often to log images (None = never)
     )
     log_gradients: bool = False  # Whether to log gradient statistics
@@ -125,9 +127,9 @@ class LoggingConfig:
 
     # Additional logging backends
     use_tensorboard: bool = False  # Whether to use TensorBoard logging
-    tensorboard_dir: Optional[str] = None  # TensorBoard log directory
+    tensorboard_dir: str | None = None  # TensorBoard log directory
     use_csv: bool = True  # Whether to log metrics to CSV files
-    csv_log_dir: Optional[str] = None  # CSV log directory (uses checkpoint dir if None)
+    csv_log_dir: str | None = None  # CSV log directory (uses checkpoint dir if None)
 
     # Console logging
     console_log_level: str = "INFO"  # Console logging level
@@ -151,9 +153,9 @@ class GenericTrainerConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
     # Training loop behavior
-    log_loss_every_n_steps: Optional[int] = 100  # How often to log training loss
+    log_loss_every_n_steps: int | None = 100  # How often to log training loss
     validate_every_n_epochs: int = 1  # How often to run validation
-    early_stopping_patience: Optional[int] = (
+    early_stopping_patience: int | None = (
         None  # Early stopping patience (None = disabled)
     )
     early_stopping_metric: str = "val_loss"  # Metric to monitor for early stopping

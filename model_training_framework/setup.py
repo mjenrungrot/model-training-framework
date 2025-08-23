@@ -13,7 +13,7 @@ long_description = (
 # Read requirements
 requirements_path = Path(__file__).parent / "requirements.txt"
 if requirements_path.exists():
-    with open(requirements_path) as f:
+    with requirements_path.open() as f:
         requirements = [
             line.strip() for line in f if line.strip() and not line.startswith("#")
         ]

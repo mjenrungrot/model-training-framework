@@ -5,8 +5,10 @@ This example demonstrates how the framework handles SLURM preemption
 signals and automatically resumes training from exact checkpoint states.
 """
 
+import os
 from pathlib import Path
 import signal
+import threading
 import time
 from typing import Any, Dict
 
@@ -179,9 +181,6 @@ class PreemptionAwareTrainer(GenericTrainer):
 
 def simulate_preemption_signal(pid: int, delay: float = 30.0):
     """Simulate SLURM preemption signal after delay."""
-    import os
-    import threading
-
     def send_signal():
         time.sleep(delay)
         print(f"\n⚡ Simulating SLURM preemption signal to PID {pid}")
@@ -238,15 +237,13 @@ def main():
     print(f"   Validation batches: {len(val_data)}")
 
     # Simulate preemption signal during training
-    import os
-
     current_pid = os.getpid()
 
     print(f"🔧 Setting up simulated preemption (PID: {current_pid})")
     print("   Will send SIGUSR1 signal after 30 seconds")
 
     # Start background thread to simulate preemption
-    signal_thread = simulate_preemption_signal(current_pid, delay=30.0)
+    simulate_preemption_signal(current_pid, delay=30.0)
 
     # Demonstrate checkpoint loading if exists
     checkpoint_dir = Path(trainer_config.checkpoint_dir)
@@ -313,7 +310,7 @@ def demonstrate_checkpoint_inspection(checkpoint_dir: Path):
         checkpoint_data = torch.load(latest_checkpoint, map_location="cpu")
 
         print("   Checkpoint contents:")
-        for key in checkpoint_data.keys():
+        for key in checkpoint_data:
             if key == "resume_state":
                 resume_state = checkpoint_data[key]
                 print(f"      {key}:")

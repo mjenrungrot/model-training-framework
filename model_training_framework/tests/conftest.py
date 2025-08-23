@@ -5,6 +5,7 @@ This module provides common fixtures and test utilities used across all test mod
 """
 
 from pathlib import Path
+import subprocess
 import tempfile
 from typing import Generator
 
@@ -167,8 +168,6 @@ pytest.mark.slow = pytest.mark.slow
 def skip_if_no_slurm():
     """Skip test if SLURM is not available."""
     try:
-        import subprocess
-
         subprocess.run(["sbatch", "--version"], capture_output=True, check=True)
         return False
     except (subprocess.CalledProcessError, FileNotFoundError):

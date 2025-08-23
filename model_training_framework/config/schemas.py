@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class ExecutionMode(Enum):
@@ -39,10 +41,10 @@ class ModelConfig:
     num_layers: int = 6
     dropout: float = 0.1
     activation: str = "relu"
-    num_classes: Optional[int] = None
+    num_classes: int | None = None
     pretrained: bool = False
     freeze_backbone: bool = False
-    custom_params: Dict[str, Any] = field(default_factory=dict)
+    custom_params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -52,10 +54,10 @@ class OptimizerConfig:
     type: str = "adamw"
     lr: float = 1e-4
     weight_decay: float = 0.01
-    betas: Tuple[float, float] = (0.9, 0.999)
+    betas: tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
     amsgrad: bool = False
-    custom_params: Dict[str, Any] = field(default_factory=dict)
+    custom_params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -64,12 +66,12 @@ class SchedulerConfig:
 
     type: str = "cosine"
     warmup_steps: int = 1000
-    max_steps: Optional[int] = None
+    max_steps: int | None = None
     min_lr: float = 1e-6
     gamma: float = 0.1
     step_size: int = 10
-    milestones: List[int] = field(default_factory=list)
-    custom_params: Dict[str, Any] = field(default_factory=dict)
+    milestones: list[int] = field(default_factory=list)
+    custom_params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -77,7 +79,7 @@ class DataConfig:
     """Dataset configuration."""
 
     dataset_name: str
-    dataset_path: Optional[str] = None
+    dataset_path: str | None = None
     train_split: str = "train"
     val_split: str = "validation"
     test_split: str = "test"
@@ -86,8 +88,8 @@ class DataConfig:
     pin_memory: bool = True
     shuffle_train: bool = True
     drop_last: bool = True
-    preprocessing: Dict[str, Any] = field(default_factory=dict)
-    augmentations: Dict[str, Any] = field(default_factory=dict)
+    preprocessing: dict[str, Any] = field(default_factory=dict)
+    augmentations: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -95,11 +97,11 @@ class TrainingConfig:
     """Training process configuration."""
 
     max_epochs: int = 100
-    max_steps: Optional[int] = None
+    max_steps: int | None = None
     gradient_accumulation_steps: int = 1
-    max_grad_norm: Optional[float] = 1.0
+    max_grad_norm: float | None = 1.0
     use_amp: bool = True
-    early_stopping_patience: Optional[int] = None
+    early_stopping_patience: int | None = None
     early_stopping_metric: str = "val_loss"
     early_stopping_mode: str = "min"
     validation_frequency: int = 1
@@ -112,17 +114,17 @@ class LoggingConfig:
     """Experiment tracking and logging configuration."""
 
     use_wandb: bool = True
-    wandb_project: Optional[str] = None
-    wandb_entity: Optional[str] = None
-    wandb_tags: List[str] = field(default_factory=list)
-    wandb_notes: Optional[str] = None
-    log_scalars_every_n_steps: Optional[int] = 50
-    log_images_every_n_steps: Optional[int] = 500
+    wandb_project: str | None = None
+    wandb_entity: str | None = None
+    wandb_tags: list[str] = field(default_factory=list)
+    wandb_notes: str | None = None
+    log_scalars_every_n_steps: int | None = 50
+    log_images_every_n_steps: int | None = 500
     log_gradients: bool = False
     log_model_parameters: bool = False
     log_system_metrics: bool = True
-    tensorboard_dir: Optional[str] = None
-    csv_log_dir: Optional[str] = None
+    tensorboard_dir: str | None = None
+    csv_log_dir: str | None = None
 
 
 @dataclass
@@ -137,29 +139,29 @@ class SLURMConfig:
     cpus_per_task: int = 8
     mem: str = "256G"
     time: str = "1-00:00:00"
-    constraint: Optional[str] = "a40|a100"
+    constraint: str | None = "a40|a100"
     requeue: bool = True
-    job_name: Optional[str] = None
-    output: Optional[str] = None
-    error: Optional[str] = None
-    mail_type: Optional[str] = None
-    mail_user: Optional[str] = None
-    extra_args: Dict[str, Any] = field(default_factory=dict)
+    job_name: str | None = None
+    output: str | None = None
+    error: str | None = None
+    mail_type: str | None = None
+    mail_user: str | None = None
+    extra_args: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class CheckpointConfig:
     """Checkpoint configuration from trainer module."""
 
-    root_dir: Union[str, Path] = "checkpoints"
-    save_every_n_steps: Optional[int] = None
-    save_every_n_epochs: Optional[int] = 1
+    root_dir: str | Path = "checkpoints"
+    save_every_n_steps: int | None = None
+    save_every_n_epochs: int | None = 1
     max_checkpoints: int = 5
     save_rng: bool = True
     save_optimizer: bool = True
     save_scheduler: bool = True
     filename_template: str = "epoch_{epoch:03d}_step_{step:06d}.ckpt"
-    monitor_metric: Optional[str] = None
+    monitor_metric: str | None = None
     monitor_mode: str = "min"
 
 
@@ -182,7 +184,7 @@ class PerformanceConfig:
     gradient_accumulation_steps: int = 1
     compile_model: bool = False
     use_amp: bool = True
-    clip_grad_norm: Optional[float] = 1.0
+    clip_grad_norm: float | None = 1.0
     dataloader_num_workers: int = 4
     pin_memory: bool = True
     persistent_workers: bool = True
@@ -198,27 +200,27 @@ class ExperimentConfig:
     training: TrainingConfig
     data: DataConfig
     optimizer: OptimizerConfig
-    scheduler: Optional[SchedulerConfig] = None
-    slurm: Optional[SLURMConfig] = None
+    scheduler: SchedulerConfig | None = None
+    slurm: SLURMConfig | None = None
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
     preemption: PreemptionConfig = field(default_factory=PreemptionConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
 
     # Metadata
-    description: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
-    created_by: Optional[str] = None
-    created_at: Optional[str] = None
+    description: str | None = None
+    tags: list[str] = field(default_factory=list)
+    created_by: str | None = None
+    created_at: str | None = None
     version: str = "1.0"
 
     # Runtime settings
-    seed: Optional[int] = None
+    seed: int | None = None
     deterministic: bool = True
     benchmark: bool = False
 
     # Custom parameters for extensibility
-    custom_params: Dict[str, Any] = field(default_factory=dict)
+    custom_params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -227,12 +229,12 @@ class GridSearchConfig:
 
     name: str
     description: str = ""
-    base_config: Dict[str, Any] = field(default_factory=dict)
-    parameter_grids: List[Dict[str, Any]] = field(default_factory=list)
+    base_config: dict[str, Any] = field(default_factory=dict)
+    parameter_grids: list[dict[str, Any]] = field(default_factory=list)
     naming_strategy: NamingStrategy = NamingStrategy.HASH_BASED
-    max_concurrent_jobs: Optional[int] = None
+    max_concurrent_jobs: int | None = None
     execution_mode: ExecutionMode = ExecutionMode.SLURM
-    output_dir: Optional[str] = None
+    output_dir: str | None = None
 
 
 @dataclass
@@ -243,5 +245,5 @@ class ResourceRequirements:
     min_cpu_cores: int = 1
     min_gpu_memory_gb: float = 0.0
     max_time_hours: float = 24.0
-    required_partitions: List[str] = field(default_factory=list)
-    required_constraints: List[str] = field(default_factory=list)
+    required_partitions: list[str] = field(default_factory=list)
+    required_constraints: list[str] = field(default_factory=list)

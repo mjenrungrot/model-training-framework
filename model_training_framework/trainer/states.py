@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import pickle
 import random
-from typing import Dict, Optional, Tuple
+import time
 
 import numpy as np
 import torch
@@ -69,7 +69,7 @@ class RNGState:
 
     torch_state: bytes  # Serialized torch.get_rng_state() including CUDA states
     numpy_state: bytes  # Serialized numpy.random.get_state()
-    python_state: Tuple[int, ...]  # Python's random.getstate() tuple
+    python_state: tuple[int, ...]  # Python's random.getstate() tuple
 
 
 @dataclass
@@ -86,7 +86,7 @@ class TrainMicroState:
     micro_step: int  # Current micro-step within gradient accumulation (0..gradient_accumulation_steps-1)
     loss_sum: float = 0.0  # Accumulated loss across micro-steps (for logging)
     num_samples: int = 0  # Total samples processed in current accumulation window
-    additional_metrics: Dict[str, float] = field(
+    additional_metrics: dict[str, float] = field(
         default_factory=dict
     )  # Custom metrics from training_step
 
@@ -103,7 +103,7 @@ class ValMicroState:
 
     batch_idx: int  # Index of current validation batch (0-based)
     loss_sum: float = 0.0  # Running sum of validation losses
-    metrics: Dict[str, float] = field(
+    metrics: dict[str, float] = field(
         default_factory=dict
     )  # Accumulated validation metrics
     num_samples: int = 0  # Total validation samples processed so far
@@ -128,9 +128,9 @@ class ResumeState:
     epoch: int  # Current epoch number (0-based)
     global_step: int  # Total optimizer steps taken across all epochs
     version: str = "v2.0"  # Checkpoint format version for migration
-    train: Optional[TrainMicroState] = None  # Training state (if in training phase)
-    val: Optional[ValMicroState] = None  # Validation state (if in validation phase)
-    rng: Optional[RNGState] = None  # RNG states for deterministic resume
+    train: TrainMicroState | None = None  # Training state (if in training phase)
+    val: ValMicroState | None = None  # Validation state (if in validation phase)
+    rng: RNGState | None = None  # RNG states for deterministic resume
     timestamp: float = 0.0  # Unix timestamp when checkpoint was created
 
 
@@ -155,8 +155,8 @@ def capture_rng_state() -> RNGState:
 
     torch_state_bytes = pickle.dumps(torch_state_dict)
 
-    # Capture NumPy state
-    numpy_state_bytes = pickle.dumps(np.random.get_state())
+    # Capture NumPy state (using legacy API for compatibility)
+    numpy_state_bytes = pickle.dumps(np.random.get_state())  # noqa: NPY002
 
     # Capture Python random state
     python_state = random.getstate()
@@ -186,9 +186,9 @@ def restore_rng_state(rng_state: RNGState) -> None:
                 with torch.cuda.device(i):
                     torch.cuda.set_rng_state(cuda_state)
 
-    # Restore NumPy state
+    # Restore NumPy state (using legacy API for compatibility)
     numpy_state = pickle.loads(rng_state.numpy_state)
-    np.random.set_state(numpy_state)
+    np.random.set_state(numpy_state)  # noqa: NPY002
 
     # Restore Python random state
     random.setstate(rng_state.python_state)
@@ -204,8 +204,6 @@ def create_initial_resume_state(save_rng: bool = True) -> ResumeState:
     Returns:
         Initial ResumeState
     """
-    import time
-
     return ResumeState(
         phase=TrainerPhase.INIT,
         epoch=0,
@@ -218,10 +216,10 @@ def create_initial_resume_state(save_rng: bool = True) -> ResumeState:
 def update_resume_state(
     current_state: ResumeState,
     phase: TrainerPhase,
-    epoch: Optional[int] = None,
-    global_step: Optional[int] = None,
-    train_state: Optional[TrainMicroState] = None,
-    val_state: Optional[ValMicroState] = None,
+    epoch: int | None = None,
+    global_step: int | None = None,
+    train_state: TrainMicroState | None = None,
+    val_state: ValMicroState | None = None,
     save_rng: bool = True,
 ) -> ResumeState:
     """
@@ -239,8 +237,6 @@ def update_resume_state(
     Returns:
         Updated ResumeState
     """
-    import time
-
     return ResumeState(
         phase=phase,
         epoch=epoch if epoch is not None else current_state.epoch,

@@ -10,9 +10,10 @@ This module provides the high-level API for the model training framework:
 
 from __future__ import annotations
 
+from dataclasses import asdict
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from .config import (
     ConfigurationManager,
@@ -44,10 +45,10 @@ class ModelTrainingFramework:
 
     def __init__(
         self,
-        project_root: Optional[Path] = None,
-        config_dir: Optional[Path] = None,
-        experiments_dir: Optional[Path] = None,
-        slurm_template_path: Optional[Path] = None,
+        project_root: Path | None = None,
+        config_dir: Path | None = None,
+        experiments_dir: Path | None = None,
+        slurm_template_path: Path | None = None,
         setup_logging_config: bool = True,
     ):
         """
@@ -96,7 +97,7 @@ class ModelTrainingFramework:
             project_root=self.project_root, config_dir=self.config_dir
         )
 
-        self.slurm_launcher: Optional[SLURMLauncher] = None
+        self.slurm_launcher: SLURMLauncher | None = None
         if self.slurm_template_path and self.slurm_template_path.exists():
             self.slurm_launcher = SLURMLauncher(
                 template_path=self.slurm_template_path,
@@ -143,7 +144,7 @@ class ModelTrainingFramework:
             logger.warning("SLURM launcher not available (template not found)")
 
     def create_experiment(
-        self, config_dict: Dict[str, Any], validate: bool = True
+        self, config_dict: dict[str, Any], validate: bool = True
     ) -> ExperimentConfig:
         """
         Create and validate experiment configuration.
@@ -169,10 +170,10 @@ class ModelTrainingFramework:
             return experiment_config
 
         except Exception as e:
-            raise FrameworkError(f"Failed to create experiment configuration: {e}")
+            raise FrameworkError(f"Failed to create experiment configuration: {e}") from e
 
     def load_experiment_config(
-        self, config_path: Union[str, Path], validate: bool = True
+        self, config_path: str | Path, validate: bool = True
     ) -> ExperimentConfig:
         """
         Load experiment configuration from file.
@@ -192,7 +193,7 @@ class ModelTrainingFramework:
             return self.create_experiment(config_dict, validate=validate)
 
         except Exception as e:
-            raise FrameworkError(f"Failed to load experiment configuration: {e}")
+            raise FrameworkError(f"Failed to load experiment configuration: {e}") from e
 
     def validate_experiment_config(self, config: ExperimentConfig) -> ValidationResult:
         """
@@ -209,7 +210,7 @@ class ModelTrainingFramework:
     def run_single_experiment(
         self,
         config: ExperimentConfig,
-        script_path: Union[str, Path],
+        script_path: str | Path,
         execution_mode: ExecutionMode = ExecutionMode.SLURM,
         dry_run: bool = False,
     ) -> Any:  # ExperimentResult type would be defined elsewhere
@@ -260,12 +261,12 @@ class ModelTrainingFramework:
 
     def run_grid_search(
         self,
-        base_config: Union[ExperimentConfig, Dict[str, Any], str, Path],
-        parameter_grids: List[ParameterGrid],
+        base_config: ExperimentConfig | dict[str, Any] | str | Path,
+        parameter_grids: list[ParameterGrid],
         execution_mode: ExecutionMode = ExecutionMode.SLURM,
-        output_dir: Optional[Path] = None,
-        max_concurrent_jobs: Optional[int] = None,
-        script_path: Optional[Union[str, Path]] = None,
+        output_dir: Path | None = None,
+        max_concurrent_jobs: int | None = None,
+        script_path: str | Path | None = None,
     ) -> Any:  # GridSearchResult type
         """
         Execute parameter grid search.
@@ -292,8 +293,6 @@ class ModelTrainingFramework:
                 base_config, validate=False
             )
         elif isinstance(base_config, ExperimentConfig):
-            from dataclasses import asdict
-
             base_config_dict = asdict(base_config)
         else:
             base_config_dict = base_config
@@ -326,10 +325,10 @@ class ModelTrainingFramework:
             return result
 
         except Exception as e:
-            raise FrameworkError(f"Grid search failed: {e}")
+            raise FrameworkError(f"Grid search failed: {e}") from e
 
     def create_parameter_grid(
-        self, name: str, parameters: Dict[str, List[Any]], description: str = ""
+        self, name: str, parameters: dict[str, list[Any]], description: str = ""
     ) -> ParameterGrid:
         """
         Create a parameter grid for grid search.
@@ -352,7 +351,7 @@ class ModelTrainingFramework:
         )
         return grid
 
-    def monitor_jobs(self, job_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    def monitor_jobs(self, job_ids: list[str] | None = None) -> dict[str, Any]:
         """
         Get status of monitored jobs.
 
@@ -378,8 +377,8 @@ class ModelTrainingFramework:
         }
 
     def wait_for_experiments(
-        self, job_ids: List[str], timeout: Optional[float] = None
-    ) -> Dict[str, Any]:
+        self, job_ids: list[str], timeout: float | None = None
+    ) -> dict[str, Any]:
         """
         Wait for experiments to complete.
 
@@ -415,8 +414,8 @@ class ModelTrainingFramework:
         }
 
     def cancel_experiments(
-        self, job_ids: Optional[List[str]] = None
-    ) -> Dict[str, bool]:
+        self, job_ids: list[str] | None = None
+    ) -> dict[str, bool]:
         """
         Cancel experiments.
 
@@ -436,7 +435,7 @@ class ModelTrainingFramework:
             return results
         return self.job_monitor.cancel_tracked_jobs()
 
-    def list_configurations(self, pattern: str = "*.yaml") -> List[Path]:
+    def list_configurations(self, pattern: str = "*.yaml") -> list[Path]:
         """
         List available configuration files.
 
@@ -479,7 +478,7 @@ from lightning.fabric import Fabric
 
 class SimpleModel(nn.Module):
     """Simple example model."""
-    
+
     def __init__(self, input_size: int = 10, hidden_size: int = 64, output_size: int = 1):
         super().__init__()
         self.network = nn.Sequential(
@@ -487,7 +486,7 @@ class SimpleModel(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_size, output_size)
         )
-    
+
     def forward(self, x):
         return self.network(x)
 
@@ -520,36 +519,36 @@ def main():
     parser.add_argument("config", help="Configuration name or path")
     parser.add_argument("--local", action="store_true", help="Run locally instead of SLURM")
     args = parser.parse_args()
-    
+
     # Initialize framework
     framework = ModelTrainingFramework()
-    
+
     # Load experiment configuration
     config = framework.load_experiment_config(args.config)
-    
+
     # Setup Fabric for distributed training
     fabric = Fabric(devices=1, accelerator="auto")
-    
+
     # Create model and optimizer
     model = SimpleModel()
     optimizer = torch.optim.Adam(model.parameters(), lr=config.optimizer.lr)
-    
+
     # Setup model and optimizer with Fabric
     model, optimizer = fabric.setup(model, optimizer)
-    
+
     # Create data loaders
     train_dataset = create_dummy_data(1000)
     val_dataset = create_dummy_data(200)
-    
+
     train_loader = DataLoader(train_dataset, batch_size=config.data.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config.data.batch_size)
-    
+
     train_loader = fabric.setup_dataloaders(train_loader)
     val_loader = fabric.setup_dataloaders(val_loader)
-    
+
     # Create trainer configuration
     trainer_config = GenericTrainerConfig()
-    
+
     # Initialize trainer
     trainer = GenericTrainer(
         config=trainer_config,
@@ -557,18 +556,18 @@ def main():
         model=model,
         optimizer=optimizer
     )
-    
+
     # Set training and validation step functions
     trainer.set_training_step(training_step)
     trainer.set_validation_step(validation_step)
-    
+
     # Train model
     trainer.fit(
         train_loader=train_loader,
         val_loader=val_loader,
         max_epochs=config.training.max_epochs
     )
-    
+
     print("Training completed!")
 
 
@@ -581,9 +580,9 @@ if __name__ == "__main__":
             output_path.write_text(template_content)
             logger.info(f"Created training script template: {output_path}")
         except Exception as e:
-            raise FrameworkError(f"Failed to create training script template: {e}")
+            raise FrameworkError(f"Failed to create training script template: {e}") from e
 
-    def get_framework_status(self) -> Dict[str, Any]:
+    def get_framework_status(self) -> dict[str, Any]:
         """
         Get comprehensive framework status.
 
@@ -620,9 +619,9 @@ if __name__ == "__main__":
 
 
 def quick_experiment(
-    config_path: Union[str, Path],
-    script_path: Union[str, Path],
-    project_root: Optional[Path] = None,
+    config_path: str | Path,
+    script_path: str | Path,
+    project_root: Path | None = None,
 ) -> Any:
     """
     Quick way to run a single experiment.
@@ -641,10 +640,10 @@ def quick_experiment(
 
 
 def quick_grid_search(
-    base_config_path: Union[str, Path],
-    parameter_grids: List[ParameterGrid],
-    script_path: Union[str, Path],
-    project_root: Optional[Path] = None,
+    base_config_path: str | Path,
+    parameter_grids: list[ParameterGrid],
+    script_path: str | Path,
+    project_root: Path | None = None,
 ) -> Any:
     """
     Quick way to run parameter grid search.

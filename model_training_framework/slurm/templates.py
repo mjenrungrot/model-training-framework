@@ -12,10 +12,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-from pathlib import Path
 import re
 import string
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +40,8 @@ class TemplateContext:
     python_executable: str = "python"
 
     # Git information
-    branch_name: Optional[str] = None
-    commit_hash: Optional[str] = None
+    branch_name: str | None = None
+    commit_hash: str | None = None
 
     # SLURM parameters
     account: str = "realitylab"
@@ -50,26 +52,26 @@ class TemplateContext:
     cpus_per_task: int = 8
     mem: str = "256G"
     time: str = "1-00:00:00"
-    constraint: Optional[str] = "a40|a100"
+    constraint: str | None = "a40|a100"
     requeue: bool = True
 
     # Output and logging
-    output_file: Optional[str] = None
-    error_file: Optional[str] = None
+    output_file: str | None = None
+    error_file: str | None = None
 
     # Email notifications
-    mail_type: Optional[str] = None
-    mail_user: Optional[str] = None
+    mail_type: str | None = None
+    mail_user: str | None = None
 
     # Additional parameters
-    extra_params: Dict[str, Any] = None
+    extra_params: dict[str, Any] = None
 
     def __post_init__(self):
         """Initialize extra parameters if not provided."""
         if self.extra_params is None:
             self.extra_params = {}
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert context to dictionary for template rendering."""
         result = {
             # Convert all attributes to uppercase for SLURM convention
@@ -108,7 +110,7 @@ class TemplateContext:
 class SBATCHTemplateEngine:
     """Template engine for generating SBATCH scripts."""
 
-    def __init__(self, template_path: Optional[Path] = None):
+    def __init__(self, template_path: Path | None = None):
         """
         Initialize template engine.
 
@@ -116,7 +118,7 @@ class SBATCHTemplateEngine:
             template_path: Path to default template file
         """
         self.template_path = template_path
-        self.template_cache: Dict[str, str] = {}
+        self.template_cache: dict[str, str] = {}
 
         if template_path and template_path.exists():
             self.load_template(template_path)
@@ -145,9 +147,9 @@ class SBATCHTemplateEngine:
             return template_content
 
         except Exception as e:
-            raise TemplateError(f"Failed to load template {template_path}: {e}")
+            raise TemplateError(f"Failed to load template {template_path}: {e}") from e
 
-    def validate_template(self, template_content: str) -> List[str]:
+    def validate_template(self, template_content: str) -> list[str]:
         """
         Validate template content and return any issues.
 
@@ -205,7 +207,7 @@ class SBATCHTemplateEngine:
 
         return issues
 
-    def extract_template_variables(self, template_content: str) -> Set[str]:
+    def extract_template_variables(self, template_content: str) -> set[str]:
         """
         Extract all template variables from template content.
 
@@ -221,7 +223,7 @@ class SBATCHTemplateEngine:
         return set(matches)
 
     def render_template(
-        self, template_content: str, context: Union[TemplateContext, Dict[str, Any]]
+        self, template_content: str, context: TemplateContext | dict[str, Any]
     ) -> str:
         """
         Render template with given context.
@@ -266,13 +268,13 @@ class SBATCHTemplateEngine:
             return rendered
 
         except Exception as e:
-            raise TemplateError(f"Failed to render template: {e}")
+            raise TemplateError(f"Failed to render template: {e}") from e
 
     def generate_sbatch_script(
         self,
-        context: Union[TemplateContext, Dict[str, Any]],
-        template_path: Optional[Path] = None,
-        output_path: Optional[Path] = None,
+        context: TemplateContext | dict[str, Any],
+        template_path: Path | None = None,
+        output_path: Path | None = None,
     ) -> str:
         """
         Generate SBATCH script from template and context.
@@ -313,7 +315,7 @@ class SBATCHTemplateEngine:
             except Exception as e:
                 raise TemplateError(
                     f"Failed to save SBATCH script to {output_path}: {e}"
-                )
+                ) from e
 
         return rendered_script
 
@@ -324,7 +326,7 @@ class SBATCHTemplateEngine:
         Returns:
             Default template content
         """
-        template = """#!/bin/bash
+        return """#!/bin/bash
 
 #SBATCH --job-name={{JOB_NAME}}
 #SBATCH --account={{ACCOUNT}}
@@ -382,7 +384,6 @@ echo "Starting training..."
 
 echo "Job completed at $(date)"
 """
-        return template
 
     def save_default_template(self, output_path: Path) -> None:
         """
@@ -398,12 +399,12 @@ echo "Job completed at $(date)"
             output_path.write_text(template_content)
             logger.info(f"Saved default template to {output_path}")
         except Exception as e:
-            raise TemplateError(f"Failed to save default template: {e}")
+            raise TemplateError(f"Failed to save default template: {e}") from e
 
     def preview_rendered_script(
         self,
-        context: Union[TemplateContext, Dict[str, Any]],
-        template_path: Optional[Path] = None,
+        context: TemplateContext | dict[str, Any],
+        template_path: Path | None = None,
     ) -> str:
         """
         Preview rendered script without saving.
@@ -422,8 +423,8 @@ def create_template_context_from_config(
     experiment_name: str,
     script_path: str,
     config_name: str,
-    slurm_config: Dict[str, Any],
-    git_info: Optional[Dict[str, str]] = None,
+    slurm_config: dict[str, Any],
+    git_info: dict[str, str] | None = None,
 ) -> TemplateContext:
     """
     Create template context from experiment and SLURM configuration.

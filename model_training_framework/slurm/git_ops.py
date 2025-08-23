@@ -15,8 +15,10 @@ import logging
 from pathlib import Path
 import subprocess
 import time
-from types import TracebackType
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from types import TracebackType
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,7 @@ class GitOperationLock:
         """
         self.lock_file_path = lock_file_path
         self.timeout = timeout
-        self.lock_file: Optional[Any] = None
+        self.lock_file: Any | None = None
         self.acquired = False
 
     def __enter__(self) -> GitOperationLock:
@@ -58,7 +60,7 @@ class GitOperationLock:
         self.lock_file_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            self.lock_file = open(self.lock_file_path, "w")
+            self.lock_file = self.lock_file_path.open("w")
 
             # Try to acquire lock with timeout
             start_time = time.time()
@@ -77,13 +79,13 @@ class GitOperationLock:
             if self.lock_file:
                 self.lock_file.close()
                 self.lock_file = None
-            raise GitOperationError(f"Failed to acquire git lock: {e}")
+            raise GitOperationError(f"Failed to acquire git lock: {e}") from e
 
     def __exit__(
         self,
-        exc_type: Optional[type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
     ) -> None:
         """Release the lock and cleanup."""
         if self.acquired and self.lock_file:
@@ -119,10 +121,10 @@ class GitManager:
 
     def run_git_command(
         self,
-        args: List[str],
+        args: list[str],
         check: bool = True,
         capture_output: bool = True,
-        cwd: Optional[Path] = None,
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess:
         """
         Run a git command safely.
@@ -139,7 +141,7 @@ class GitManager:
         Raises:
             GitOperationError: If command fails and check=True
         """
-        cmd = ["git"] + args
+        cmd = ["git", *args]
         working_dir = cwd or self.project_root
 
         try:
@@ -159,7 +161,7 @@ class GitManager:
             if e.stderr:
                 error_msg += f"\nError: {e.stderr.strip()}"
 
-            logger.error(error_msg)
+            logger.exception(error_msg)
             raise GitOperationError(error_msg) from e
 
     def get_current_commit(self) -> str:
@@ -215,8 +217,8 @@ class GitManager:
             # Verify commit exists
             try:
                 self.run_git_command(["cat-file", "-e", commit_hash])
-            except GitOperationError:
-                raise GitOperationError(f"Commit does not exist: {commit_hash}")
+            except GitOperationError as e:
+                raise GitOperationError(f"Commit does not exist: {commit_hash}") from e
 
             # Perform checkout
             self.run_git_command(["checkout", commit_hash])
@@ -262,7 +264,7 @@ class GitManager:
 
     def list_recent_commits(
         self, max_count: int = 10, branch: str = "HEAD"
-    ) -> List[dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """
         List recent commits.
 
@@ -342,13 +344,13 @@ class BranchManager:
                 logger.info(f"Created job branch: {branch_name}")
                 return branch_name
 
-            except GitOperationError as e:
-                logger.error(f"Failed to create job branch: {e}")
+            except GitOperationError:
+                logger.exception("Failed to create job branch: ")
                 raise
 
     def cleanup_job_branches(
         self, older_than_days: int = 7, dry_run: bool = False
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Clean up old job branches.
 
@@ -400,11 +402,11 @@ class BranchManager:
 
             return branches_to_delete
 
-        except GitOperationError as e:
-            logger.error(f"Failed to cleanup job branches: {e}")
+        except GitOperationError:
+            logger.exception("Failed to cleanup job branches: ")
             return []
 
-    def list_job_branches(self) -> List[dict[str, str]]:
+    def list_job_branches(self) -> list[dict[str, str]]:
         """
         List all job branches with their information.
 
@@ -491,6 +493,6 @@ class BranchManager:
             )
             self.git.checkout_commit(expected_commit, with_lock=True)
             return self.verify_job_commit(expected_commit)
-        except GitOperationError as e:
-            logger.error(f"Failed to checkout expected commit: {e}")
+        except GitOperationError:
+            logger.exception("Failed to checkout expected commit: ")
             return False

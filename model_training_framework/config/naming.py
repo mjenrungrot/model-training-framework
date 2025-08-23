@@ -13,7 +13,7 @@ from datetime import datetime
 import hashlib
 import json
 import re
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .schemas import NamingStrategy
 
@@ -30,7 +30,7 @@ class ExperimentNaming:
     @staticmethod
     def generate_name(
         base_name: str,
-        parameters: Dict[str, Any],
+        parameters: dict[str, Any],
         naming_strategy: NamingStrategy = NamingStrategy.HASH_BASED,
     ) -> str:
         """Generate experiment name based on parameters."""
@@ -48,7 +48,7 @@ class ExperimentNaming:
         raise ValueError(f"Unknown naming strategy: {naming_strategy}")
 
     @staticmethod
-    def _generate_hash_based_name(base_name: str, parameters: Dict[str, Any]) -> str:
+    def _generate_hash_based_name(base_name: str, parameters: dict[str, Any]) -> str:
         """Generate hash-based experiment name."""
         # Create deterministic hash from parameters
         param_str = json.dumps(parameters, sort_keys=True, default=str)
@@ -62,7 +62,7 @@ class ExperimentNaming:
 
     @staticmethod
     def _generate_parameter_based_name(
-        base_name: str, parameters: Dict[str, Any]
+        base_name: str, parameters: dict[str, Any]
     ) -> str:
         """Generate parameter-based experiment name."""
         sanitized_base = ExperimentNaming._sanitize_name(base_name)
@@ -89,7 +89,7 @@ class ExperimentNaming:
 
     @staticmethod
     def _generate_timestamp_based_name(
-        base_name: str, parameters: Dict[str, Any]
+        base_name: str, parameters: dict[str, Any]
     ) -> str:
         """Generate timestamp-based experiment name."""
         sanitized_base = ExperimentNaming._sanitize_name(base_name)
@@ -148,19 +148,23 @@ class ExperimentNaming:
 
         return abbreviations.get(param_name, param_name)
 
+    # Constants for value formatting
+    FLOAT_SCIENTIFIC_THRESHOLD = 0.001
+    STRING_TRUNCATE_LENGTH = 10
+
     @staticmethod
     def _format_parameter_value(value: Any) -> str:
         """Format parameter value for inclusion in name."""
         if isinstance(value, float):
             # Format floats in scientific notation if small
-            if abs(value) < 0.001 and value != 0:
+            if abs(value) < ExperimentNaming.FLOAT_SCIENTIFIC_THRESHOLD and value != 0:
                 return f"{value:.1e}".replace("e-0", "e-").replace("e+0", "e+")
             return f"{value:.4g}".rstrip("0").rstrip(".")
         if isinstance(value, bool):
             return "T" if value else "F"
         if isinstance(value, str):
             # Take first 10 characters and sanitize
-            return ExperimentNaming._sanitize_name(value[:10])
+            return ExperimentNaming._sanitize_name(value[:ExperimentNaming.STRING_TRUNCATE_LENGTH])
         return str(value)
 
     @staticmethod
@@ -176,7 +180,7 @@ class ExperimentNaming:
         return f"{truncated}_{name_hash}"
 
     @staticmethod
-    def parse_experiment_name(name: str) -> Dict[str, Any]:
+    def parse_experiment_name(name: str) -> dict[str, Any]:
         """Extract parameter information from experiment name."""
         # This is a best-effort parsing - may not work for all naming strategies
         info = {
@@ -214,16 +218,13 @@ class ExperimentNaming:
             return False
 
         # Check for invalid characters
-        if re.search(ExperimentNaming.INVALID_CHARS, name):
-            return False
-
-        return True
+        return not re.search(ExperimentNaming.INVALID_CHARS, name)
 
     @staticmethod
     def suggest_experiment_name(
         base_name: str,
         existing_names: set[str],
-        parameters: Optional[Dict[str, Any]] = None,
+        parameters: dict[str, Any] | None = None,
     ) -> str:
         """Suggest a unique experiment name."""
         if parameters is None:

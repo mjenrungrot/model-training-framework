@@ -351,7 +351,7 @@ def main():
         total_metrics = {"task1_acc": 0.0, "task2_acc": 0.0, "total_loss": 0.0}
 
         with torch.no_grad():
-            for i, (x, targets) in enumerate(val_data[:5]):  # Sample 5 batches
+            for _i, (x, targets) in enumerate(val_data[:5]):  # Sample 5 batches
                 outputs = model(x)
 
                 task1_acc = trainer._compute_accuracy(

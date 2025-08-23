@@ -12,16 +12,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
-from typing import List, Optional
+from typing import TYPE_CHECKING, ClassVar
 
-from .schemas import (
-    ExperimentConfig,
-    ModelConfig,
-    OptimizerConfig,
-    SchedulerConfig,
-    SLURMConfig,
-    TrainingConfig,
-)
+if TYPE_CHECKING:
+    from .schemas import (
+        DataConfig,
+        ExperimentConfig,
+        ModelConfig,
+        OptimizerConfig,
+        SchedulerConfig,
+        SLURMConfig,
+        TrainingConfig,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +35,8 @@ class ValidationIssue:
     level: str  # "error", "warning", "info"
     component: str  # Component where issue was found
     message: str
-    field: Optional[str] = None
-    suggestion: Optional[str] = None
+    field: str | None = None
+    suggestion: str | None = None
 
 
 @dataclass
@@ -42,8 +44,8 @@ class ValidationResult:
     """Result of configuration validation."""
 
     is_valid: bool
-    issues: List[ValidationIssue] = field(default_factory=list)
-    warnings: List[ValidationIssue] = field(default_factory=list)
+    issues: list[ValidationIssue] = field(default_factory=list)
+    warnings: list[ValidationIssue] = field(default_factory=list)
 
     @property
     def has_errors(self) -> bool:
@@ -55,18 +57,18 @@ class ValidationResult:
         """Check if there are any warning-level issues."""
         return any(issue.level == "warning" for issue in self.issues + self.warnings)
 
-    def get_errors(self) -> List[ValidationIssue]:
+    def get_errors(self) -> list[ValidationIssue]:
         """Get all error-level issues."""
         return [issue for issue in self.issues if issue.level == "error"]
 
-    def get_warnings(self) -> List[ValidationIssue]:
+    def get_warnings(self) -> list[ValidationIssue]:
         """Get all warning-level issues."""
         return [
             issue for issue in self.issues if issue.level == "warning"
         ] + self.warnings
 
     def add_error(
-        self, component: str, message: str, field: str = None, suggestion: str = None
+        self, component: str, message: str, field: str | None = None, suggestion: str | None = None
     ) -> None:
         """Add an error-level issue."""
         self.issues.append(
@@ -75,14 +77,14 @@ class ValidationResult:
         self.is_valid = False
 
     def add_warning(
-        self, component: str, message: str, field: str = None, suggestion: str = None
+        self, component: str, message: str, field: str | None = None, suggestion: str | None = None
     ) -> None:
         """Add a warning-level issue."""
         self.warnings.append(
             ValidationIssue("warning", component, message, field, suggestion)
         )
 
-    def add_info(self, component: str, message: str, field: str = None) -> None:
+    def add_info(self, component: str, message: str, field: str | None = None) -> None:
         """Add an info-level issue."""
         self.issues.append(ValidationIssue("info", component, message, field))
 
@@ -94,16 +96,34 @@ class ResourceCheck:
     is_feasible: bool
     estimated_memory_gb: float
     estimated_time_hours: float
-    recommended_partition: Optional[str] = None
-    issues: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    recommended_partition: str | None = None
+    issues: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 class ConfigValidator:
     """Validates experiment configurations against schema and resource constraints."""
 
+    # Constants for validation limits
+    MAX_EXPERIMENT_NAME_LENGTH = 200
+    MAX_EFFECTIVE_BATCH_SIZE = 10000
+    PARTITION_LONG_HOURS = 72
+    PARTITION_HIGH_MEM_GB = 500
+    PARTITION_HIGH_MEM_GPUS = 4
+    PARTITION_STANDARD_HOURS = 24
+
+    # Constants for time parsing
+    TIME_PARTS_HMS = 3  # Hours:Minutes:Seconds
+    TIME_PARTS_HM = 2   # Hours:Minutes
+    MINUTES_PER_HOUR = 60
+    SECONDS_PER_HOUR = 3600
+    HOURS_PER_DAY = 24
+
+    # Constants for training time estimation
+    BASE_TIME_PER_EPOCH = 0.5  # 30 minutes per epoch
+
     # Known model types and their approximate memory requirements (GB)
-    MODEL_MEMORY_ESTIMATES = {
+    MODEL_MEMORY_ESTIMATES: ClassVar[dict[str, float]] = {
         "resnet18": 0.5,
         "resnet50": 1.0,
         "resnet101": 2.0,
@@ -118,7 +138,7 @@ class ConfigValidator:
     }
 
     # Valid optimizer types
-    VALID_OPTIMIZERS = {
+    VALID_OPTIMIZERS: ClassVar[set[str]] = {
         "adam",
         "adamw",
         "sgd",
@@ -129,7 +149,7 @@ class ConfigValidator:
     }
 
     # Valid scheduler types
-    VALID_SCHEDULERS = {
+    VALID_SCHEDULERS: ClassVar[set[str]] = {
         "step",
         "multistep",
         "exponential",
@@ -141,7 +161,7 @@ class ConfigValidator:
     }
 
     # Valid activation functions
-    VALID_ACTIVATIONS = {
+    VALID_ACTIVATIONS: ClassVar[set[str]] = {
         "relu",
         "gelu",
         "swish",
@@ -189,8 +209,8 @@ class ConfigValidator:
         """Validate basic required fields."""
         if not config.experiment_name:
             result.add_error("basic", "Experiment name is required")
-        elif len(config.experiment_name) > 200:
-            result.add_error("basic", "Experiment name too long (max 200 characters)")
+        elif len(config.experiment_name) > ConfigValidator.MAX_EXPERIMENT_NAME_LENGTH:
+            result.add_error("basic", f"Experiment name too long (max {ConfigValidator.MAX_EXPERIMENT_NAME_LENGTH} characters)")
 
         if not config.data.dataset_name:
             result.add_error("basic", "Dataset name is required", "data.dataset_name")
@@ -467,7 +487,7 @@ class ConfigValidator:
         if config.slurm:
             effective_batch_size *= config.slurm.nodes * config.slurm.ntasks_per_node
 
-        if effective_batch_size > 10000:
+        if effective_batch_size > ConfigValidator.MAX_EFFECTIVE_BATCH_SIZE:
             result.add_warning(
                 "compatibility",
                 f"Very large effective batch size: {effective_batch_size}",
@@ -596,25 +616,25 @@ class ConfigValidator:
         # Handle format like "1-00:00:00" or "24:00:00"
         if "-" in time_str:
             days, time_part = time_str.split("-")
-            hours_from_days = int(days) * 24
+            hours_from_days = int(days) * ConfigValidator.HOURS_PER_DAY
         else:
             hours_from_days = 0
             time_part = time_str
 
         time_parts = time_part.split(":")
-        if len(time_parts) == 3:
+        if len(time_parts) == ConfigValidator.TIME_PARTS_HMS:
             hours, minutes, seconds = map(int, time_parts)
-            return hours_from_days + hours + minutes / 60 + seconds / 3600
-        if len(time_parts) == 2:
+            return hours_from_days + hours + minutes / ConfigValidator.MINUTES_PER_HOUR + seconds / ConfigValidator.SECONDS_PER_HOUR
+        if len(time_parts) == ConfigValidator.TIME_PARTS_HM:
             hours, minutes = map(int, time_parts)
-            return hours_from_days + hours + minutes / 60
+            return hours_from_days + hours + minutes / ConfigValidator.MINUTES_PER_HOUR
         return hours_from_days + int(time_parts[0])
 
     @staticmethod
     def _estimate_training_time(config: ExperimentConfig) -> float:
         """Estimate training time in hours."""
         # Very rough estimate - in practice this would need more sophisticated modeling
-        base_time_per_epoch = 0.5  # 30 minutes per epoch
+        base_time_per_epoch = ConfigValidator.BASE_TIME_PER_EPOCH
 
         # Scale by model complexity
         complexity_factor = (config.model.hidden_size / 512) * (
@@ -634,10 +654,10 @@ class ConfigValidator:
     @staticmethod
     def _recommend_partition(memory_gb: float, time_hours: float, gpus: int) -> str:
         """Recommend SLURM partition based on requirements."""
-        if time_hours > 72:
+        if time_hours > ConfigValidator.PARTITION_LONG_HOURS:
             return "gpu-long"
-        if memory_gb > 500 or gpus > 4:
+        if memory_gb > ConfigValidator.PARTITION_HIGH_MEM_GB or gpus > ConfigValidator.PARTITION_HIGH_MEM_GPUS:
             return "gpu-high-mem"
-        if time_hours > 24:
+        if time_hours > ConfigValidator.PARTITION_STANDARD_HOURS:
             return "gpu"
         return "ckpt-all"

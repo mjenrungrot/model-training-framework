@@ -10,13 +10,14 @@ This module provides job monitoring and status tracking capabilities:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
+import json
 import logging
 from pathlib import Path
 import subprocess
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -45,22 +46,22 @@ class JobInfo:
     status: JobStatus
     partition: str
     nodes: str = ""
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
-    elapsed_time: Optional[str] = None
-    exit_code: Optional[str] = None
+    start_time: str | None = None
+    end_time: str | None = None
+    elapsed_time: str | None = None
+    exit_code: str | None = None
     user: str = ""
     account: str = ""
 
     # Resource usage
-    cpu_time: Optional[str] = None
-    memory_used: Optional[str] = None
-    memory_requested: Optional[str] = None
+    cpu_time: str | None = None
+    memory_used: str | None = None
+    memory_requested: str | None = None
 
     # Additional fields
-    work_dir: Optional[str] = None
-    std_out: Optional[str] = None
-    std_err: Optional[str] = None
+    work_dir: str | None = None
+    std_out: str | None = None
+    std_err: str | None = None
 
     last_updated: float = field(default_factory=time.time)
 
@@ -104,8 +105,8 @@ class SLURMJobMonitor:
             update_interval: How often to update job status (seconds)
         """
         self.update_interval = update_interval
-        self.tracked_jobs: Dict[str, JobInfo] = {}
-        self.job_history: List[JobInfo] = []
+        self.tracked_jobs: dict[str, JobInfo] = {}
+        self.job_history: list[JobInfo] = []
         self.last_update = 0.0
 
         logger.info(
@@ -137,7 +138,7 @@ class SLURMJobMonitor:
             self.job_history.append(job_info)
             logger.info(f"Stopped tracking job: {job_id}")
 
-    def update_job_status(self, job_id: Optional[str] = None) -> None:
+    def update_job_status(self, job_id: str | None = None) -> None:
         """
         Update status for tracked jobs.
 
@@ -169,7 +170,7 @@ class SLURMJobMonitor:
 
         self.last_update = current_time
 
-    def get_job_info(self, job_id: str) -> Optional[JobInfo]:
+    def get_job_info(self, job_id: str) -> JobInfo | None:
         """
         Get detailed information about a job.
 
@@ -188,11 +189,11 @@ class SLURMJobMonitor:
             # Fall back to sacct for completed jobs
             return self._get_job_info_from_sacct(job_id)
 
-        except Exception as e:
-            logger.error(f"Failed to get job info for {job_id}: {e}")
+        except Exception:
+            logger.exception(f"Failed to get job info for {job_id}: ")
             return None
 
-    def _get_job_info_from_squeue(self, job_id: str) -> Optional[JobInfo]:
+    def _get_job_info_from_squeue(self, job_id: str) -> JobInfo | None:
         """Get job info from squeue (for active jobs)."""
         try:
             cmd = [
@@ -227,7 +228,7 @@ class SLURMJobMonitor:
 
         return None
 
-    def _get_job_info_from_sacct(self, job_id: str) -> Optional[JobInfo]:
+    def _get_job_info_from_sacct(self, job_id: str) -> JobInfo | None:
         """Get job info from sacct (for completed jobs)."""
         try:
             cmd = [
@@ -296,11 +297,11 @@ class SLURMJobMonitor:
 
         return state_mapping.get(state_str.upper(), JobStatus.UNKNOWN)
 
-    def get_tracked_jobs(self) -> Dict[str, JobInfo]:
+    def get_tracked_jobs(self) -> dict[str, JobInfo]:
         """Get all currently tracked jobs."""
         return self.tracked_jobs.copy()
 
-    def get_active_jobs(self) -> Dict[str, JobInfo]:
+    def get_active_jobs(self) -> dict[str, JobInfo]:
         """Get all active (running/pending) tracked jobs."""
         return {
             job_id: job_info
@@ -308,11 +309,11 @@ class SLURMJobMonitor:
             if job_info.is_active
         }
 
-    def get_finished_jobs(self) -> List[JobInfo]:
+    def get_finished_jobs(self) -> list[JobInfo]:
         """Get all finished jobs from history."""
         return self.job_history.copy()
 
-    def get_job_summary(self) -> Dict[str, Any]:
+    def get_job_summary(self) -> dict[str, Any]:
         """Get summary of job monitoring status."""
         active_jobs = self.get_active_jobs()
 
@@ -339,10 +340,10 @@ class SLURMJobMonitor:
 
     def wait_for_jobs(
         self,
-        job_ids: List[str],
-        timeout: Optional[float] = None,
+        job_ids: list[str],
+        timeout: float | None = None,
         check_interval: float = 30.0,
-    ) -> Dict[str, JobInfo]:
+    ) -> dict[str, JobInfo]:
         """
         Wait for jobs to complete.
 
@@ -384,7 +385,7 @@ class SLURMJobMonitor:
 
         return completed_jobs
 
-    def cancel_tracked_jobs(self) -> Dict[str, bool]:
+    def cancel_tracked_jobs(self) -> dict[str, bool]:
         """
         Cancel all currently tracked jobs.
 
@@ -399,9 +400,9 @@ class SLURMJobMonitor:
                 subprocess.run(cmd, check=True, capture_output=True)
                 results[job_id] = True
                 logger.info(f"Cancelled job: {job_id}")
-            except subprocess.CalledProcessError as e:
+            except subprocess.CalledProcessError:
                 results[job_id] = False
-                logger.error(f"Failed to cancel job {job_id}: {e}")
+                logger.exception(f"Failed to cancel job {job_id}: ")
 
         return results
 
@@ -412,9 +413,6 @@ class SLURMJobMonitor:
         Args:
             output_path: Path to save job history
         """
-        from dataclasses import asdict
-        import json
-
         try:
             # Convert job history to serializable format
             history_data = []
@@ -430,16 +428,16 @@ class SLURMJobMonitor:
                 history_data.append(job_dict)
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(output_path, "w") as f:
+            with output_path.open("w") as f:
                 json.dump(history_data, f, indent=2, default=str)
 
             logger.info(f"Exported job history to {output_path}")
 
-        except Exception as e:
-            logger.error(f"Failed to export job history: {e}")
+        except Exception:
+            logger.exception("Failed to export job history: ")
 
 
-def get_slurm_queue_info() -> Dict[str, Any]:
+def get_slurm_queue_info() -> dict[str, Any]:
     """
     Get general SLURM queue information.
 
@@ -475,5 +473,5 @@ def get_slurm_queue_info() -> Dict[str, Any]:
         }
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to get queue info: {e}")
+        logger.exception("Failed to get queue info: ")
         return {"error": str(e), "timestamp": time.time()}

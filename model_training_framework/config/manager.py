@@ -10,16 +10,29 @@ This module provides centralized configuration management:
 
 from __future__ import annotations
 
+from dataclasses import asdict
 import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import yaml
 
 from ..utils.path_utils import resolve_config_path
-from .schemas import ExperimentConfig
+from .schemas import (
+    CheckpointConfig,
+    DataConfig,
+    ExperimentConfig,
+    LoggingConfig,
+    ModelConfig,
+    OptimizerConfig,
+    PerformanceConfig,
+    PreemptionConfig,
+    SchedulerConfig,
+    SLURMConfig,
+    TrainingConfig,
+)
 from .validators import ConfigValidator, ValidationResult
 
 logger = logging.getLogger(__name__)
@@ -28,11 +41,11 @@ logger = logging.getLogger(__name__)
 class ConfigurationManager:
     """Manages configuration loading, validation, and composition."""
 
-    def __init__(self, project_root: Path, config_dir: Optional[Path] = None):
+    def __init__(self, project_root: Path, config_dir: Path | None = None):
         """Initialize configuration manager."""
         self.project_root = Path(project_root)
         self.config_dir = config_dir or self.project_root / "configs"
-        self.config_cache: Dict[str, Dict[str, Any]] = {}
+        self.config_cache: dict[str, dict[str, Any]] = {}
 
         # Ensure config directory exists
         self.config_dir.mkdir(parents=True, exist_ok=True)
@@ -43,10 +56,10 @@ class ConfigurationManager:
 
     def load_config(
         self,
-        config_path: Union[str, Path],
+        config_path: str | Path,
         validate: bool = True,
         use_cache: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Load configuration from file with optional validation."""
 
         # Resolve path relative to project root or config directory
@@ -101,8 +114,8 @@ class ConfigurationManager:
 
     def save_config(
         self,
-        config: Union[Dict[str, Any], ExperimentConfig],
-        output_path: Union[str, Path],
+        config: dict[str, Any] | ExperimentConfig,
+        output_path: str | Path,
         format: str = "yaml",
     ) -> None:
         """Save configuration to file."""
@@ -118,10 +131,10 @@ class ConfigurationManager:
 
         # Save based on format
         if format.lower() in ["yaml", "yml"]:
-            with open(output_path, "w") as f:
+            with output_path.open("w") as f:
                 yaml.dump(config_data, f, default_flow_style=False, indent=2)
         elif format.lower() == "json":
-            with open(output_path, "w") as f:
+            with output_path.open("w") as f:
                 json.dump(config_data, f, indent=2, default=str)
         else:
             raise ValueError(f"Unsupported format: {format}")
@@ -130,10 +143,10 @@ class ConfigurationManager:
 
     def compose_configs(
         self,
-        base_config: Union[str, Path, Dict[str, Any]],
-        overrides: List[Union[str, Path, Dict[str, Any]]] = None,
-        parameter_overrides: Dict[str, Any] = None,
-    ) -> Dict[str, Any]:
+        base_config: str | Path | dict[str, Any],
+        overrides: list[str | Path | dict[str, Any]] | None = None,
+        parameter_overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Compose configuration from base config and overrides."""
 
         # Load base config
@@ -160,7 +173,7 @@ class ConfigurationManager:
         return result
 
     def create_experiment_config(
-        self, config_data: Dict[str, Any], validate: bool = True
+        self, config_data: dict[str, Any], validate: bool = True
     ) -> ExperimentConfig:
         """Create ExperimentConfig from dictionary."""
 
@@ -183,7 +196,7 @@ class ConfigurationManager:
 
         return experiment_config
 
-    def list_configs(self, pattern: str = "*.yaml") -> List[Path]:
+    def list_configs(self, pattern: str = "*.yaml") -> list[Path]:
         """List available configuration files."""
         return list(self.config_dir.glob(pattern))
 
@@ -192,17 +205,17 @@ class ConfigurationManager:
         self.config_cache.clear()
         logger.debug("Cleared configuration cache")
 
-    def _load_config_file(self, config_path: Path) -> Dict[str, Any]:
+    def _load_config_file(self, config_path: Path) -> dict[str, Any]:
         """Load configuration file based on extension."""
 
         suffix = config_path.suffix.lower()
 
         if suffix in [".yaml", ".yml"]:
-            with open(config_path) as f:
+            with config_path.open() as f:
                 return yaml.safe_load(f) or {}
 
         elif suffix == ".json":
-            with open(config_path) as f:
+            with config_path.open() as f:
                 return json.load(f)
 
         else:
@@ -233,8 +246,8 @@ class ConfigurationManager:
         return config
 
     def _deep_merge_dict(
-        self, base: Dict[str, Any], override: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, base: dict[str, Any], override: dict[str, Any]
+    ) -> dict[str, Any]:
         """Deep merge two dictionaries."""
         result = base.copy()
 
@@ -251,7 +264,7 @@ class ConfigurationManager:
         return result
 
     def _set_nested_value(
-        self, config: Dict[str, Any], key_path: str, value: Any
+        self, config: dict[str, Any], key_path: str, value: Any
     ) -> None:
         """Set a nested value in config using dot notation."""
         keys = key_path.split(".")
@@ -267,23 +280,9 @@ class ConfigurationManager:
         current[keys[-1]] = value
 
     def _dict_to_experiment_config(
-        self, config_data: Dict[str, Any]
+        self, config_data: dict[str, Any]
     ) -> ExperimentConfig:
         """Convert dictionary to ExperimentConfig with proper type handling."""
-        from .schemas import (
-            CheckpointConfig,
-            DataConfig,
-            ExperimentConfig,
-            LoggingConfig,
-            ModelConfig,
-            OptimizerConfig,
-            PerformanceConfig,
-            PreemptionConfig,
-            SchedulerConfig,
-            SLURMConfig,
-            TrainingConfig,
-        )
-
         # Helper function to safely extract nested config
         def extract_config(key: str, config_class, required: bool = True):
             if key in config_data:
@@ -328,10 +327,8 @@ class ConfigurationManager:
             custom_params=config_data.get("custom_params", {}),
         )
 
-    def _experiment_config_to_dict(self, config: ExperimentConfig) -> Dict[str, Any]:
+    def _experiment_config_to_dict(self, config: ExperimentConfig) -> dict[str, Any]:
         """Convert ExperimentConfig to dictionary."""
-        from dataclasses import asdict
-
         return asdict(config)
 
     def validate_project_structure(self) -> ValidationResult:

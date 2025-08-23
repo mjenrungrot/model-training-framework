@@ -14,12 +14,15 @@ import logging
 from pathlib import Path
 import shutil
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 import torch
 
-from .config import CheckpointConfig
-from .states import ResumeState
+if TYPE_CHECKING:
+    from .config import CheckpointConfig
+    from .states import ResumeState
+
+from .utils import timeout
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +50,8 @@ class CheckpointManager:
         self.best_path = self.checkpoint_dir / "best.ckpt"
 
         # Track checkpoint history and metrics
-        self.checkpoint_history: List[Path] = []
-        self.best_metric_value: Optional[float] = None
+        self.checkpoint_history: list[Path] = []
+        self.best_metric_value: float | None = None
         self.last_save_time = time.time()
 
         logger.info(
@@ -100,12 +103,12 @@ class CheckpointManager:
         self,
         model: torch.nn.Module,
         optimizer: torch.optim.Optimizer,
-        scheduler: Optional[Any] = None,
-        resume_state: Optional[ResumeState] = None,
+        scheduler: Any | None = None,
+        resume_state: ResumeState | None = None,
         epoch: int = 0,
         global_step: int = 0,
-        metrics: Optional[Dict[str, float]] = None,
-        timeout_seconds: Optional[float] = None,
+        metrics: dict[str, float] | None = None,
+        timeout_seconds: float | None = None,
     ) -> Path:
         """
         Save a checkpoint with model, optimizer, and training state.
@@ -126,8 +129,6 @@ class CheckpointManager:
         Raises:
             TimeoutError: If save operation exceeds timeout
         """
-        from .utils import timeout
-
         # Generate checkpoint filename
         checkpoint_filename = self.config.filename_template.format(
             epoch=epoch, step=global_step, timestamp=int(time.time())
@@ -189,9 +190,9 @@ class CheckpointManager:
 
     def load_checkpoint(
         self,
-        checkpoint_path: Optional[Union[str, Path]] = None,
-        map_location: Optional[Union[str, torch.device]] = None,
-    ) -> Dict[str, Any]:
+        checkpoint_path: str | Path | None = None,
+        map_location: str | torch.device | None = None,
+    ) -> dict[str, Any]:
         """
         Load checkpoint data from file.
 
@@ -217,18 +218,17 @@ class CheckpointManager:
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
         logger.info(f"Loading checkpoint from {checkpoint_path}")
-        checkpoint_data = torch.load(checkpoint_path, map_location=map_location)
+        return torch.load(checkpoint_path, map_location=map_location)
 
-        return checkpoint_data
 
     def restore_from_checkpoint(
         self,
         model: torch.nn.Module,
         optimizer: torch.optim.Optimizer,
-        scheduler: Optional[Any] = None,
-        checkpoint_path: Optional[Union[str, Path]] = None,
+        scheduler: Any | None = None,
+        checkpoint_path: str | Path | None = None,
         strict: bool = True,
-    ) -> tuple[int, int, Optional[ResumeState]]:
+    ) -> tuple[int, int, ResumeState | None]:
         """
         Restore model, optimizer, and scheduler from checkpoint.
 
@@ -268,7 +268,7 @@ class CheckpointManager:
 
         return epoch, global_step, resume_state
 
-    def list_checkpoints(self) -> List[Path]:
+    def list_checkpoints(self) -> list[Path]:
         """List all available checkpoint files."""
         if not self.checkpoint_dir.exists():
             return []
@@ -283,11 +283,11 @@ class CheckpointManager:
 
         return checkpoints
 
-    def get_latest_checkpoint(self) -> Optional[Path]:
+    def get_latest_checkpoint(self) -> Path | None:
         """Get path to latest checkpoint."""
         return self._find_latest_checkpoint()
 
-    def get_best_checkpoint(self) -> Optional[Path]:
+    def get_best_checkpoint(self) -> Path | None:
         """Get path to best checkpoint."""
         if self.best_path.exists() and self.best_path.is_symlink():
             return self.best_path.resolve()
@@ -299,7 +299,7 @@ class CheckpointManager:
             shutil.rmtree(self.checkpoint_dir)
         logger.info(f"Removed all checkpoints from {self.checkpoint_dir}")
 
-    def _find_latest_checkpoint(self) -> Optional[Path]:
+    def _find_latest_checkpoint(self) -> Path | None:
         """Find the most recent checkpoint."""
         # First try the latest symlink
         if self.latest_path.exists() and self.latest_path.is_symlink():
@@ -326,7 +326,7 @@ class CheckpointManager:
             logger.warning(f"Failed to update latest symlink: {e}")
 
     def _maybe_update_best_checkpoint(
-        self, checkpoint_path: Path, metrics: Dict[str, float]
+        self, checkpoint_path: Path, metrics: dict[str, float]
     ) -> None:
         """Update best checkpoint if current metrics are better."""
         if self.config.monitor_metric is None:
@@ -389,7 +389,7 @@ class CheckpointManager:
                         f"Failed to remove checkpoint {checkpoint_path}: {e}"
                     )
 
-    def get_storage_info(self) -> Dict[str, Any]:
+    def get_storage_info(self) -> dict[str, Any]:
         """Get information about checkpoint storage usage."""
         if not self.checkpoint_dir.exists():
             return {"total_size_mb": 0, "num_checkpoints": 0, "checkpoints": []}

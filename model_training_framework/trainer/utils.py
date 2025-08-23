@@ -10,14 +10,18 @@ This module provides utility functions for the training engine:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 import contextlib
 import logging
+import random
 import signal
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable
 
+import numpy as np
 import torch
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +77,8 @@ class SignalHandler:
 
     def __init__(self):
         self.preemption_requested = False
-        self.original_handlers: Dict[int, Any] = {}
-        self.callbacks: Dict[int, list[Callable]] = {}
+        self.original_handlers: dict[int, Any] = {}
+        self.callbacks: dict[int, list[Callable]] = {}
 
     def register_preemption_handler(self, signal_num: int = signal.SIGUSR1) -> None:
         """
@@ -92,8 +96,8 @@ class SignalHandler:
             for callback in self.callbacks.get(signum, []):
                 try:
                     callback(signum, frame)
-                except Exception as e:
-                    logger.error(f"Error in signal callback: {e}")
+                except Exception:
+                    logger.exception("Error in signal callback: ")
 
         # Save original handler and install new one
         self.original_handlers[signal_num] = signal.signal(
@@ -154,7 +158,7 @@ class PerformanceMonitor:
         self.last_step_time = current_time
         return step_duration
 
-    def record_memory_usage(self) -> Optional[float]:
+    def record_memory_usage(self) -> float | None:
         """
         Record current GPU memory usage.
 
@@ -169,7 +173,7 @@ class PerformanceMonitor:
         self.memory_usage.append(memory_gb)
         return memory_gb
 
-    def get_average_step_time(self, last_n: Optional[int] = None) -> float:
+    def get_average_step_time(self, last_n: int | None = None) -> float:
         """
         Get average step time.
 
@@ -185,7 +189,7 @@ class PerformanceMonitor:
         times = self.step_times[-last_n:] if last_n else self.step_times
         return sum(times) / len(times)
 
-    def get_steps_per_second(self, last_n: Optional[int] = None) -> float:
+    def get_steps_per_second(self, last_n: int | None = None) -> float:
         """
         Get training steps per second.
 
@@ -202,7 +206,7 @@ class PerformanceMonitor:
         """Get total training time in seconds."""
         return time.time() - self.start_time
 
-    def get_memory_stats(self) -> Dict[str, float]:
+    def get_memory_stats(self) -> dict[str, float]:
         """
         Get memory usage statistics.
 
@@ -218,7 +222,7 @@ class PerformanceMonitor:
 
         return {"current_gb": current_gb, "max_gb": max_gb, "avg_gb": avg_gb}
 
-    def get_performance_summary(self) -> Dict[str, Any]:
+    def get_performance_summary(self) -> dict[str, Any]:
         """Get comprehensive performance summary."""
         return {
             "total_steps": len(self.step_times),
@@ -227,6 +231,14 @@ class PerformanceMonitor:
             "steps_per_sec": self.get_steps_per_second(),
             "memory_stats": self.get_memory_stats(),
         }
+
+
+# Constants for formatting
+SECONDS_PER_MINUTE = 60
+SECONDS_PER_HOUR = 3600
+BYTES_PER_KB = 1024
+BYTES_PER_MB = 1024**2
+BYTES_PER_GB = 1024**3
 
 
 def format_time(seconds: float) -> str:
@@ -239,13 +251,13 @@ def format_time(seconds: float) -> str:
     Returns:
         Formatted time string (e.g., "1h 23m 45s")
     """
-    if seconds < 60:
+    if seconds < SECONDS_PER_MINUTE:
         return f"{seconds:.1f}s"
-    if seconds < 3600:
-        minutes = seconds / 60
+    if seconds < SECONDS_PER_HOUR:
+        minutes = seconds / SECONDS_PER_MINUTE
         return f"{minutes:.1f}m"
-    hours = seconds / 3600
-    minutes = (seconds % 3600) / 60
+    hours = seconds / SECONDS_PER_HOUR
+    minutes = (seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE
     return f"{hours:.0f}h {minutes:.0f}m"
 
 
@@ -259,16 +271,16 @@ def format_memory(bytes_val: float) -> str:
     Returns:
         Formatted memory string (e.g., "1.5GB")
     """
-    if bytes_val < 1024:
+    if bytes_val < BYTES_PER_KB:
         return f"{bytes_val:.0f}B"
-    if bytes_val < 1024**2:
-        return f"{bytes_val / 1024:.1f}KB"
-    if bytes_val < 1024**3:
-        return f"{bytes_val / (1024**2):.1f}MB"
-    return f"{bytes_val / (1024**3):.1f}GB"
+    if bytes_val < BYTES_PER_MB:
+        return f"{bytes_val / BYTES_PER_KB:.1f}KB"
+    if bytes_val < BYTES_PER_GB:
+        return f"{bytes_val / BYTES_PER_MB:.1f}MB"
+    return f"{bytes_val / BYTES_PER_GB:.1f}GB"
 
 
-def get_device_info() -> Dict[str, Any]:
+def get_device_info() -> dict[str, Any]:
     """
     Get information about available compute devices.
 
@@ -326,13 +338,9 @@ def ensure_reproducible(
         deterministic: Whether to use deterministic algorithms
         benchmark: Whether to enable cudnn benchmark mode
     """
-    import random
-
-    import numpy as np
-
     # Set seeds for all random number generators
     random.seed(seed)
-    np.random.seed(seed)
+    np.random.seed(seed)  # noqa: NPY002 - using legacy API for compatibility
     torch.manual_seed(seed)
 
     if torch.cuda.is_available():
@@ -352,7 +360,7 @@ def ensure_reproducible(
     )
 
 
-def calculate_model_size(model: torch.nn.Module) -> Dict[str, Any]:
+def calculate_model_size(model: torch.nn.Module) -> dict[str, Any]:
     """
     Calculate model size and parameter count.
 
@@ -419,11 +427,11 @@ class EarlyStopping:
         self.mode = mode
         self.min_delta = min_delta
 
-        self.best_value: Optional[float] = None
+        self.best_value: float | None = None
         self.epochs_without_improvement = 0
         self.should_stop = False
 
-    def __call__(self, metrics: Dict[str, float]) -> bool:
+    def __call__(self, metrics: dict[str, float]) -> bool:
         """
         Check if training should stop early.
 

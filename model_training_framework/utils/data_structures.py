@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Generic, Optional, TypeVar, Union
+from pathlib import Path
+from typing import Any, Generic, TypeVar, Union
 
 T = TypeVar("T")
 E = TypeVar("E")
@@ -22,10 +23,10 @@ class Result(Generic[T, E]):
     """
     Result type for error handling, similar to Rust's Result.
 
-    Can be either Success(value) or Error(error).
+    Can be either success(value) or error(error).
     """
 
-    def __init__(self, value: Optional[T] = None, error: Optional[E] = None):
+    def __init__(self, value: T | None = None, error: E | None = None):
         if value is not None and error is not None:
             raise ValueError("Result cannot have both value and error")
         if value is None and error is None:
@@ -74,24 +75,24 @@ class Result(Generic[T, E]):
         """Apply function to value if success."""
         if self.is_success:
             try:
-                return Success(func(self._value))
+                return success(func(self._value))
             except Exception as e:
-                return Error(e)
+                return error(e)
         return self
 
     def map_error(self, func) -> Result:
         """Apply function to error if error."""
         if self.is_error:
-            return Error(func(self._error))
+            return error(func(self._error))
         return self
 
 
-def Success(value: T) -> Result[T, Any]:
+def success(value: T) -> Result[T, Any]:
     """Create successful result."""
     return Result(value=value)
 
 
-def Error(error: E) -> Result[Any, E]:
+def error(error: E) -> Result[Any, E]:
     """Create error result."""
     return Result(error=error)
 
@@ -116,6 +117,6 @@ class LogLevel(Enum):
 
 
 # Type aliases for common types
-PathLike = Union[str, "Path"]
+PathLike = Union[str, Path]
 ConfigDict = dict[str, Any]
 MetricsDict = dict[str, float]

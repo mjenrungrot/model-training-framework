@@ -9,8 +9,13 @@ from pathlib import Path
 from typing import List
 
 from model_training_framework import ModelTrainingFramework
-from model_training_framework.config import ExecutionMode, ExperimentConfig
+from model_training_framework.config import (
+    ConfigurationManager,
+    ExecutionMode,
+    ExperimentConfig,
+)
 from model_training_framework.slurm import SLURMLauncher
+from model_training_framework.slurm.git_ops import GitManager
 
 
 def create_experiment_configs() -> List[ExperimentConfig]:
@@ -79,8 +84,6 @@ def create_experiment_configs() -> List[ExperimentConfig]:
     )
 
     # Convert to ExperimentConfig objects
-    from model_training_framework.config import ConfigurationManager
-
     config_manager = ConfigurationManager(Path.cwd())
 
     for config_dict in [config1, config2, config3]:
@@ -101,7 +104,7 @@ def main():
     output_dir = project_root / "slurm_experiments"
 
     # Initialize framework
-    framework = ModelTrainingFramework(project_root=project_root, config_dir=config_dir)
+    ModelTrainingFramework(project_root=project_root, config_dir=config_dir)
 
     # Create experiment configurations
     print("📋 Creating experiment configurations...")
@@ -153,33 +156,33 @@ def main():
     # Option 2: Actual SLURM submission (commented out for safety)
     """
     print("🚀 Submitting jobs to SLURM...")
-    
+
     try:
         submission_result = launcher.submit_experiment_batch(
             experiments=experiments,
             execution_mode=ExecutionMode.SLURM,
             max_concurrent_jobs=3  # Limit concurrent jobs
         )
-        
+
         print(f"✅ Successfully submitted {len(submission_result.successful_jobs)} jobs")
-        
+
         # Display submitted job IDs
         for job_id in submission_result.successful_jobs:
             print(f"   Job ID: {job_id}")
-        
+
         # Display any failures
         if submission_result.failed_jobs:
             print("❌ Failed to submit some jobs:")
             for exp_name, error in submission_result.failed_jobs.items():
                 print(f"   {exp_name}: {error}")
-        
+
         # Monitor job status
         print("📊 Monitoring job status...")
         status_summary = launcher.get_job_status_summary(submission_result.successful_jobs)
-        
+
         for status, count in status_summary.items():
             print(f"   {status}: {count} jobs")
-    
+
     except Exception as e:
         print(f"❌ SLURM submission failed: {e}")
         return
@@ -189,8 +192,6 @@ def main():
     print("🌿 Demonstrating git integration...")
 
     try:
-        from model_training_framework.slurm.git_ops import GitManager
-
         git_manager = GitManager(str(project_root))
 
         # Create experiment branch
@@ -262,7 +263,7 @@ python -m model_training_framework.scripts.train \\
 echo "Training completed at: $(date)"
 """
 
-    with open(template_path, "w") as f:
+    with template_path.open("w") as f:
         f.write(template_content)
 
 

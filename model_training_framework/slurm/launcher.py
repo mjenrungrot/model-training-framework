@@ -10,19 +10,21 @@ This module provides the main SLURM integration functionality:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 import logging
 from pathlib import Path
 import subprocess
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any
 
-from ..config.schemas import ExperimentConfig
 from .git_ops import BranchManager, GitManager
 from .templates import (
     SBATCHTemplateEngine,
     create_template_context_from_config,
 )
+
+if TYPE_CHECKING:
+    from ..config.schemas import ExperimentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +38,10 @@ class SLURMJobResult:
     """Result of a single SLURM job submission."""
 
     experiment_name: str
-    job_id: Optional[str] = None
+    job_id: str | None = None
     success: bool = False
-    error_message: Optional[str] = None
-    sbatch_script_path: Optional[Path] = None
+    error_message: str | None = None
+    sbatch_script_path: Path | None = None
     submission_time: float = field(default_factory=time.time)
 
 
@@ -48,11 +50,11 @@ class BatchSubmissionResult:
     """Result of batch experiment submission."""
 
     total_experiments: int
-    successful_jobs: List[str] = field(default_factory=list)
-    failed_jobs: Dict[str, str] = field(
+    successful_jobs: list[str] = field(default_factory=list)
+    failed_jobs: dict[str, str] = field(
         default_factory=dict
     )  # experiment_name -> error_message
-    job_results: List[SLURMJobResult] = field(default_factory=list)
+    job_results: list[SLURMJobResult] = field(default_factory=list)
 
     @property
     def success_count(self) -> int:
@@ -79,7 +81,7 @@ class SLURMLauncher:
         self,
         template_path: Path,
         project_root: Path,
-        experiments_dir: Optional[Path] = None,
+        experiments_dir: Path | None = None,
     ):
         """
         Initialize SLURM launcher.
@@ -106,7 +108,7 @@ class SLURMLauncher:
     def submit_single_experiment(
         self,
         config: ExperimentConfig,
-        script_path: Union[str, Path],
+        script_path: str | Path,
         use_git_branch: bool = False,
         dry_run: bool = False,
     ) -> SLURMJobResult:
@@ -146,9 +148,8 @@ class SLURMLauncher:
             result.sbatch_script_path = sbatch_path
 
             # Save configuration for reproducibility
-            config_path = exp_dir / "config.yaml"
+            exp_dir / "config.yaml"
             # TODO: Implement config serialization
-            # self._save_experiment_config(config, config_path)
 
             if dry_run:
                 logger.info(f"Dry run: Would submit job for {config.experiment_name}")
@@ -167,17 +168,17 @@ class SLURMLauncher:
 
         except Exception as e:
             result.error_message = str(e)
-            logger.error(f"Failed to submit experiment {config.experiment_name}: {e}")
+            logger.exception(f"Failed to submit experiment {config.experiment_name}: ")
 
         return result
 
     def submit_experiment_batch(
         self,
-        experiments: List[ExperimentConfig],
-        script_path: Union[str, Path],
+        experiments: list[ExperimentConfig],
+        script_path: str | Path,
         use_git_branch: bool = False,
         dry_run: bool = False,
-        max_concurrent: Optional[int] = None,
+        max_concurrent: int | None = None,
     ) -> BatchSubmissionResult:
         """
         Submit multiple experiments as SLURM jobs.
@@ -223,7 +224,7 @@ class SLURMLauncher:
 
         return result
 
-    def _setup_git_branch(self, experiment_name: str) -> Dict[str, str]:
+    def _setup_git_branch(self, experiment_name: str) -> dict[str, str]:
         """
         Setup git branch for experiment isolation.
 
@@ -248,8 +249,8 @@ class SLURMLauncher:
                 "original_branch": current_branch,
             }
 
-        except Exception as e:
-            logger.error(f"Failed to setup git branch: {e}")
+        except Exception:
+            logger.exception("Failed to setup git branch: ")
             # Fall back to current state
             return {
                 "commit_hash": self.git_manager.get_current_commit(),
@@ -259,9 +260,9 @@ class SLURMLauncher:
     def _generate_sbatch_script(
         self,
         config: ExperimentConfig,
-        script_path: Union[str, Path],
+        script_path: str | Path,
         exp_dir: Path,
-        git_info: Optional[Dict[str, str]],
+        git_info: dict[str, str] | None,
     ) -> Path:
         """
         Generate SBATCH script for experiment.
@@ -295,7 +296,7 @@ class SLURMLauncher:
 
         return sbatch_path
 
-    def _extract_slurm_config(self, config: ExperimentConfig) -> Dict[str, Any]:
+    def _extract_slurm_config(self, config: ExperimentConfig) -> dict[str, Any]:
         """
         Extract SLURM configuration from experiment config.
 
@@ -321,8 +322,6 @@ class SLURMLauncher:
             }
 
         # Convert SLURM config to dictionary
-        from dataclasses import asdict
-
         return asdict(config.slurm)
 
     def _submit_sbatch_job(self, sbatch_path: Path) -> str:
@@ -348,17 +347,16 @@ class SLURMLauncher:
             # Parse job ID from output (format: "Submitted batch job 12345")
             output = result.stdout.strip()
             if "Submitted batch job" in output:
-                job_id = output.split()[-1]
-                return job_id
+                return output.split()[-1]
             raise SLURMError(f"Unexpected sbatch output: {output}")
 
         except subprocess.CalledProcessError as e:
             error_msg = f"sbatch failed: {e.stderr or e.stdout}"
-            raise SLURMError(error_msg)
+            raise SLURMError(error_msg) from e
         except Exception as e:
-            raise SLURMError(f"Failed to submit job: {e}")
+            raise SLURMError(f"Failed to submit job: {e}") from e
 
-    def get_job_status(self, job_id: str) -> Dict[str, Any]:
+    def get_job_status(self, job_id: str) -> dict[str, Any]:
         """
         Get status of a SLURM job.
 
@@ -412,19 +410,19 @@ class SLURMLauncher:
         try:
             cmd = ["scancel", job_id]
 
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
 
             logger.info(f"Cancelled job: {job_id}")
             return True
 
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to cancel job {job_id}: {e.stderr}")
+        except subprocess.CalledProcessError:
+            logger.exception(f"Failed to cancel job {job_id}: ")
             return False
-        except Exception as e:
-            logger.error(f"Error cancelling job {job_id}: {e}")
+        except Exception:
+            logger.exception(f"Error cancelling job {job_id}: ")
             return False
 
-    def list_user_jobs(self, user: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_user_jobs(self, user: str | None = None) -> list[dict[str, Any]]:
         """
         List SLURM jobs for user.
 
@@ -461,16 +459,16 @@ class SLURMLauncher:
 
             return jobs
 
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to list jobs: {e.stderr}")
+        except subprocess.CalledProcessError:
+            logger.exception("Failed to list jobs: ")
             return []
-        except Exception as e:
-            logger.error(f"Error listing jobs: {e}")
+        except Exception:
+            logger.exception("Error listing jobs: ")
             return []
 
     def cleanup_old_experiments(
         self, days: int = 30, dry_run: bool = True
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Clean up old experiment directories and job branches.
 
@@ -497,12 +495,12 @@ class SLURMLauncher:
             else:
                 logger.info(f"Cleaned up {len(cleaned_items)} old items")
 
-        except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
+        except Exception:
+            logger.exception("Error during cleanup: ")
 
         return cleaned_items
 
-    def validate_slurm_environment(self) -> Dict[str, Any]:
+    def validate_slurm_environment(self) -> dict[str, Any]:
         """
         Validate SLURM environment and return status.
 

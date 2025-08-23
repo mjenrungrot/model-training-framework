@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-from typing import Any, List, Optional, Set, Union
+from typing import Any
 
 
 def validate_type(value: Any, expected_type: type, name: str = "value") -> bool:
@@ -37,9 +37,9 @@ def validate_type(value: Any, expected_type: type, name: str = "value") -> bool:
 
 
 def validate_range(
-    value: Union[int, float],
-    min_val: Optional[Union[int, float]] = None,
-    max_val: Optional[Union[int, float]] = None,
+    value: int | float,
+    min_val: int | float | None = None,
+    max_val: int | float | None = None,
     name: str = "value",
 ) -> bool:
     """
@@ -66,7 +66,7 @@ def validate_range(
     return True
 
 
-def validate_choices(value: Any, choices: Set[Any], name: str = "value") -> bool:
+def validate_choices(value: Any, choices: set[Any], name: str = "value") -> bool:
     """
     Validate that a value is one of allowed choices.
 
@@ -107,7 +107,7 @@ def validate_string_format(value: str, pattern: str, name: str = "value") -> boo
 
 
 def validate_path_exists(
-    path: Union[str, Path],
+    path: str | Path,
     must_be_file: bool = False,
     must_be_dir: bool = False,
     name: str = "path",
@@ -178,7 +178,7 @@ def validate_url(url: str, name: str = "url") -> bool:
     return validate_string_format(url, pattern, name)
 
 
-def validate_list_not_empty(values: List[Any], name: str = "list") -> bool:
+def validate_list_not_empty(values: list[Any], name: str = "list") -> bool:
     """
     Validate that a list is not empty.
 
@@ -198,7 +198,7 @@ def validate_list_not_empty(values: List[Any], name: str = "list") -> bool:
 
 
 def validate_dict_has_keys(
-    data: dict, required_keys: Set[str], name: str = "dictionary"
+    data: dict, required_keys: set[str], name: str = "dictionary"
 ) -> bool:
     """
     Validate that a dictionary has required keys.
@@ -221,7 +221,7 @@ def validate_dict_has_keys(
 
 
 def validate_positive_number(
-    value: Union[int, float], name: str = "value", allow_zero: bool = False
+    value: int | float, name: str = "value", allow_zero: bool = False
 ) -> bool:
     """
     Validate that a number is positive.

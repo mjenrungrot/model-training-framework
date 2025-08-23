@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import List, Optional, Union
+import re
 
 logger = logging.getLogger(__name__)
 
 
-def get_project_root(start_path: Optional[Path] = None) -> Path:
+def get_project_root(start_path: Path | None = None) -> Path:
     """
     Find the project root by looking for common project indicators.
 
@@ -64,7 +64,7 @@ def get_project_root(start_path: Optional[Path] = None) -> Path:
 
 
 def resolve_config_path(
-    config_path: Union[str, Path], project_root: Path, config_dir: Optional[Path] = None
+    config_path: str | Path, project_root: Path, config_dir: Path | None = None
 ) -> Path:
     """
     Resolve configuration file path with fallback search locations.
@@ -119,7 +119,7 @@ def resolve_config_path(
     )
 
 
-def ensure_directory_exists(directory: Union[str, Path], parents: bool = True) -> Path:
+def ensure_directory_exists(directory: str | Path, parents: bool = True) -> Path:
     """
     Ensure directory exists, creating it if necessary.
 
@@ -136,7 +136,7 @@ def ensure_directory_exists(directory: Union[str, Path], parents: bool = True) -
     return directory
 
 
-def validate_project_structure(project_root: Path) -> List[str]:
+def validate_project_structure(project_root: Path) -> list[str]:
     """
     Validate project structure and return list of issues.
 
@@ -168,11 +168,10 @@ def validate_project_structure(project_root: Path) -> List[str]:
 
     for dir_name, description in recommended_dirs.items():
         dir_path = project_root / dir_name
-        if not dir_path.exists():
-            if dir_name not in ["data", "notebooks"]:  # Optional directories
-                issues.append(
-                    f"Recommended directory missing: {dir_path} ({description})"
-                )
+        if not dir_path.exists() and dir_name not in ["data", "notebooks"]:  # Optional directories
+            issues.append(
+                f"Recommended directory missing: {dir_path} ({description})"
+            )
 
     # Check for SLURM template
     slurm_template_paths = [
@@ -195,8 +194,8 @@ def validate_project_structure(project_root: Path) -> List[str]:
 
 
 def find_files_by_pattern(
-    directory: Union[str, Path], pattern: str, recursive: bool = True
-) -> List[Path]:
+    directory: str | Path, pattern: str, recursive: bool = True
+) -> list[Path]:
     """
     Find files matching a glob pattern.
 
@@ -226,7 +225,7 @@ def find_files_by_pattern(
     return file_matches
 
 
-def get_relative_path(file_path: Union[str, Path], base_path: Union[str, Path]) -> Path:
+def get_relative_path(file_path: str | Path, base_path: str | Path) -> Path:
     """
     Get relative path from base_path to file_path.
 
@@ -248,7 +247,7 @@ def get_relative_path(file_path: Union[str, Path], base_path: Union[str, Path]) 
         return file_path
 
 
-def is_subpath(child_path: Union[str, Path], parent_path: Union[str, Path]) -> bool:
+def is_subpath(child_path: str | Path, parent_path: str | Path) -> bool:
     """
     Check if child_path is a subpath of parent_path.
 
@@ -268,7 +267,7 @@ def is_subpath(child_path: Union[str, Path], parent_path: Union[str, Path]) -> b
         return False
 
 
-def normalize_path(path: Union[str, Path]) -> Path:
+def normalize_path(path: str | Path) -> Path:
     """
     Normalize a path by resolving symlinks and relative components.
 
@@ -292,8 +291,6 @@ def safe_filename(filename: str, max_length: int = 255) -> str:
     Returns:
         Safe filename
     """
-    import re
-
     # Replace invalid characters with underscores
     safe_name = re.sub(r'[<>:"/\\|?*]', "_", filename)
 
@@ -314,7 +311,7 @@ def safe_filename(filename: str, max_length: int = 255) -> str:
     return safe_name
 
 
-def get_file_size(file_path: Union[str, Path]) -> int:
+def get_file_size(file_path: str | Path) -> int:
     """
     Get file size in bytes.
 
@@ -334,7 +331,7 @@ def get_file_size(file_path: Union[str, Path]) -> int:
     return file_path.stat().st_size
 
 
-def get_directory_size(dir_path: Union[str, Path]) -> int:
+def get_directory_size(dir_path: str | Path) -> int:
     """
     Get total size of directory and all its contents in bytes.
 
@@ -361,7 +358,7 @@ def get_directory_size(dir_path: Union[str, Path]) -> int:
     return total_size
 
 
-def create_backup_path(original_path: Union[str, Path], suffix: str = ".bak") -> Path:
+def create_backup_path(original_path: str | Path, suffix: str = ".bak") -> Path:
     """
     Create a backup path for a file by adding a suffix.
 

@@ -174,7 +174,7 @@ def main():
             "gres": "gpu:1"
         }
     )
-    
+
     print(f"Submitted {len(result_slurm.submitted_jobs)} SLURM jobs")
     """
 

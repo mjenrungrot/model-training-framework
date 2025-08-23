@@ -11,13 +11,11 @@ This module provides the GenericTrainer class - the main training engine with:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import torch
-from torch.utils.data import DataLoader
 
 from .checkpoints import CheckpointManager
-from .config import GenericTrainerConfig
 from .states import (
     TrainerPhase,
     TrainMicroState,
@@ -28,15 +26,16 @@ from .states import (
 )
 from .utils import EarlyStopping, PerformanceMonitor, SignalHandler, ensure_reproducible
 
-# Type checking imports
-try:
-    from lightning.fabric import Fabric
+if TYPE_CHECKING:
     from torch.optim import Optimizer
-    from torch.optim.lr_scheduler import _LRScheduler
+    from torch.utils.data import DataLoader
 
-    HAS_FABRIC = True
-except ImportError:
-    HAS_FABRIC = False
+    from .config import GenericTrainerConfig
+
+# Type checking imports
+import importlib.util
+
+HAS_FABRIC = importlib.util.find_spec("lightning.fabric") is not None
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +45,7 @@ class TrainingStep(Protocol):
 
     def __call__(
         self, trainer: GenericTrainer, batch: Any, micro_step: int
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute training step and return metrics."""
         ...
 
@@ -56,7 +55,7 @@ class ValidationStep(Protocol):
 
     def __call__(
         self, trainer: GenericTrainer, batch: Any, batch_idx: int
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute validation step and return metrics."""
         ...
 
@@ -78,8 +77,8 @@ class GenericTrainer:
         fabric: Any,  # Fabric type
         model: torch.nn.Module,
         optimizer: Optimizer,
-        scheduler: Optional[Any] = None,  # _LRScheduler type
-        wandb_run: Optional[Any] = None,
+        scheduler: Any | None = None,  # _LRScheduler type
+        wandb_run: Any | None = None,
     ):
         """
         Initialize the trainer.
@@ -113,11 +112,11 @@ class GenericTrainer:
         self.current_epoch = 0
 
         # User-defined step functions
-        self.training_step_fn: Optional[TrainingStep] = None
-        self.validation_step_fn: Optional[ValidationStep] = None
+        self.training_step_fn: TrainingStep | None = None
+        self.validation_step_fn: ValidationStep | None = None
 
         # Early stopping
-        self.early_stopping: Optional[EarlyStopping] = None
+        self.early_stopping: EarlyStopping | None = None
         if config.early_stopping_patience is not None:
             self.early_stopping = EarlyStopping(
                 patience=config.early_stopping_patience,
@@ -141,9 +140,9 @@ class GenericTrainer:
     def fit(
         self,
         train_loader: DataLoader,
-        val_loader: Optional[DataLoader] = None,
+        val_loader: DataLoader | None = None,
         max_epochs: int = 1,
-        resume_from_checkpoint: Optional[str] = None,
+        resume_from_checkpoint: str | None = None,
     ) -> None:
         """
         Main training loop with preemption safety.
@@ -174,8 +173,8 @@ class GenericTrainer:
         except KeyboardInterrupt:
             logger.info("Training interrupted by user")
             self._save_checkpoint(force=True)
-        except Exception as e:
-            logger.error(f"Training failed with error: {e}")
+        except Exception:
+            logger.exception("Training failed with error: ")
             self._save_checkpoint(force=True)
             raise
         finally:
@@ -186,7 +185,7 @@ class GenericTrainer:
     def _training_loop(
         self,
         train_loader: DataLoader,
-        val_loader: Optional[DataLoader],
+        val_loader: DataLoader | None,
         max_epochs: int,
     ) -> None:
         """Main training loop implementation."""
@@ -259,7 +258,7 @@ class GenericTrainer:
         )
         self._save_checkpoint(force=True)
 
-    def _train_epoch(self, train_loader: DataLoader, epoch: int) -> Dict[str, Any]:
+    def _train_epoch(self, train_loader: DataLoader, epoch: int) -> dict[str, Any]:
         """Execute one training epoch."""
         self.model.train()
 
@@ -313,7 +312,7 @@ class GenericTrainer:
 
         return final_metrics
 
-    def _validation_epoch(self, val_loader: DataLoader, epoch: int) -> Dict[str, Any]:
+    def _validation_epoch(self, val_loader: DataLoader, epoch: int) -> dict[str, Any]:
         """Execute one validation epoch."""
         if self.validation_step_fn is None:
             return {}
@@ -358,7 +357,7 @@ class GenericTrainer:
 
         return final_metrics
 
-    def _training_step(self, batch: Any, batch_idx: int) -> Dict[str, Any]:
+    def _training_step(self, batch: Any, batch_idx: int) -> dict[str, Any]:
         """Execute single training step with gradient accumulation."""
 
         # Forward pass
@@ -416,7 +415,7 @@ class GenericTrainer:
         return step_metrics
 
     def _save_checkpoint(
-        self, metrics: Optional[Dict[str, Any]] = None, force: bool = False
+        self, metrics: dict[str, Any] | None = None, force: bool = False
     ) -> None:
         """Save checkpoint with timeout handling."""
         try:
@@ -432,8 +431,8 @@ class GenericTrainer:
                 if not force
                 else None,
             )
-        except Exception as e:
-            logger.error(f"Failed to save checkpoint: {e}")
+        except Exception:
+            logger.exception("Failed to save checkpoint: ")
             if force:
                 raise
 
@@ -461,12 +460,12 @@ class GenericTrainer:
 
             logger.info(f"Resumed from checkpoint: epoch={epoch}, step={global_step}")
 
-        except Exception as e:
-            logger.error(f"Failed to resume from checkpoint: {e}")
+        except Exception:
+            logger.exception("Failed to resume from checkpoint: ")
             raise
 
     def _log_step_metrics(
-        self, metrics: Dict[str, Any], step: int, prefix: str = ""
+        self, metrics: dict[str, Any], step: int, prefix: str = ""
     ) -> None:
         """Log step-level metrics."""
         log_dict = {}
@@ -482,7 +481,7 @@ class GenericTrainer:
         loss_str = f"loss={log_dict.get(f'{prefix}_loss', 'N/A'):.4f}"
         logger.info(f"Step {step}: {loss_str}")
 
-    def _log_epoch_metrics(self, epoch: int, metrics: Dict[str, Any]) -> None:
+    def _log_epoch_metrics(self, epoch: int, metrics: dict[str, Any]) -> None:
         """Log epoch-level metrics."""
         log_dict = {}
         for key, value in metrics.items():
@@ -496,7 +495,7 @@ class GenericTrainer:
         metrics_str = ", ".join([f"{k}={v:.4f}" for k, v in log_dict.items()])
         logger.info(f"Epoch {epoch}: {metrics_str}")
 
-    def get_training_state(self) -> Dict[str, Any]:
+    def get_training_state(self) -> dict[str, Any]:
         """Get current training state."""
         return {
             "current_epoch": self.current_epoch,

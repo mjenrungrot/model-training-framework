@@ -19,7 +19,7 @@ def read_requirements(filename):
     """Read requirements from a file."""
     requirements_path = this_directory / filename
     if requirements_path.exists():
-        with open(requirements_path, encoding="utf-8") as f:
+        with requirements_path.open(encoding="utf-8") as f:
             return [
                 line.strip() for line in f if line.strip() and not line.startswith("#")
             ]

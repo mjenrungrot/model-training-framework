@@ -10,11 +10,12 @@ This module provides centralized logging configuration and utilities:
 
 from __future__ import annotations
 
+import functools
 import logging
 import logging.handlers
 from pathlib import Path
 import sys
-from typing import Optional, Union
+from typing import ClassVar
 
 try:
     import colorlog
@@ -28,7 +29,7 @@ class ColoredFormatter(logging.Formatter):
     """Custom colored formatter that works with or without colorlog."""
 
     # Color codes for different log levels
-    COLORS = {
+    COLORS: ClassVar[dict[str, str]] = {
         "DEBUG": "\033[36m",  # Cyan
         "INFO": "\033[32m",  # Green
         "WARNING": "\033[33m",  # Yellow
@@ -39,8 +40,8 @@ class ColoredFormatter(logging.Formatter):
 
     def __init__(
         self,
-        fmt: Optional[str] = None,
-        datefmt: Optional[str] = None,
+        fmt: str | None = None,
+        datefmt: str | None = None,
         use_colors: bool = True,
     ):
         """Initialize formatter."""
@@ -76,15 +77,15 @@ class ColoredFormatter(logging.Formatter):
 
 
 def setup_logging(
-    level: Union[str, int] = logging.INFO,
-    log_file: Optional[Union[str, Path]] = None,
-    log_dir: Optional[Union[str, Path]] = None,
+    level: str | int = logging.INFO,
+    log_file: str | Path | None = None,
+    log_dir: str | Path | None = None,
     max_file_size: int = 10 * 1024 * 1024,  # 10MB
     backup_count: int = 5,
     use_colors: bool = True,
-    format_string: Optional[str] = None,
-    date_format: Optional[str] = None,
-    logger_name: Optional[str] = None,
+    format_string: str | None = None,
+    date_format: str | None = None,
+    logger_name: str | None = None,
 ) -> logging.Logger:
     """
     Setup comprehensive logging configuration.
@@ -174,7 +175,7 @@ def setup_logging(
     return logger
 
 
-def get_logger(name: str, level: Optional[Union[str, int]] = None) -> logging.Logger:
+def get_logger(name: str, level: str | int | None = None) -> logging.Logger:
     """
     Get a logger with optional level override.
 
@@ -195,7 +196,7 @@ def get_logger(name: str, level: Optional[Union[str, int]] = None) -> logging.Lo
     return logger
 
 
-def set_logger_level(logger_name: str, level: Union[str, int]) -> None:
+def set_logger_level(logger_name: str, level: str | int) -> None:
     """
     Set level for a specific logger.
 
@@ -232,7 +233,7 @@ def enable_logger(logger_name: str) -> None:
     logger.disabled = False
 
 
-def configure_third_party_loggers(level: Union[str, int] = logging.WARNING) -> None:
+def configure_third_party_loggers(level: str | int = logging.WARNING) -> None:
     """
     Configure common third-party library loggers to reduce noise.
 
@@ -263,7 +264,7 @@ def configure_third_party_loggers(level: Union[str, int] = logging.WARNING) -> N
 class LoggingContext:
     """Context manager for temporary logging level changes."""
 
-    def __init__(self, logger_name: str, temp_level: Union[str, int]):
+    def __init__(self, logger_name: str, temp_level: str | int):
         """
         Initialize logging context.
 
@@ -294,8 +295,6 @@ class LoggingContext:
 
 def log_function_call(func):
     """Decorator to log function calls with arguments."""
-    import functools
-
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         logger = logging.getLogger(func.__module__)
@@ -305,8 +304,8 @@ def log_function_call(func):
             result = func(*args, **kwargs)
             logger.debug(f"{func.__name__} completed successfully")
             return result
-        except Exception as e:
-            logger.error(f"{func.__name__} failed with error: {e}")
+        except Exception:
+            logger.exception(f"{func.__name__} failed with error: ")
             raise
 
     return wrapper
@@ -314,8 +313,8 @@ def log_function_call(func):
 
 def create_experiment_logger(
     experiment_name: str,
-    log_dir: Union[str, Path],
-    level: Union[str, int] = logging.INFO,
+    log_dir: str | Path,
+    level: str | int = logging.INFO,
 ) -> logging.Logger:
     """
     Create a dedicated logger for an experiment.
@@ -343,15 +342,19 @@ def create_experiment_logger(
 
 
 # Setup default logging for the package
-_default_logger = None
+class _LoggerSingleton:
+    """Singleton holder for default logger."""
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = setup_logging(
+                level=logging.INFO, logger_name="model_training_framework"
+            )
+            configure_third_party_loggers()
+        return cls._instance
 
 
 def get_default_logger() -> logging.Logger:
     """Get the default logger for the package."""
-    global _default_logger
-    if _default_logger is None:
-        _default_logger = setup_logging(
-            level=logging.INFO, logger_name="model_training_framework"
-        )
-        configure_third_party_loggers()
-    return _default_logger
+    return _LoggerSingleton()

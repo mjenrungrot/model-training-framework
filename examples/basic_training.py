@@ -11,7 +11,7 @@ import torch
 from torch import nn
 
 from model_training_framework import ModelTrainingFramework
-from model_training_framework.trainer import GenericTrainer
+from model_training_framework.trainer import GenericTrainer, GenericTrainerConfig
 
 
 class SimpleModel(nn.Module):
@@ -27,8 +27,7 @@ class SimpleModel(nn.Module):
         x = x.view(x.size(0), -1)  # Flatten
         x = self.fc1(x)
         x = self.relu(x)
-        x = self.fc2(x)
-        return x
+        return self.fc2(x)
 
 
 class SimpleTrainer(GenericTrainer):
@@ -136,8 +135,6 @@ def main():
     print("📊 Created dummy data loaders")
 
     # Initialize trainer
-    from model_training_framework.trainer import GenericTrainerConfig
-
     trainer_config = GenericTrainerConfig(
         max_epochs=experiment_config.training.epochs,
         checkpoint_dir=experiment_config.checkpoint.checkpoint_dir,
