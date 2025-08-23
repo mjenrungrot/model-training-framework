@@ -55,8 +55,8 @@ class GitOperationLock:
         self.lock_file: Any | None = None
         self.acquired = False
 
-    def __enter__(self) -> GitOperationLock:
-        """Acquire the lock with timeout."""
+    def acquire(self) -> None:
+        """Explicitly acquire the lock (non-reentrant)."""
         self.lock_file_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -69,7 +69,7 @@ class GitOperationLock:
                     fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                     self.acquired = True
                     logger.debug(f"Acquired git operation lock: {self.lock_file_path}")
-                    return self
+                    return
                 except BlockingIOError:
                     time.sleep(0.1)
 
@@ -81,6 +81,27 @@ class GitOperationLock:
                 self.lock_file = None
             raise GitOperationError(f"Failed to acquire git lock: {e}") from e
 
+    def release(self) -> None:
+        """Explicitly release the lock and cleanup resources."""
+        try:
+            if self.acquired and self.lock_file:
+                try:
+                    fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
+                    logger.debug(f"Released git operation lock: {self.lock_file_path}")
+                finally:
+                    self.acquired = False
+            if self.lock_file:
+                self.lock_file.close()
+                self.lock_file = None
+        except Exception as e:
+            # Do not raise during release; log and continue
+            logger.warning(f"Error releasing git lock: {e}")
+
+    def __enter__(self) -> GitOperationLock:
+        """Acquire the lock with timeout and return self for context manager."""
+        self.acquire()
+        return self
+
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
@@ -88,17 +109,7 @@ class GitOperationLock:
         exc_tb: TracebackType | None,
     ) -> None:
         """Release the lock and cleanup."""
-        if self.acquired and self.lock_file:
-            try:
-                fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
-                self.acquired = False
-                logger.debug(f"Released git operation lock: {self.lock_file_path}")
-            except Exception as e:
-                logger.warning(f"Error releasing git lock: {e}")
-
-        if self.lock_file:
-            self.lock_file.close()
-            self.lock_file = None
+        self.release()
 
 
 class GitManager:

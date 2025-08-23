@@ -159,16 +159,16 @@ class TestResumeState:
 class TestCheckpointConfig:
     """Test checkpoint configuration."""
 
-    def test_checkpoint_config_creation(self, tmp_dir):
+    def test_checkpoint_config_creation(self, tmp_path):
         """Test checkpoint configuration creation."""
         config = CheckpointConfig(
-            root_dir=tmp_dir,
+            root_dir=tmp_path,
             save_every_n_epochs=5,
             max_checkpoints=10,
             save_rng=True,
         )
 
-        assert str(config.root_dir) == tmp_dir
+        assert str(config.root_dir) == str(tmp_path)
         assert config.save_every_n_epochs == 5
         assert config.max_checkpoints == 10
         assert config.save_rng
