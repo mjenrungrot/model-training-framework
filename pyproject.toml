@@ -196,6 +196,14 @@ mccabe = { max-complexity = 10 }
     "PLR2004", # Magic value used in comparison
     "S101",    # Use of assert detected
     "TRY301",  # Abstract `raise` to an inner function
+    "NPY002",  # Use of legacy numpy.random functions (needed for RNG state testing)
+]
+"model_training_framework/tests/**/*.py" = [
+    "PLR2004", # Magic value used in comparison
+    "S101",    # Use of assert detected
+    "TRY301",  # Abstract `raise` to an inner function
+    "NPY002",  # Use of legacy numpy.random functions (needed for RNG state testing)
+    "PLC0415", # Import should be at top-level (test fixtures need local imports)
 ]
 
 # Ignore import rules in __init__.py files

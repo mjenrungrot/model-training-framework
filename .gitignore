@@ -321,6 +321,9 @@ pylint-report.txt
 # Pre-commit
 .pre-commit-cache/
 
+# ===== Node / Frontend =====
+node_modules/
+
 # Profiling
 *.prof
 profile_output.*

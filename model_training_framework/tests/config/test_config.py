@@ -305,13 +305,13 @@ class TestExperimentNaming:
     def test_name_validation(self):
         """Test experiment name validation."""
         # Valid names
-        assert ExperimentNaming.validate_experiment_name("valid_experiment") == True
-        assert ExperimentNaming.validate_experiment_name("exp_123_abc") == True
+        assert ExperimentNaming.validate_experiment_name("valid_experiment") is True
+        assert ExperimentNaming.validate_experiment_name("exp_123_abc") is True
 
         # Invalid names
-        assert ExperimentNaming.validate_experiment_name("") == False
-        assert ExperimentNaming.validate_experiment_name("invalid/name") == False
-        assert ExperimentNaming.validate_experiment_name("invalid:name") == False
+        assert ExperimentNaming.validate_experiment_name("") is False
+        assert ExperimentNaming.validate_experiment_name("invalid/name") is False
+        assert ExperimentNaming.validate_experiment_name("invalid:name") is False
 
 
 class TestConfigurationManager:
@@ -334,7 +334,7 @@ class TestConfigurationManager:
         config_file = test_project_root / "configs" / "test.yaml"
         import yaml
 
-        with open(config_file, "w") as f:
+        with config_file.open("w") as f:
             yaml.dump(sample_config_dict, f)
 
         loaded_config = config_manager.load_config(config_file, validate=False)

@@ -95,7 +95,7 @@ completed = framework.wait_for_experiments(
 
 ## Project Structure
 
-```
+```text
 your_project/
 ├── model_training_framework/    # This package
 ├── configs/                     # Configuration files
@@ -376,7 +376,7 @@ config = {
 - **ConfigValidator**: Configuration validation
 - **ParameterGridSearch**: Grid search execution
 
-### SLURM Integration
+### SLURM Integration — API
 
 - **SLURMLauncher**: Job launcher and batch submission
 - **SLURMJobMonitor**: Job status monitoring

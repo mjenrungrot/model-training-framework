@@ -1,0 +1,44 @@
+# Simple Configuration for Beginner Local Training
+# This is the most basic configuration you need to get started
+
+experiment_name: "my_first_experiment"
+description: "Learning the basics of the model training framework"
+
+# Model configuration - defines your neural network
+model:
+  name: "simple_mlp"
+  hidden_size: 128
+  input_size: 784    # 28x28 MNIST-like images flattened
+  num_classes: 10    # 10 digit classes (0-9)
+
+# Training parameters - how long and how fast to train
+training:
+  epochs: 5          # Start with fewer epochs for quick feedback
+  batch_size: 32     # Reasonable size for local development
+  learning_rate: 0.001  # Conservative learning rate
+
+# Data configuration - what data to use
+data:
+  dataset_name: "dummy_mnist"
+  train_batches: 50  # Small dataset for quick iteration
+  val_batches: 10    # Validation data for monitoring
+
+# Optimizer settings - how to update model weights
+optimizer:
+  name: "adam"       # Adam is generally a good default
+  weight_decay: 0.01 # Small regularization
+
+# Logging and monitoring - track your progress
+logging:
+  log_level: "INFO"
+  use_wandb: false   # Disabled for simplicity
+
+# Checkpointing - save your progress
+checkpoint:
+  save_every_n_epochs: 2
+  checkpoint_dir: "./checkpoints"
+
+# Optional: Preemption handling for local development
+preemption:
+  timeout_minutes: 10
+  grace_period_seconds: 30

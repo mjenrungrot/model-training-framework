@@ -52,7 +52,7 @@ class TestGitOperationLock:
 
             assert lock.lock_file_path == lock_path
             assert lock.timeout == 1.0
-            assert lock.acquired == False
+            assert lock.acquired is False
 
     def test_lock_acquisition(self):
         """Test lock acquisition and release."""
@@ -60,7 +60,7 @@ class TestGitOperationLock:
             lock_path = Path(temp_dir) / "test.lock"
 
             with GitOperationLock(lock_path, timeout=1.0) as lock:
-                assert lock.acquired == True
+                assert lock.acquired is True
                 assert lock_path.exists()
 
     def test_lock_timeout(self):
@@ -69,11 +69,17 @@ class TestGitOperationLock:
             lock_path = Path(temp_dir) / "test.lock"
 
             # Hold lock in first context
-            with GitOperationLock(lock_path, timeout=1.0):
+            lock1 = GitOperationLock(lock_path, timeout=1.0)
+            lock1.acquire()
+            try:
                 # Second lock should timeout (wrapped in GitOperationError)
-                with pytest.raises(GitOperationError):
-                    with GitOperationLock(lock_path, timeout=0.1):
-                        pass
+                with (
+                    pytest.raises(GitOperationError),
+                    GitOperationLock(lock_path, timeout=0.1),
+                ):
+                    pass
+            finally:
+                lock1.release()
 
 
 class TestGitManager:
@@ -89,9 +95,11 @@ class TestGitManager:
 
     def test_git_manager_invalid_repo(self):
         """Test Git manager with invalid repository."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with pytest.raises(Exception):  # Should raise GitOperationError
-                GitManager(Path(temp_dir))
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            pytest.raises(GitOperationError),
+        ):
+            GitManager(Path(temp_dir))
 
     @patch("subprocess.run")
     def test_run_git_command(self, mock_run):
@@ -105,7 +113,7 @@ class TestGitManager:
 
             # Mock successful command
             mock_result = Mock()
-            mock_result.stdout = "abc123def456\n"
+            mock_result.stdout = "abc123def456\n"  # pragma: allowlist secret
             mock_result.stderr = ""
             mock_run.return_value = mock_result
 
@@ -129,12 +137,12 @@ class TestGitManager:
             manager = GitManager(project_root)
 
             mock_result = Mock()
-            mock_result.stdout = "abc123def456789\n"
+            mock_result.stdout = "abc123def456789\n"  # pragma: allowlist secret
             mock_run.return_value = mock_result
 
             commit = manager.get_current_commit()
 
-            assert commit == "abc123def456789"
+            assert commit == "abc123def456789"  # pragma: allowlist secret
 
     @patch("subprocess.run")
     def test_get_current_branch(self, mock_run):
@@ -169,13 +177,13 @@ class TestGitManager:
             mock_result.stdout = ""
             mock_run.return_value = mock_result
 
-            assert manager.is_working_tree_clean() == True
+            assert manager.is_working_tree_clean()
 
             # Dirty working tree
             mock_result.stdout = "M modified_file.py\n"
             mock_run.return_value = mock_result
 
-            assert manager.is_working_tree_clean() == False
+            assert not manager.is_working_tree_clean()
 
 
 class TestBranchManager:
@@ -197,7 +205,8 @@ class TestBranchManager:
             mock_run.return_value = mock_result
 
             branch_name = branch_manager.create_job_branch(
-                "test_experiment", "abc123def456"
+                "test_experiment",
+                "abc123def456",  # pragma: allowlist secret
             )
 
             assert "slurm-job/test_experiment/" in branch_name
@@ -216,17 +225,21 @@ class TestBranchManager:
             branch_manager = BranchManager(git_manager)
 
             mock_result = Mock()
-            mock_result.stdout = "abc123def456789\n"
+            mock_result.stdout = "abc123def456789\n"  # pragma: allowlist secret
             mock_run.return_value = mock_result
 
             # Exact match
-            assert branch_manager.verify_job_commit("abc123def456789") == True
+            assert branch_manager.verify_job_commit(
+                "abc123def456789"  # pragma: allowlist secret
+            )
 
             # Prefix match
-            assert branch_manager.verify_job_commit("abc123def456") == True
+            assert branch_manager.verify_job_commit(
+                "abc123def456"  # pragma: allowlist secret
+            )
 
             # No match
-            assert branch_manager.verify_job_commit("different123") == False
+            assert not branch_manager.verify_job_commit("different123")
 
 
 class TestSBATCHTemplateEngine:
@@ -361,7 +374,10 @@ class TestTemplateContext:
             "time": "12:00:00",
         }
 
-        git_info = {"branch_name": "main", "commit_hash": "abc123def456"}
+        git_info = {
+            "branch_name": "main",
+            "commit_hash": "abc123def456",  # pragma: allowlist secret
+        }
 
         context = create_template_context_from_config(
             experiment_name="test_exp",
@@ -379,7 +395,7 @@ class TestTemplateContext:
         assert context.nodes == 2
         assert context.gpus_per_node == 4
         assert context.branch_name == "main"
-        assert context.commit_hash == "abc123def456"
+        assert context.commit_hash == "abc123def456"  # pragma: allowlist secret
 
 
 class TestJobStatus:
@@ -415,9 +431,9 @@ class TestJobInfo:
             job_id="12345", name="test_job", status=JobStatus.RUNNING, partition="gpu"
         )
 
-        assert active_job.is_active == True
-        assert active_job.is_finished == False
-        assert active_job.was_successful == False
+        assert active_job.is_active
+        assert not active_job.is_finished
+        assert not active_job.was_successful
 
         # Completed job
         completed_job = JobInfo(
@@ -428,9 +444,9 @@ class TestJobInfo:
             exit_code="0",
         )
 
-        assert completed_job.is_active == False
-        assert completed_job.is_finished == True
-        assert completed_job.was_successful == True
+        assert not completed_job.is_active
+        assert completed_job.is_finished
+        assert completed_job.was_successful
 
         # Failed job
         failed_job = JobInfo(
@@ -441,9 +457,9 @@ class TestJobInfo:
             exit_code="1",
         )
 
-        assert failed_job.is_active == False
-        assert failed_job.is_finished == True
-        assert failed_job.was_successful == False
+        assert not failed_job.is_active
+        assert failed_job.is_finished
+        assert not failed_job.was_successful
 
 
 class TestSLURMJobMonitor:
@@ -599,7 +615,7 @@ class TestSLURMLauncher:
 
         success = launcher.cancel_job("12345")
 
-        assert success == True
+        assert success
         mock_run.assert_called_with(
             ["scancel", "12345"], capture_output=True, text=True, check=True
         )

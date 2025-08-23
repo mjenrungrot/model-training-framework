@@ -1,4 +1,5 @@
 # API Documentation
+<!-- markdownlint-disable MD024 -->
 
 This document provides comprehensive API documentation for the Model Training Framework.
 

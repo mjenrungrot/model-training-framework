@@ -1,0 +1,280 @@
+# Production Configuration for Enterprise ML Training
+# This configuration demonstrates production-grade settings for fault-tolerant,
+# scalable machine learning training in enterprise environments.
+
+experiment_name: "production_enterprise_training"
+description: "Production-grade training with comprehensive monitoring and fault tolerance"
+
+# Model configuration for production deployment
+model:
+  name: "production_transformer"
+  hidden_size: 768
+  num_layers: 12
+  num_heads: 12
+  intermediate_size: 3072
+  dropout_rate: 0.1
+  attention_dropout: 0.1
+  layer_norm_eps: 1e-12
+  max_position_embeddings: 2048
+  vocab_size: 50000
+
+  # Production-specific model settings
+  gradient_checkpointing: true    # Trade compute for memory
+  use_cache: false               # Disable caching for training
+  tie_word_embeddings: true      # Reduce parameters
+
+# Training configuration optimized for production
+training:
+  epochs: 200                    # Long-running production training
+  batch_size: 32                # Conservative batch size for stability
+  learning_rate: 2e-5           # Conservative learning rate
+  gradient_accumulation_steps: 4 # Effective batch size: 128
+  gradient_clip_norm: 1.0       # Prevent exploding gradients
+  warmup_ratio: 0.05            # 5% warmup for stability
+  weight_decay: 0.01
+
+  # Advanced training strategies
+  label_smoothing: 0.1          # Improve generalization
+  dataloader_drop_last: true    # Consistent batch sizes
+  remove_unused_columns: false  # Keep all data for debugging
+
+  # Evaluation and saving strategy
+  save_strategy: "steps"
+  save_steps: 2000
+  evaluation_strategy: "steps"
+  eval_steps: 1000
+  logging_steps: 100
+
+  # Performance optimization
+  dataloader_num_workers: 8
+  dataloader_pin_memory: true
+  group_by_length: true         # Efficient padding
+
+# Dataset configuration for production
+data:
+  dataset_name: "production_corpus"
+  train_split: "train"
+  val_split: "validation"
+  test_split: "test"
+  preprocessing: "production"
+
+  # Data quality and validation
+  max_length: 1024
+  min_length: 10
+  filter_empty: true
+  validate_data: true
+
+  # Caching and performance
+  cache_dir: "./data_cache"
+  num_proc: 16                  # Parallel data processing
+  streaming: false              # Load all data into memory
+
+# Optimizer configuration for production stability
+optimizer:
+  name: "adamw"
+  learning_rate: 2e-5
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1e-8
+  amsgrad: false
+
+  # Advanced optimizer settings
+  foreach: true                 # Faster optimizer step
+  maximize: false
+  capturable: false
+
+# Learning rate scheduler for long training
+scheduler:
+  name: "cosine_with_restarts"
+  warmup_steps: 1000
+  min_lr: 1e-7
+  num_cycles: 3                 # Multiple restarts for long training
+  restart_decay: 0.8           # Decay factor for restarts
+
+# SLURM configuration for production HPC deployment
+slurm:
+  job_name: "prod_ml_training"
+  time_limit: "168:00:00"       # 7 days for long training
+  nodes: 2
+  ntasks_per_node: 4
+  cpus_per_task: 16
+  mem: "512G"                   # High memory for large models
+  gres: "gpu:a100:4"           # Specific GPU type for production
+  partition: "production"
+  account: "ml_research"
+  qos: "high_priority"
+
+  # Production-specific SLURM settings
+  exclusive: true               # Exclusive node access
+  mail_type: "BEGIN,END,FAIL"  # Email notifications
+  mail_user: "ml-team@company.com"
+
+  # Fault tolerance
+  requeue: true                 # Allow job requeuing
+  signal: "SIGUSR1@300"        # 5-minute warning before timeout
+
+# Comprehensive logging and monitoring
+logging:
+  log_level: "INFO"
+  log_format: "structured"      # JSON structured logs
+
+  # External monitoring integration
+  use_wandb: true
+  wandb_project: "production_ml_training"
+  wandb_entity: "ml_engineering_team"
+  wandb_tags: ["production", "enterprise", "fault_tolerant"]
+
+  # Additional monitoring
+  use_tensorboard: true
+  tensorboard_dir: "./tensorboard_logs"
+
+  # Metrics tracking
+  track_carbon_emissions: true
+  track_system_metrics: true
+  log_model_parameters: true
+
+  # Log aggregation
+  send_logs_to_elasticsearch: false  # Set to true in production
+  elasticsearch_host: "logs.company.com"
+  elasticsearch_index: "ml_training_logs"
+
+# Production-grade checkpointing
+checkpoint:
+  save_every_n_epochs: 2
+  save_best_only: false         # Keep all checkpoints for audit
+  save_optimizer_states: true
+  save_scheduler_state: true
+  save_rng_state: true         # For deterministic resumption
+
+  # Checkpoint management
+  checkpoint_dir: "/shared/ml_checkpoints/production"
+  max_checkpoints: 10          # Limit storage usage
+  async_save: true             # Non-blocking saves
+
+  # Backup strategy
+  backup_to_s3: false          # Set to true in production
+  s3_bucket: "ml-model-backups"
+  backup_frequency: "daily"
+
+# Early stopping for resource efficiency
+early_stopping:
+  enabled: true
+  patience: 20                 # Wait 20 evaluations
+  min_delta: 0.0001           # Minimum improvement
+  monitor: "eval_loss"
+  mode: "min"
+  restore_best_weights: true
+
+# Preemption and fault tolerance
+preemption:
+  timeout_minutes: 300         # 5 hours before timeout
+  grace_period_seconds: 600    # 10 minutes for cleanup
+  save_on_signal: true
+  resume_from_checkpoint: true
+  max_retries: 3
+
+  # Signal handling
+  signals: ["SIGUSR1", "SIGTERM", "SIGINT"]
+  cleanup_on_exit: true
+
+# Performance optimization and monitoring
+performance:
+  # Memory optimization
+  mixed_precision: true        # Use automatic mixed precision
+  compile_model: false         # PyTorch 2.0 compilation
+  cpu_offload: false          # Keep everything on GPU
+
+  # System monitoring
+  monitor_gpu_memory: true
+  monitor_cpu_usage: true
+  monitor_disk_io: true
+  monitor_network_io: true
+
+  # Performance profiling
+  profile_memory: false        # Enable for debugging
+  profile_compute: false       # Enable for optimization
+  trace_handler: null
+
+# Security and compliance
+security:
+  # Data protection
+  encrypt_checkpoints: false   # Set to true for sensitive data
+  secure_logging: true
+
+  # Access control
+  restrict_file_access: true
+  audit_model_access: true
+
+  # Compliance
+  gdpr_compliant: true
+  hipaa_compliant: false       # Set based on data requirements
+  log_data_lineage: true
+
+# Resource limits and quotas
+limits:
+  # Compute limits
+  max_training_time_hours: 168  # 7 days maximum
+  max_gpu_memory_gb: 320        # 4x A100 80GB
+  max_cpu_cores: 64
+  max_memory_gb: 512
+
+  # Storage limits
+  max_checkpoint_size_gb: 50
+  max_log_size_gb: 10
+  max_cache_size_gb: 100
+
+# Alerting and notifications
+alerting:
+  # Training alerts
+  alert_on_failure: true
+  alert_on_completion: true
+  alert_on_performance_degradation: true
+
+  # System alerts
+  alert_on_high_memory: true
+  alert_on_gpu_issues: true
+  alert_on_disk_full: true
+
+  # Notification channels
+  slack_webhook: null          # Set webhook URL
+  email_recipients: ["ml-team@company.com"]
+  pagerduty_integration_key: null
+
+# Experiment tracking and metadata
+metadata:
+  # Experiment information
+  experiment_version: "v1.0.0"
+  model_family: "transformer"
+  dataset_version: "v2.1.0"
+
+  # Team and ownership
+  team: "ML Engineering"
+  owner: "ml-engineering-team"
+  contact: "ml-team@company.com"
+
+  # Business context
+  business_unit: "AI Research"
+  cost_center: "ML-INFRA"
+  project_code: "ML-PROD-001"
+
+  # Compliance and governance
+  data_classification: "internal"
+  retention_policy: "7_years"
+  regulatory_requirements: ["SOX", "GDPR"]
+
+# Environment-specific overrides
+environments:
+  development:
+    training.epochs: 5
+    slurm.time_limit: "2:00:00"
+    logging.log_level: "DEBUG"
+
+  staging:
+    training.epochs: 20
+    slurm.time_limit: "12:00:00"
+    checkpoint.backup_to_s3: true
+
+  production:
+    alerting.alert_on_failure: true
+    security.encrypt_checkpoints: true
+    logging.send_logs_to_elasticsearch: true

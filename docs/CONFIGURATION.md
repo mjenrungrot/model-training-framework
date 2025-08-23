@@ -544,7 +544,7 @@ if result.has_errors:
 
 ### 1. Configuration Organization
 
-```
+```text
 configs/
 ├── base/
 │   ├── model_base.yaml

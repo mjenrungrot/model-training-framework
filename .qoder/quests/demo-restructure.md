@@ -21,7 +21,7 @@ These examples cover various aspects but lack clear organization by user journey
 
 ### Directory Structure
 
-```
+```text
 demo/
 ├── README.md
 ├── example1_beginner_local/

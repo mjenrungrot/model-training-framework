@@ -1,0 +1,187 @@
+# Distributed Training Configuration for HPC Multi-Node Setup
+# This configuration is optimized for large-scale distributed training across multiple nodes
+
+experiment_name: "distributed_large_model_training"
+description: "Multi-node distributed training on HPC cluster"
+
+# Large model configuration suitable for distributed training
+model:
+  name: "large_transformer"
+  hidden_size: 1024
+  num_layers: 24
+  num_heads: 16
+  intermediate_size: 4096
+  dropout_rate: 0.1
+  attention_dropout: 0.1
+  layer_norm_eps: 1e-6
+  max_position_embeddings: 4096
+  vocab_size: 50000
+
+# Training configuration for distributed setup
+training:
+  epochs: 100
+  batch_size: 32            # Per GPU batch size
+  learning_rate: 2e-4       # Scaled for distributed training
+  gradient_accumulation_steps: 2
+  gradient_clip_norm: 1.0
+  warmup_ratio: 0.1
+  save_strategy: "steps"
+  save_steps: 1000
+  evaluation_strategy: "steps"
+  eval_steps: 500
+  logging_steps: 100
+  dataloader_drop_last: true
+  remove_unused_columns: false
+
+# Dataset configuration for large-scale training
+data:
+  dataset_name: "large_research_corpus"
+  train_split: "train"
+  val_split: "validation"
+  test_split: "test"
+  preprocessing: "advanced"
+  tokenizer_name: "gpt2"
+  max_length: 1024
+  num_workers: 8            # Per GPU
+  pin_memory: true
+  persistent_workers: true
+
+# Optimizer configuration for large models
+optimizer:
+  name: "adamw"
+  weight_decay: 0.01
+  betas: [0.9, 0.95]        # Adjusted for large model training
+  eps: 1e-8
+  amsgrad: false
+
+# Learning rate scheduler for long training
+scheduler:
+  name: "cosine"
+  warmup_steps: 2000        # Longer warmup for stability
+  min_lr: 2e-6              # 1% of max learning rate
+  num_cycles: 0.5
+
+# Distributed training configuration
+distributed:
+  backend: "nccl"           # NCCL for GPU communication
+  init_method: "env://"     # Use environment variables
+  timeout: 1800             # 30 minutes timeout
+  find_unused_parameters: false
+  gradient_as_bucket_view: true
+  static_graph: true        # Optimize for static computation graph
+
+# SLURM configuration for multi-node distributed training
+slurm:
+  job_name: "dist_large_model"
+  time_limit: "72:00:00"    # 3 days for large model training
+  nodes: 4                  # 4 nodes for distributed training
+  ntasks_per_node: 4        # 4 GPUs per node
+  cpus_per_task: 12         # 12 CPUs per GPU
+  mem: "512G"              # High memory for large models
+  gres: "gpu:4"            # 4 GPUs per node
+  partition: "gpu"
+  exclusive: true           # Exclusive access to nodes
+  # account: "research"      # Uncomment and set your account
+  # qos: "normal"           # Quality of service
+  # constraint: "a100"      # Uncomment for specific GPU type
+
+# Advanced logging and tracking
+logging:
+  log_level: "INFO"
+  use_wandb: true
+  wandb_project: "distributed_large_model_training"
+  # wandb_entity: "research_team"  # Set your team
+  wandb_tags: ["distributed", "large_model", "hpc"]
+  log_interval: 50
+  save_logs: true
+  log_predictions: false    # Disable for large models to save space
+
+# Checkpointing for fault tolerance
+checkpoint:
+  save_every_n_epochs: 5
+  save_best_only: false     # Save all checkpoints for distributed training
+  monitor: "val_loss"
+  mode: "min"
+  checkpoint_dir: "./distributed_checkpoints"
+  async_save: true          # Non-blocking checkpoint saves
+  save_optimizer_states: true
+  save_scheduler_state: true
+
+# Early stopping (conservative for large models)
+early_stopping:
+  enabled: true
+  patience: 20              # More patience for large models
+  min_delta: 0.0001         # Smaller threshold for large models
+  monitor: "val_loss"
+  mode: "min"
+
+# Performance optimization for distributed training
+performance:
+  mixed_precision: true     # Essential for large models
+  compile_model: false      # Disable compilation for distributed
+  dataloader_num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
+
+# Memory optimization
+memory:
+  gradient_checkpointing: true  # Trade compute for memory
+  cpu_offload: false           # Keep on GPU for performance
+  pin_memory_device: "cuda"
+  empty_cache_steps: 100       # Clear cache every 100 steps
+
+# Communication optimization for distributed training
+communication:
+  ddp_bucket_cap_mb: 25        # Bucket size for gradient communication
+  ddp_broadcast_buffers: false  # Don't broadcast buffers
+  ddp_find_unused_parameters: false
+  ddp_gradient_as_bucket_view: true
+
+# Fault tolerance and preemption handling
+preemption:
+  timeout_minutes: 60          # 1 hour preemption timeout
+  grace_period_seconds: 300    # 5 minutes grace period
+  save_on_signal: true
+  resume_from_checkpoint: true
+  signal_handlers: ["SIGUSR1", "SIGTERM"]
+
+# Resource monitoring and profiling
+monitoring:
+  track_gpu_memory: true
+  track_cpu_usage: true
+  track_network_io: true
+  log_system_stats: true
+  profile_training: false      # Disable profiling for production runs
+  memory_profiling: false      # Can impact performance
+
+# Environment variables for distributed training
+environment:
+  NCCL_DEBUG: "INFO"
+  NCCL_IB_DISABLE: "0"         # Enable InfiniBand if available
+  NCCL_NET_GDR_DISABLE: "0"    # Enable GPU Direct RDMA
+  NCCL_SOCKET_IFNAME: "^docker0,lo"
+  CUDA_LAUNCH_BLOCKING: "0"
+  TORCH_DISTRIBUTED_DEBUG: "OFF"  # Set to "DETAIL" for debugging
+
+# Backup and recovery
+backup:
+  enabled: true
+  backup_interval_hours: 12    # Backup every 12 hours
+  max_backups: 5              # Keep 5 most recent backups
+  backup_location: "./backups"
+
+# Experiment tracking and metadata
+metadata:
+  experiment_type: "distributed_training"
+  model_family: "transformer"
+  dataset_size: "large"
+  compute_budget: "high"
+  research_goal: "scale_evaluation"
+
+# Post-training evaluation
+evaluation:
+  run_final_eval: true
+  eval_datasets: ["validation", "test"]
+  save_predictions: false      # Large models generate large outputs
+  compute_metrics: ["perplexity", "bleu", "rouge"]

@@ -1,0 +1,72 @@
+# MNIST-style Training Configuration
+# A more complete example showing additional options
+
+experiment_name: "mnist_classification_example"
+description: "Complete MNIST-style classification with synthetic data"
+
+# Model architecture
+model:
+  name: "enhanced_mlp"
+  input_size: 784
+  hidden_size: 256    # Larger model for better performance
+  num_classes: 10
+  dropout_rate: 0.1   # Add dropout for regularization
+
+# Training configuration
+training:
+  epochs: 10
+  batch_size: 64      # Larger batch for stability
+  learning_rate: 0.001
+  gradient_clip_norm: 1.0  # Prevent exploding gradients
+
+# Dataset configuration
+data:
+  dataset_name: "synthetic_mnist"
+  train_batches: 100   # More data for better training
+  val_batches: 25
+  val_ratio: 0.2       # 20% for validation
+  shuffle: true
+
+# Optimizer configuration
+optimizer:
+  name: "adamw"        # AdamW often works better than Adam
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+# Learning rate scheduler
+scheduler:
+  name: "cosine"       # Cosine annealing
+  warmup_steps: 50     # Warm up for stable training
+  min_lr: 1e-6
+
+# Logging and monitoring
+logging:
+  log_level: "INFO"
+  log_interval: 10     # Log every 10 batches
+  use_wandb: false
+  use_tensorboard: false  # Keep it simple for local dev
+
+# Checkpointing
+checkpoint:
+  save_every_n_epochs: 3
+  checkpoint_dir: "./checkpoints/mnist_example"
+  save_best_only: true # Only save when validation improves
+
+# Performance optimization for local development
+performance:
+  num_workers: 2       # Parallel data loading
+  pin_memory: true     # Faster GPU transfers if available
+
+# Preemption and fault tolerance
+preemption:
+  timeout_minutes: 15
+  grace_period_seconds: 60
+  save_on_interrupt: true
+
+# Optional: Early stopping to prevent overfitting
+early_stopping:
+  enabled: true
+  patience: 5          # Wait 5 epochs for improvement
+  min_delta: 0.001     # Minimum improvement threshold
+  monitor: "val_loss"  # Metric to monitor

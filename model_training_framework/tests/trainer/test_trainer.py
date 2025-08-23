@@ -59,8 +59,8 @@ class TestTrainerPhases:
         ]
 
         for phase in training_phases:
-            assert is_training_phase(phase) == True
-            assert is_validation_phase(phase) == False
+            assert is_training_phase(phase)
+            assert not is_validation_phase(phase)
 
     def test_validation_phases(self):
         """Test validation phase identification."""
@@ -72,8 +72,8 @@ class TestTrainerPhases:
         ]
 
         for phase in validation_phases:
-            assert is_validation_phase(phase) == True
-            assert is_training_phase(phase) == False
+            assert is_validation_phase(phase)
+            assert not is_training_phase(phase)
 
 
 class TestRNGState:
@@ -159,27 +159,27 @@ class TestResumeState:
 class TestCheckpointConfig:
     """Test checkpoint configuration."""
 
-    def test_checkpoint_config_creation(self):
+    def test_checkpoint_config_creation(self, tmp_dir):
         """Test checkpoint configuration creation."""
         config = CheckpointConfig(
-            root_dir="/tmp/checkpoints",
+            root_dir=tmp_dir,
             save_every_n_epochs=5,
             max_checkpoints=10,
             save_rng=True,
         )
 
-        assert str(config.root_dir) == "/tmp/checkpoints"
+        assert str(config.root_dir) == tmp_dir
         assert config.save_every_n_epochs == 5
         assert config.max_checkpoints == 10
-        assert config.save_rng == True
+        assert config.save_rng
 
     def test_checkpoint_config_defaults(self):
         """Test checkpoint configuration defaults."""
         config = CheckpointConfig()
 
         assert config.max_checkpoints == 5
-        assert config.save_rng == True
-        assert config.save_optimizer == True
+        assert config.save_rng
+        assert config.save_optimizer
 
 
 class TestCheckpointManager:
@@ -203,18 +203,15 @@ class TestCheckpointManager:
             manager = CheckpointManager(config, "test_experiment")
 
             # Should save on epoch boundaries
-            assert manager.should_save_checkpoint(epoch=2, global_step=50) == True
-            assert manager.should_save_checkpoint(epoch=1, global_step=50) == False
+            assert manager.should_save_checkpoint(epoch=2, global_step=50)
+            assert not manager.should_save_checkpoint(epoch=1, global_step=50)
 
             # Should save on step boundaries
-            assert manager.should_save_checkpoint(epoch=1, global_step=100) == True
-            assert manager.should_save_checkpoint(epoch=1, global_step=99) == False
+            assert manager.should_save_checkpoint(epoch=1, global_step=100)
+            assert not manager.should_save_checkpoint(epoch=1, global_step=99)
 
             # Should save when forced
-            assert (
-                manager.should_save_checkpoint(epoch=1, global_step=50, force=True)
-                == True
-            )
+            assert manager.should_save_checkpoint(epoch=1, global_step=50, force=True)
 
     @patch("torch.save")
     def test_save_checkpoint(self, mock_torch_save):
@@ -270,7 +267,7 @@ class TestGenericTrainerConfig:
         assert config.checkpoint.max_checkpoints == 3
         assert config.preemption.signal == signal.SIGUSR1
         assert config.performance.gradient_accumulation_steps == 4
-        assert config.logging.use_wandb == False
+        assert not config.logging.use_wandb
 
     def test_trainer_config_validation(self):
         """Test trainer configuration validation."""
@@ -293,7 +290,7 @@ class TestSignalHandler:
         """Test signal handler creation."""
         handler = SignalHandler()
 
-        assert handler.preemption_requested == False
+        assert not handler.preemption_requested
         assert len(handler.original_handlers) == 0
         assert len(handler.callbacks) == 0
 
@@ -313,13 +310,13 @@ class TestSignalHandler:
         """Test preemption flag management."""
         handler = SignalHandler()
 
-        assert handler.is_preemption_requested() == False
+        assert not handler.is_preemption_requested()
 
         handler.preemption_requested = True
-        assert handler.is_preemption_requested() == True
+        assert handler.is_preemption_requested()
 
         handler.reset_preemption_flag()
-        assert handler.is_preemption_requested() == False
+        assert not handler.is_preemption_requested()
 
 
 class TestPerformanceMonitor:
@@ -383,7 +380,7 @@ class TestEarlyStopping:
         assert early_stopping.metric_name == "val_loss"
         assert early_stopping.mode == "min"
         assert early_stopping.best_value is None
-        assert early_stopping.should_stop == False
+        assert not early_stopping.should_stop
 
     def test_early_stopping_improvement(self):
         """Test early stopping with improvement."""
@@ -391,12 +388,12 @@ class TestEarlyStopping:
 
         # First metric (should not stop)
         should_stop = early_stopping({"val_loss": 1.0})
-        assert should_stop == False
+        assert not should_stop
         assert early_stopping.best_value == 1.0
 
         # Improvement (should not stop)
         should_stop = early_stopping({"val_loss": 0.8})
-        assert should_stop == False
+        assert not should_stop
         assert early_stopping.best_value == 0.8
         assert early_stopping.epochs_without_improvement == 0
 
@@ -409,12 +406,12 @@ class TestEarlyStopping:
         early_stopping({"val_loss": 1.1})  # No improvement
 
         assert early_stopping.epochs_without_improvement == 1
-        assert early_stopping.should_stop == False
+        assert not early_stopping.should_stop
 
         # Should trigger stopping
         should_stop = early_stopping({"val_loss": 1.2})
-        assert should_stop == True
-        assert early_stopping.should_stop == True
+        assert should_stop
+        assert early_stopping.should_stop
 
 
 class TestTimeoutUtility:
@@ -439,9 +436,11 @@ class TestTimeoutUtility:
             time.sleep(2.0)
             return "should not reach"
 
-        with pytest.raises(TimeoutError):
-            with timeout(1.0):  # Use 1 second timeout (minimum for signal.alarm)
-                slow_operation()
+        with (
+            pytest.raises(TimeoutError),
+            timeout(1.0),
+        ):  # Use 1 second timeout (minimum for signal.alarm)
+            slow_operation()
 
 
 class MockDataLoader:
@@ -451,7 +450,7 @@ class MockDataLoader:
         self.data_size = data_size
 
     def __iter__(self):
-        for i in range(self.data_size):
+        for _i in range(self.data_size):
             # Mock batch with tensors
             import torch
 

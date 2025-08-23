@@ -264,7 +264,7 @@ class GitOperationLock:
 
 For reproducibility and conflict prevention, temporary branches follow the pattern:
 
-```
+```text
 slurm-job/<experiment_name>/<timestamp>/<commit_hash[:8]>
 ```
 
@@ -495,7 +495,7 @@ class LoggingConfig:
 
 ### Experiment Organization
 
-```
+```text
 experiments/
 ├── <experiment_name>/
 │   ├── config.yaml              # Experiment configuration
@@ -518,7 +518,7 @@ experiments/
 
 ### Package Organization
 
-```
+```text
 model_training_framework/
 ├── __init__.py                 # Main package exports
 ├── config/                     # Configuration Management Component
@@ -837,7 +837,7 @@ __all__ = [
 ]
 ```
 
-## Usage Examples
+## Usage Examples — Advanced
 
 ### Simple Experiment
 
@@ -860,7 +860,7 @@ job_id = framework.run_experiment(config)
 print(f"Submitted job: {job_id}")
 ```
 
-### Parameter Grid Search
+### Parameter Grid Search — Advanced
 
 ```python
 # Define parameter grids
