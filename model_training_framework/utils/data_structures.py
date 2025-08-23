@@ -12,14 +12,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Generic, TypeVar, Union
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 E = TypeVar("E")
 
 
 @dataclass
-class Result(Generic[T, E]):
+class Result[T, E]:
     """
     Result type for error handling, similar to Rust's Result.
 
@@ -87,12 +87,12 @@ class Result(Generic[T, E]):
         return self
 
 
-def success(value: T) -> Result[T, Any]:
+def success[T](value: T) -> Result[T, Any]:
     """Create successful result."""
     return Result(value=value)
 
 
-def error(error: E) -> Result[Any, E]:
+def error[E](error: E) -> Result[Any, E]:
     """Create error result."""
     return Result(error=error)
 
@@ -117,6 +117,6 @@ class LogLevel(Enum):
 
 
 # Type aliases for common types
-PathLike = Union[str, Path]
+PathLike = str | Path
 ConfigDict = dict[str, Any]
 MetricsDict = dict[str, float]

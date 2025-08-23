@@ -4,10 +4,10 @@ Test configuration and fixtures for the Model Training Framework test suite.
 This module provides common fixtures and test utilities used across all test modules.
 """
 
+from collections.abc import Generator
 from pathlib import Path
 import subprocess
 import tempfile
-from typing import Generator
 
 import pytest
 
@@ -54,7 +54,6 @@ def sample_config_dict():
         },
         "training": {
             "max_epochs": 10,
-            "batch_size": 32,
             "gradient_accumulation_steps": 1,
         },
         "data": {"dataset_name": "test_dataset", "batch_size": 32, "num_workers": 2},

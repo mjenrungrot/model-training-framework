@@ -168,10 +168,11 @@ def validate_project_structure(project_root: Path) -> list[str]:
 
     for dir_name, description in recommended_dirs.items():
         dir_path = project_root / dir_name
-        if not dir_path.exists() and dir_name not in ["data", "notebooks"]:  # Optional directories
-            issues.append(
-                f"Recommended directory missing: {dir_path} ({description})"
-            )
+        if not dir_path.exists() and dir_name not in [
+            "data",
+            "notebooks",
+        ]:  # Optional directories
+            issues.append(f"Recommended directory missing: {dir_path} ({description})")
 
     # Check for SLURM template
     slurm_template_paths = [

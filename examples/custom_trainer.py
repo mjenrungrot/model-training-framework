@@ -5,7 +5,7 @@ This example demonstrates how to create custom trainers by extending
 the GenericTrainer class with domain-specific functionality.
 """
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import torch
 from torch import nn
@@ -62,7 +62,7 @@ class MultiTaskTrainer(GenericTrainer):
         config: GenericTrainerConfig,
         model: nn.Module,
         optimizer: torch.optim.Optimizer,
-        task_weights: Optional[Dict[str, float]] = None,
+        task_weights: dict[str, float] | None = None,
     ):
         super().__init__(config)
         self.model = model
@@ -83,8 +83,8 @@ class MultiTaskTrainer(GenericTrainer):
         }
 
     def training_step(
-        self, batch: Tuple[torch.Tensor, Dict[str, torch.Tensor]], batch_idx: int
-    ) -> Dict[str, Any]:
+        self, batch: tuple[torch.Tensor, dict[str, torch.Tensor]], batch_idx: int
+    ) -> dict[str, Any]:
         """Execute one training step with multi-task loss."""
 
         # Unpack batch
@@ -128,8 +128,8 @@ class MultiTaskTrainer(GenericTrainer):
         }
 
     def validation_step(
-        self, batch: Tuple[torch.Tensor, Dict[str, torch.Tensor]], batch_idx: int
-    ) -> Dict[str, Any]:
+        self, batch: tuple[torch.Tensor, dict[str, torch.Tensor]], batch_idx: int
+    ) -> dict[str, Any]:
         """Execute one validation step."""
 
         with torch.no_grad():
@@ -182,7 +182,7 @@ class MultiTaskTrainer(GenericTrainer):
 
         print(f"🎯 Starting epoch {epoch + 1}")
 
-    def on_epoch_end(self, epoch: int, logs: Dict[str, Any]):
+    def on_epoch_end(self, epoch: int, logs: dict[str, Any]):
         """Called at the end of each epoch."""
         super().on_epoch_end(epoch, logs)
 
@@ -219,7 +219,7 @@ class EarlyStopping(TrainingCallback):
         self.wait = 0
         self.stopped_epoch = 0
 
-    def on_epoch_end(self, trainer: GenericTrainer, epoch: int, logs: Dict[str, Any]):
+    def on_epoch_end(self, trainer: GenericTrainer, epoch: int, logs: dict[str, Any]):
         """Check for early stopping condition."""
         current_score = logs.get(self.monitor)
 
@@ -247,7 +247,7 @@ class LearningRateScheduler(TrainingCallback):
     def __init__(self, scheduler):
         self.scheduler = scheduler
 
-    def on_epoch_end(self, trainer: GenericTrainer, epoch: int, logs: Dict[str, Any]):
+    def on_epoch_end(self, trainer: GenericTrainer, epoch: int, logs: dict[str, Any]):
         """Step the learning rate scheduler."""
         if hasattr(self.scheduler, "step"):
             # For schedulers that take a metric

@@ -10,7 +10,7 @@ from pathlib import Path
 import signal
 import threading
 import time
-from typing import Any, Dict
+from typing import Any
 
 import torch
 from torch import nn
@@ -68,7 +68,7 @@ class PreemptionAwareTrainer(GenericTrainer):
         self.original_signal_handler = None
         self.preemption_received = False
 
-    def training_step(self, batch, batch_idx: int) -> Dict[str, Any]:
+    def training_step(self, batch, batch_idx: int) -> dict[str, Any]:
         """Training step with preemption awareness."""
 
         # Check for preemption signal (normally handled by framework)
@@ -95,7 +95,7 @@ class PreemptionAwareTrainer(GenericTrainer):
             "batch_idx": batch_idx,
         }
 
-    def validation_step(self, batch, batch_idx: int) -> Dict[str, Any]:
+    def validation_step(self, batch, batch_idx: int) -> dict[str, Any]:
         """Validation step with preemption awareness."""
 
         with torch.no_grad():
@@ -146,7 +146,7 @@ class PreemptionAwareTrainer(GenericTrainer):
         if resume_state.rng:
             print("   ✅ RNG state restored for deterministic resume")
 
-    def on_epoch_end(self, epoch: int, logs: Dict[str, Any]):
+    def on_epoch_end(self, epoch: int, logs: dict[str, Any]):
         """Enhanced epoch end logging."""
         super().on_epoch_end(epoch, logs)
 
@@ -161,7 +161,7 @@ class PreemptionAwareTrainer(GenericTrainer):
         if self.preemption_count > 0:
             print(f"   Preemptions handled: {self.preemption_count}")
 
-    def on_training_end(self, logs: Dict[str, Any]):
+    def on_training_end(self, logs: dict[str, Any]):
         """Training end summary."""
         super().on_training_end(logs)
 
@@ -181,6 +181,7 @@ class PreemptionAwareTrainer(GenericTrainer):
 
 def simulate_preemption_signal(pid: int, delay: float = 30.0):
     """Simulate SLURM preemption signal after delay."""
+
     def send_signal():
         time.sleep(delay)
         print(f"\n⚡ Simulating SLURM preemption signal to PID {pid}")

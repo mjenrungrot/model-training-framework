@@ -220,7 +220,6 @@ class CheckpointManager:
         logger.info(f"Loading checkpoint from {checkpoint_path}")
         return torch.load(checkpoint_path, map_location=map_location)
 
-
     def restore_from_checkpoint(
         self,
         model: torch.nn.Module,

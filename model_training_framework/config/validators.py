@@ -68,7 +68,11 @@ class ValidationResult:
         ] + self.warnings
 
     def add_error(
-        self, component: str, message: str, field: str | None = None, suggestion: str | None = None
+        self,
+        component: str,
+        message: str,
+        field: str | None = None,
+        suggestion: str | None = None,
     ) -> None:
         """Add an error-level issue."""
         self.issues.append(
@@ -77,7 +81,11 @@ class ValidationResult:
         self.is_valid = False
 
     def add_warning(
-        self, component: str, message: str, field: str | None = None, suggestion: str | None = None
+        self,
+        component: str,
+        message: str,
+        field: str | None = None,
+        suggestion: str | None = None,
     ) -> None:
         """Add a warning-level issue."""
         self.warnings.append(
@@ -114,7 +122,7 @@ class ConfigValidator:
 
     # Constants for time parsing
     TIME_PARTS_HMS = 3  # Hours:Minutes:Seconds
-    TIME_PARTS_HM = 2   # Hours:Minutes
+    TIME_PARTS_HM = 2  # Hours:Minutes
     MINUTES_PER_HOUR = 60
     SECONDS_PER_HOUR = 3600
     HOURS_PER_DAY = 24
@@ -210,7 +218,10 @@ class ConfigValidator:
         if not config.experiment_name:
             result.add_error("basic", "Experiment name is required")
         elif len(config.experiment_name) > ConfigValidator.MAX_EXPERIMENT_NAME_LENGTH:
-            result.add_error("basic", f"Experiment name too long (max {ConfigValidator.MAX_EXPERIMENT_NAME_LENGTH} characters)")
+            result.add_error(
+                "basic",
+                f"Experiment name too long (max {ConfigValidator.MAX_EXPERIMENT_NAME_LENGTH} characters)",
+            )
 
         if not config.data.dataset_name:
             result.add_error("basic", "Dataset name is required", "data.dataset_name")
@@ -624,7 +635,12 @@ class ConfigValidator:
         time_parts = time_part.split(":")
         if len(time_parts) == ConfigValidator.TIME_PARTS_HMS:
             hours, minutes, seconds = map(int, time_parts)
-            return hours_from_days + hours + minutes / ConfigValidator.MINUTES_PER_HOUR + seconds / ConfigValidator.SECONDS_PER_HOUR
+            return (
+                hours_from_days
+                + hours
+                + minutes / ConfigValidator.MINUTES_PER_HOUR
+                + seconds / ConfigValidator.SECONDS_PER_HOUR
+            )
         if len(time_parts) == ConfigValidator.TIME_PARTS_HM:
             hours, minutes = map(int, time_parts)
             return hours_from_days + hours + minutes / ConfigValidator.MINUTES_PER_HOUR
@@ -656,7 +672,10 @@ class ConfigValidator:
         """Recommend SLURM partition based on requirements."""
         if time_hours > ConfigValidator.PARTITION_LONG_HOURS:
             return "gpu-long"
-        if memory_gb > ConfigValidator.PARTITION_HIGH_MEM_GB or gpus > ConfigValidator.PARTITION_HIGH_MEM_GPUS:
+        if (
+            memory_gb > ConfigValidator.PARTITION_HIGH_MEM_GB
+            or gpus > ConfigValidator.PARTITION_HIGH_MEM_GPUS
+        ):
             return "gpu-high-mem"
         if time_hours > ConfigValidator.PARTITION_STANDARD_HOURS:
             return "gpu"

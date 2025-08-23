@@ -10,12 +10,13 @@ This module provides utility functions for the training engine:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import contextlib
 import logging
 import random
 import signal
 import time
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch

@@ -35,7 +35,10 @@ if TYPE_CHECKING:
 # Type checking imports
 import importlib.util
 
-HAS_FABRIC = importlib.util.find_spec("lightning.fabric") is not None
+try:
+    HAS_FABRIC = importlib.util.find_spec("lightning.fabric") is not None
+except (ImportError, ModuleNotFoundError):
+    HAS_FABRIC = False
 
 logger = logging.getLogger(__name__)
 
@@ -291,7 +294,7 @@ class GenericTrainer:
 
             # Accumulate other metrics
             for key, value in step_metrics.items():
-                if key != "loss" and isinstance(value, (int, float)):
+                if key != "loss" and isinstance(value, int | float):
                     epoch_metrics[f"train_{key}"] = (
                         epoch_metrics.get(f"train_{key}", 0) + value
                     )
@@ -343,7 +346,7 @@ class GenericTrainer:
 
                 # Accumulate other metrics
                 for key, value in step_metrics.items():
-                    if key != "loss" and isinstance(value, (int, float)):
+                    if key != "loss" and isinstance(value, int | float):
                         epoch_metrics[f"val_{key}"] = (
                             epoch_metrics.get(f"val_{key}", 0) + value
                         )
@@ -470,7 +473,7 @@ class GenericTrainer:
         """Log step-level metrics."""
         log_dict = {}
         for key, value in metrics.items():
-            if isinstance(value, (int, float, torch.Tensor)):
+            if isinstance(value, int | float | torch.Tensor):
                 log_key = f"{prefix}_{key}" if prefix else key
                 log_dict[log_key] = float(value)
 
@@ -485,7 +488,7 @@ class GenericTrainer:
         """Log epoch-level metrics."""
         log_dict = {}
         for key, value in metrics.items():
-            if isinstance(value, (int, float, torch.Tensor)):
+            if isinstance(value, int | float | torch.Tensor):
                 log_dict[key] = float(value)
 
         if self.wandb_run is not None:

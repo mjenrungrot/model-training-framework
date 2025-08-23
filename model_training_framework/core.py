@@ -170,7 +170,9 @@ class ModelTrainingFramework:
             return experiment_config
 
         except Exception as e:
-            raise FrameworkError(f"Failed to create experiment configuration: {e}") from e
+            raise FrameworkError(
+                f"Failed to create experiment configuration: {e}"
+            ) from e
 
     def load_experiment_config(
         self, config_path: str | Path, validate: bool = True
@@ -288,7 +290,7 @@ class ModelTrainingFramework:
         logger.info(f"Starting grid search with {len(parameter_grids)} parameter grids")
 
         # Load base configuration if needed
-        if isinstance(base_config, (str, Path)):
+        if isinstance(base_config, str | Path):
             base_config_dict = self.config_manager.load_config(
                 base_config, validate=False
             )
@@ -413,9 +415,7 @@ class ModelTrainingFramework:
             },
         }
 
-    def cancel_experiments(
-        self, job_ids: list[str] | None = None
-    ) -> dict[str, bool]:
+    def cancel_experiments(self, job_ids: list[str] | None = None) -> dict[str, bool]:
         """
         Cancel experiments.
 
@@ -580,7 +580,9 @@ if __name__ == "__main__":
             output_path.write_text(template_content)
             logger.info(f"Created training script template: {output_path}")
         except Exception as e:
-            raise FrameworkError(f"Failed to create training script template: {e}") from e
+            raise FrameworkError(
+                f"Failed to create training script template: {e}"
+            ) from e
 
     def get_framework_status(self) -> dict[str, Any]:
         """

@@ -9,10 +9,9 @@ This module provides common utilities and helper functions:
 """
 
 from .data_structures import (
-    Error,
-    Optional,
     Result,
-    Success,
+    error,
+    success,
 )
 from .logging import (
     ColoredFormatter,
@@ -25,12 +24,6 @@ from .path_utils import (
     resolve_config_path,
     validate_project_structure,
 )
-from .serialization import (
-    config_to_dict,
-    deserialize_config,
-    dict_to_config,
-    serialize_config,
-)
 from .validation import (
     validate_choices,
     validate_range,
@@ -38,27 +31,21 @@ from .validation import (
 )
 
 __all__ = [
+    # Logging
     "ColoredFormatter",
-    "Error",
-    "Optional",
     # Data structures
     "Result",
-    "Success",
-    "config_to_dict",
-    "deserialize_config",
-    "dict_to_config",
-    "ensure_directory_exists",
-    "get_logger",
     # Path utilities
+    "ensure_directory_exists",
+    "error",
+    "get_logger",
     "get_project_root",
     "resolve_config_path",
-    # Serialization
-    "serialize_config",
-    # Logging
     "setup_logging",
+    "success",
+    # Validation
     "validate_choices",
     "validate_project_structure",
     "validate_range",
-    # Validation
     "validate_type",
 ]

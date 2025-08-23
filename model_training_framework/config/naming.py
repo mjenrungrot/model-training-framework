@@ -164,7 +164,9 @@ class ExperimentNaming:
             return "T" if value else "F"
         if isinstance(value, str):
             # Take first 10 characters and sanitize
-            return ExperimentNaming._sanitize_name(value[:ExperimentNaming.STRING_TRUNCATE_LENGTH])
+            return ExperimentNaming._sanitize_name(
+                value[: ExperimentNaming.STRING_TRUNCATE_LENGTH]
+            )
         return str(value)
 
     @staticmethod

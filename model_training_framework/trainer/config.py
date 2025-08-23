@@ -108,9 +108,7 @@ class LoggingConfig:
     """
 
     use_wandb: bool = True  # Whether to use Weights & Biases for experiment tracking
-    wandb_project: str | None = (
-        None  # W&B project name (uses experiment name if None)
-    )
+    wandb_project: str | None = None  # W&B project name (uses experiment name if None)
     wandb_entity: str | None = None  # W&B entity/team name
     wandb_tags: list[str] = field(default_factory=list)  # Tags for W&B experiment
     wandb_notes: str | None = None  # Notes for W&B experiment
@@ -118,9 +116,7 @@ class LoggingConfig:
     log_scalars_every_n_steps: int | None = (
         50  # How often to log scalar metrics (None = every step)
     )
-    log_images_every_n_steps: int | None = (
-        500  # How often to log images (None = never)
-    )
+    log_images_every_n_steps: int | None = 500  # How often to log images (None = never)
     log_gradients: bool = False  # Whether to log gradient statistics
     log_model_parameters: bool = False  # Whether to log model parameter statistics
     log_system_metrics: bool = True  # Whether to log system metrics (GPU, memory, etc.)

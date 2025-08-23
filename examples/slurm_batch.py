@@ -6,7 +6,6 @@ to SLURM with automatic git branch management and job monitoring.
 """
 
 from pathlib import Path
-from typing import List
 
 from model_training_framework import ModelTrainingFramework
 from model_training_framework.config import (
@@ -18,7 +17,7 @@ from model_training_framework.slurm import SLURMLauncher
 from model_training_framework.slurm.git_ops import GitManager
 
 
-def create_experiment_configs() -> List[ExperimentConfig]:
+def create_experiment_configs() -> list[ExperimentConfig]:
     """Create multiple experiment configurations for batch submission."""
 
     base_config = {

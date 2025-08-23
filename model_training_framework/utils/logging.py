@@ -295,6 +295,7 @@ class LoggingContext:
 
 def log_function_call(func):
     """Decorator to log function calls with arguments."""
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         logger = logging.getLogger(func.__module__)
@@ -344,6 +345,7 @@ def create_experiment_logger(
 # Setup default logging for the package
 class _LoggerSingleton:
     """Singleton holder for default logger."""
+
     _instance = None
 
     def __new__(cls):

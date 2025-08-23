@@ -150,7 +150,7 @@ class ConfigurationManager:
         """Compose configuration from base config and overrides."""
 
         # Load base config
-        if isinstance(base_config, (str, Path)):
+        if isinstance(base_config, str | Path):
             result = self.load_config(base_config, validate=False)
         else:
             result = base_config.copy()
@@ -158,7 +158,7 @@ class ConfigurationManager:
         # Apply config overrides
         if overrides:
             for override in overrides:
-                if isinstance(override, (str, Path)):
+                if isinstance(override, str | Path):
                     override_data = self.load_config(override, validate=False)
                 else:
                     override_data = override
@@ -283,6 +283,7 @@ class ConfigurationManager:
         self, config_data: dict[str, Any]
     ) -> ExperimentConfig:
         """Convert dictionary to ExperimentConfig with proper type handling."""
+
         # Helper function to safely extract nested config
         def extract_config(key: str, config_class, required: bool = True):
             if key in config_data:
