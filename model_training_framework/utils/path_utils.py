@@ -39,7 +39,6 @@ def get_project_root(start_path: Path | None = None) -> Path:
     root_indicators = [
         ".git",
         "pyproject.toml",
-        "setup.py",
         "requirements.txt",
         "Pipfile",
         "conda.yaml",

@@ -216,7 +216,6 @@ mccabe = { max-complexity = 10 }
 ]
 
 # Ignore specific rules in setup files
-"setup.py" = ["T201"]
 "validate_package.py" = ["T201"]
 
 [tool.ruff.lint.isort]
@@ -291,7 +290,6 @@ omit = [
     "*/test_*",
     "*/__pycache__/*",
     "*/site-packages/*",
-    "setup.py",
 ]
 
 [tool.coverage.report]
