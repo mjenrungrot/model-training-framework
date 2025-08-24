@@ -49,7 +49,15 @@ from .states import (
 from .utils import (
     CheckpointTimeoutError,
     PreemptionTimeoutError,
+    Stopwatch,
     TrainerError,
+    balanced_interleave,
+    count_samples_in_batch,
+    ddp_barrier,
+    ddp_broadcast_object,
+    ddp_is_primary,
+    get_memory_usage,
+    seed_all,
     timeout,
 )
 
@@ -76,19 +84,27 @@ __all__ = [
     "RNGState",
     "ResumeState",
     "SamplingStrategy",
+    "Stopwatch",
     # Core trainer
     "TrainerError",
     "TrainerPhase",
     "ValAggregation",
     "ValidationConfig",
     "ValidationFrequency",
+    # Utilities
+    "balanced_interleave",
     # State helpers
     "capture_choice_rng_state",
     "capture_rng_state",
+    "count_samples_in_batch",
     "create_initial_resume_state",
+    "ddp_barrier",
+    "ddp_broadcast_object",
+    "ddp_is_primary",
+    "get_memory_usage",
     "restore_choice_rng_state",
     "restore_rng_state",
-    # Utilities
+    "seed_all",
     "timeout",
     "update_resume_state",
     "validate_infinite_loader_constraints",

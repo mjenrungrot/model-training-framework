@@ -14,7 +14,7 @@ graph LR
     A1[Learn Basics<br/>Single Machine<br/>Simple Models] --> A
     B1[Scale Training<br/>Multiple GPUs<br/>Hyperparameter Optimization] --> B
     C1[Enterprise Grade<br/>Fault Tolerance<br/>Production Deployment] --> C
-```text
+```
 
 ## 📁 Scenario Structure
 
