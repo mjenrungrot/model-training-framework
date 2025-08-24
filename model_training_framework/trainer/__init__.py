@@ -13,10 +13,20 @@ from .checkpoints import (
 )
 from .config import (
     CheckpointConfig,
+    DDPConfig,
+    EpochLengthPolicy,
+    FaultToleranceConfig,
     GenericTrainerConfig,
     LoggingConfig,
+    MultiDataLoaderConfig,
     PerformanceConfig,
     PreemptionConfig,
+    SamplingStrategy,
+    ValAggregation,
+    ValidationConfig,
+    ValidationFrequency,
+    validate_infinite_loader_constraints,
+    validate_trainer_config,
 )
 from .core import (
     GenericTrainer,
@@ -38,19 +48,28 @@ __all__ = [
     "CheckpointConfig",
     "CheckpointManager",
     "CheckpointTimeoutError",
-    # Core trainer
+    # Configuration
+    "DDPConfig",
+    "EpochLengthPolicy",
+    "FaultToleranceConfig",
     "GenericTrainer",
     "GenericTrainerConfig",
     "LoggingConfig",
+    "MultiDataLoaderConfig",
     "PerformanceConfig",
-    # Configuration
     "PreemptionConfig",
     "PreemptionTimeoutError",
     "RNGState",
     "ResumeState",
+    "SamplingStrategy",
+    # Core trainer
     "TrainerError",
-    # States
     "TrainerPhase",
+    "ValAggregation",
+    "ValidationConfig",
+    "ValidationFrequency",
     # Utilities
     "timeout",
+    "validate_infinite_loader_constraints",
+    "validate_trainer_config",
 ]

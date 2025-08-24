@@ -69,13 +69,23 @@ from .slurm import (
 # Import trainer classes
 from .trainer import (
     CheckpointConfig,
+    DDPConfig,
+    EpochLengthPolicy,
+    FaultToleranceConfig,
     GenericTrainer,
     GenericTrainerConfig,
+    MultiDataLoaderConfig,
     PerformanceConfig,
     PreemptionConfig,
     ResumeState,
     RNGState,
+    SamplingStrategy,
     TrainerPhase,
+    ValAggregation,
+    ValidationConfig,
+    ValidationFrequency,
+    validate_infinite_loader_constraints,
+    validate_trainer_config,
 )
 
 # Import utility functions
@@ -90,10 +100,13 @@ __all__ = [
     "BatchSubmissionResult",
     "CheckpointConfig",
     "ConfigValidator",
+    "DDPConfig",
     "DataConfig",
+    "EpochLengthPolicy",
     "ExecutionMode",
     # Configuration
     "ExperimentConfig",
+    "FaultToleranceConfig",
     # Training
     "GenericTrainer",
     "GenericTrainerConfig",
@@ -103,6 +116,7 @@ __all__ = [
     "ModelConfig",
     # Main framework
     "ModelTrainingFramework",
+    "MultiDataLoaderConfig",
     "NamingStrategy",
     "OptimizerConfig",
     "ParameterGrid",
@@ -116,12 +130,18 @@ __all__ = [
     "SLURMJobMonitor",
     # SLURM
     "SLURMLauncher",
+    "SamplingStrategy",
     "SchedulerConfig",
     "TrainerPhase",
     "TrainingConfig",
+    "ValAggregation",
+    "ValidationConfig",
+    "ValidationFrequency",
     "ValidationResult",
     "get_project_root",
     # Utilities
     "setup_logging",
+    "validate_infinite_loader_constraints",
     "validate_project_structure",
+    "validate_trainer_config",
 ]

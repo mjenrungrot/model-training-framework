@@ -275,10 +275,8 @@ class GenericTrainer:
                 self._save_checkpoint(force=True)
                 return {"train_loss": epoch_loss / max(num_batches, 1)}
 
-            # Update resume state
-            # TODO: Replace with MultiTrainMicroState in PR1
-            # train_state = TrainMicroState(batch_idx=batch_idx, micro_step=0)
-            train_state = None  # Temporarily disabled - will be replaced with multi-dataloader version
+            # Update resume state (per-batch); placeholder until multi-dataloader state lands
+            train_state = None  # Temporarily disabled - replaced with multi-dataloader version soon
             self.resume_state = update_resume_state(
                 self.resume_state,
                 TrainerPhase.TRAIN_BATCH_LOAD,
@@ -329,10 +327,8 @@ class GenericTrainer:
 
         with torch.no_grad():
             for batch_idx, batch in enumerate(val_loader):
-                # Update resume state
-                # TODO: Replace with MultiValMicroState in PR1
-                # val_state = ValMicroState(batch_idx=batch_idx)
-                val_state = None  # Temporarily disabled - will be replaced with multi-dataloader version
+                # Update resume state (validation); placeholder until multi-dataloader state lands
+                val_state = None  # Temporarily disabled - replaced with multi-dataloader version soon
                 self.resume_state = update_resume_state(
                     self.resume_state,
                     TrainerPhase.VAL_BATCH_LOAD,
