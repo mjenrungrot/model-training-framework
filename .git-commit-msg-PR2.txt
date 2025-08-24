@@ -1,0 +1,26 @@
+feat(states): PR2 - Add multi-dataloader state model
+
+  - Add DataLoaderState for tracking individual loader iteration state
+    - id, name, batch_idx, exhausted, sampler_state, dataset_state
+    - Includes to_dict/from_dict for serialization
+  - Add ChoiceRNGState for deterministic weighted sampling RNG
+    - Supports both RandomState and Generator numpy RNG types
+    - Pickle-based state serialization with hex encoding
+  - Add MultiTrainMicroState for multi-dataloader training state
+    - Tracks active_loader_id, micro_step, loader_states, schedule_position, total_steps_completed
+  - Add MultiValMicroState for multi-dataloader validation state
+    - Tracks active_loader_id, loader_states, accumulated_metrics
+  - Update ResumeState with multi-dataloader fields:
+    - Changed version from string "v2.0" to int (version=1)
+    - Replaced train/val with multi_train/multi_val fields
+    - Added dataloader_manager_state for DataLoaderManager state
+    - Added choice_rng for weighted sampling RNG state
+  - Add serialization methods (to_dict/from_dict) to all new dataclasses
+  - Add RNG helper functions:
+    - capture_choice_rng_state() for numpy RNG state capture
+    - restore_choice_rng_state() for numpy RNG state restoration
+  - Update existing helpers to support new multi-dataloader fields:
+    - create_initial_resume_state() accepts choice_rng parameter
+    - update_resume_state() accepts multi_train/multi_val/dataloader_manager_state
+  - Export all new dataclasses and helpers from trainer and package __init__
+  - Update core.py to use new parameter names (multi_train/multi_val)

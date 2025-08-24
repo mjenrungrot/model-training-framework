@@ -32,9 +32,19 @@ from .core import (
     GenericTrainer,
 )
 from .states import (
+    ChoiceRNGState,
+    DataLoaderState,
+    MultiTrainMicroState,
+    MultiValMicroState,
     ResumeState,
     RNGState,
     TrainerPhase,
+    capture_choice_rng_state,
+    capture_rng_state,
+    create_initial_resume_state,
+    restore_choice_rng_state,
+    restore_rng_state,
+    update_resume_state,
 )
 from .utils import (
     CheckpointTimeoutError,
@@ -48,14 +58,18 @@ __all__ = [
     "CheckpointConfig",
     "CheckpointManager",
     "CheckpointTimeoutError",
+    "ChoiceRNGState",
     # Configuration
     "DDPConfig",
+    "DataLoaderState",
     "EpochLengthPolicy",
     "FaultToleranceConfig",
     "GenericTrainer",
     "GenericTrainerConfig",
     "LoggingConfig",
     "MultiDataLoaderConfig",
+    "MultiTrainMicroState",
+    "MultiValMicroState",
     "PerformanceConfig",
     "PreemptionConfig",
     "PreemptionTimeoutError",
@@ -68,8 +82,15 @@ __all__ = [
     "ValAggregation",
     "ValidationConfig",
     "ValidationFrequency",
+    # State helpers
+    "capture_choice_rng_state",
+    "capture_rng_state",
+    "create_initial_resume_state",
+    "restore_choice_rng_state",
+    "restore_rng_state",
     # Utilities
     "timeout",
+    "update_resume_state",
     "validate_infinite_loader_constraints",
     "validate_trainer_config",
 ]

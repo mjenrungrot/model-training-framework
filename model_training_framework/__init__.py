@@ -69,12 +69,16 @@ from .slurm import (
 # Import trainer classes
 from .trainer import (
     CheckpointConfig,
+    ChoiceRNGState,
+    DataLoaderState,
     DDPConfig,
     EpochLengthPolicy,
     FaultToleranceConfig,
     GenericTrainer,
     GenericTrainerConfig,
     MultiDataLoaderConfig,
+    MultiTrainMicroState,
+    MultiValMicroState,
     PerformanceConfig,
     PreemptionConfig,
     ResumeState,
@@ -84,6 +88,12 @@ from .trainer import (
     ValAggregation,
     ValidationConfig,
     ValidationFrequency,
+    capture_choice_rng_state,
+    capture_rng_state,
+    create_initial_resume_state,
+    restore_choice_rng_state,
+    restore_rng_state,
+    update_resume_state,
     validate_infinite_loader_constraints,
     validate_trainer_config,
 )
@@ -99,9 +109,11 @@ from .utils import (
 __all__ = [
     "BatchSubmissionResult",
     "CheckpointConfig",
+    "ChoiceRNGState",
     "ConfigValidator",
     "DDPConfig",
     "DataConfig",
+    "DataLoaderState",
     "EpochLengthPolicy",
     "ExecutionMode",
     # Configuration
@@ -117,6 +129,8 @@ __all__ = [
     # Main framework
     "ModelTrainingFramework",
     "MultiDataLoaderConfig",
+    "MultiTrainMicroState",
+    "MultiValMicroState",
     "NamingStrategy",
     "OptimizerConfig",
     "ParameterGrid",
@@ -138,9 +152,16 @@ __all__ = [
     "ValidationConfig",
     "ValidationFrequency",
     "ValidationResult",
+    # State helpers
+    "capture_choice_rng_state",
+    "capture_rng_state",
+    "create_initial_resume_state",
     "get_project_root",
+    "restore_choice_rng_state",
+    "restore_rng_state",
     # Utilities
     "setup_logging",
+    "update_resume_state",
     "validate_infinite_loader_constraints",
     "validate_project_structure",
     "validate_trainer_config",

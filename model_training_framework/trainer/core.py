@@ -280,7 +280,7 @@ class GenericTrainer:
             self.resume_state = update_resume_state(
                 self.resume_state,
                 TrainerPhase.TRAIN_BATCH_LOAD,
-                train_state=train_state,
+                multi_train=train_state,  # Will be MultiTrainMicroState when implemented
                 save_rng=self.config.checkpoint.save_rng,
             )
 
@@ -332,7 +332,7 @@ class GenericTrainer:
                 self.resume_state = update_resume_state(
                     self.resume_state,
                     TrainerPhase.VAL_BATCH_LOAD,
-                    val_state=val_state,
+                    multi_val=val_state,  # Will be MultiValMicroState when implemented
                     save_rng=self.config.checkpoint.save_rng,
                 )
 
