@@ -76,8 +76,6 @@ from .trainer import (
     ResumeState,
     RNGState,
     TrainerPhase,
-    TrainMicroState,
-    ValMicroState,
 )
 
 # Import utility functions
@@ -119,10 +117,8 @@ __all__ = [
     # SLURM
     "SLURMLauncher",
     "SchedulerConfig",
-    "TrainMicroState",
     "TrainerPhase",
     "TrainingConfig",
-    "ValMicroState",
     "ValidationResult",
     "get_project_root",
     # Utilities

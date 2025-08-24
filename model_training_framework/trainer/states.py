@@ -10,11 +10,12 @@ This module defines all state classes for the training engine:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 import pickle
 import random
 import time
+from typing import Any
 
 import numpy as np
 import torch
@@ -72,41 +73,7 @@ class RNGState:
     python_state: tuple[int, ...]  # Python's random.getstate() tuple
 
 
-@dataclass
-class TrainMicroState:
-    """
-    Tracks exact position within a training batch, supporting gradient accumulation.
-
-    When using gradient accumulation, a single optimizer step spans multiple
-    micro-steps. This state captures our position within that accumulation window
-    to enable precise resume even mid-accumulation.
-    """
-
-    batch_idx: int  # Index of current batch in the epoch (0-based)
-    micro_step: int  # Current micro-step within gradient accumulation (0..gradient_accumulation_steps-1)
-    loss_sum: float = 0.0  # Accumulated loss across micro-steps (for logging)
-    num_samples: int = 0  # Total samples processed in current accumulation window
-    additional_metrics: dict[str, float] = field(
-        default_factory=dict
-    )  # Custom metrics from training_step
-
-
-@dataclass
-class ValMicroState:
-    """
-    Tracks validation progress to enable mid-epoch resume.
-
-    Unlike training, validation doesn't use gradient accumulation, but we still
-    need to track partial progress to correctly compute epoch-level metrics
-    after resuming from a preemption mid-validation.
-    """
-
-    batch_idx: int  # Index of current validation batch (0-based)
-    loss_sum: float = 0.0  # Running sum of validation losses
-    metrics: dict[str, float] = field(
-        default_factory=dict
-    )  # Accumulated validation metrics
-    num_samples: int = 0  # Total validation samples processed so far
+# Single-dataloader micro states removed - will be replaced with multi-dataloader versions
 
 
 @dataclass
@@ -128,8 +95,12 @@ class ResumeState:
     epoch: int  # Current epoch number (0-based)
     global_step: int  # Total optimizer steps taken across all epochs
     version: str = "v2.0"  # Checkpoint format version for migration
-    train: TrainMicroState | None = None  # Training state (if in training phase)
-    val: ValMicroState | None = None  # Validation state (if in validation phase)
+    train: Any | None = (
+        None  # Training state (if in training phase) - will be MultiTrainMicroState
+    )
+    val: Any | None = (
+        None  # Validation state (if in validation phase) - will be MultiValMicroState
+    )
     rng: RNGState | None = None  # RNG states for deterministic resume
     timestamp: float = 0.0  # Unix timestamp when checkpoint was created
 
@@ -218,8 +189,8 @@ def update_resume_state(
     phase: TrainerPhase,
     epoch: int | None = None,
     global_step: int | None = None,
-    train_state: TrainMicroState | None = None,
-    val_state: ValMicroState | None = None,
+    train_state: Any | None = None,  # Will be MultiTrainMicroState
+    val_state: Any | None = None,  # Will be MultiValMicroState
     save_rng: bool = True,
 ) -> ResumeState:
     """

@@ -25,8 +25,6 @@ from .states import (
     ResumeState,
     RNGState,
     TrainerPhase,
-    TrainMicroState,
-    ValMicroState,
 )
 from .utils import (
     CheckpointTimeoutError,
@@ -50,11 +48,9 @@ __all__ = [
     "PreemptionTimeoutError",
     "RNGState",
     "ResumeState",
-    "TrainMicroState",
     "TrainerError",
     # States
     "TrainerPhase",
-    "ValMicroState",
     # Utilities
     "timeout",
 ]
