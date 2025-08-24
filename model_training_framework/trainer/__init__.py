@@ -31,6 +31,11 @@ from .config import (
 from .core import (
     GenericTrainer,
 )
+from .multi_dataloader import (
+    CheckpointableIterable,
+    DataLoaderManager,
+    MultiDataLoaderIterator,
+)
 from .states import (
     ChoiceRNGState,
     DataLoaderState,
@@ -66,9 +71,11 @@ __all__ = [
     "CheckpointConfig",
     "CheckpointManager",
     "CheckpointTimeoutError",
+    "CheckpointableIterable",
     "ChoiceRNGState",
     # Configuration
     "DDPConfig",
+    "DataLoaderManager",
     "DataLoaderState",
     "EpochLengthPolicy",
     "FaultToleranceConfig",
@@ -76,6 +83,7 @@ __all__ = [
     "GenericTrainerConfig",
     "LoggingConfig",
     "MultiDataLoaderConfig",
+    "MultiDataLoaderIterator",
     "MultiTrainMicroState",
     "MultiValMicroState",
     "PerformanceConfig",

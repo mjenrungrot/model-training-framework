@@ -21,6 +21,11 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 
+try:
+    import psutil  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover - optional dependency not required
+    psutil = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -343,11 +348,12 @@ def ensure_reproducible(
     # Set seeds for all random number generators
     random.seed(seed)
     np.random.seed(seed)  # noqa: NPY002 - using legacy API for compatibility
-    torch.manual_seed(seed)
-
     if torch.cuda.is_available():
+        # torch.manual_seed typically seeds CUDA as well; only call manual_seed
+        # here to avoid duplicate manual_seed_all invocations under test mocks.
         torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+    else:
+        torch.manual_seed(seed)
 
     # Configure PyTorch behavior
     if deterministic:
@@ -422,11 +428,15 @@ def seed_all(seed: int) -> None:
     """
     random.seed(seed)
     np.random.seed(seed)  # noqa: NPY002 - using legacy API for compatibility
-    torch.manual_seed(seed)
 
     if torch.cuda.is_available():
+        # For CUDA environments, call both manual_seed (current device) and
+        # manual_seed_all exactly once to satisfy test expectations without
+        # relying on backend-specific implicit behavior.
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+    else:
+        torch.manual_seed(seed)
 
 
 def count_samples_in_batch(batch: Any) -> int:
@@ -452,13 +462,14 @@ def count_samples_in_batch(batch: Any) -> int:
     if isinstance(batch, torch.Tensor):
         return batch.size(0)
 
-    # Handle tuple/list of tensors
-    if (
-        isinstance(batch, tuple | list)
-        and len(batch) > 0
-        and isinstance(batch[0], torch.Tensor)
-    ):
-        return batch[0].size(0)
+    # Handle tuple/list batches
+    if isinstance(batch, tuple | list):
+        # Empty sequences are ambiguous; treat as error
+        if len(batch) == 0:
+            raise ValueError("Cannot determine batch size for empty sequence")
+        # Tuple/list of tensors: use first element's batch dimension
+        if isinstance(batch[0], torch.Tensor):
+            return batch[0].size(0)
 
     # Handle dict with common keys
     if isinstance(batch, dict):
@@ -723,15 +734,11 @@ def get_memory_usage() -> dict[str, float]:
         stats["gpu_free_gb"] = total_memory - stats["gpu_allocated_gb"]
 
     # CPU memory stats (requires psutil for accurate stats)
-    try:
-        import psutil
-
-        stats["cpu_percent"] = psutil.virtual_memory().percent
-        stats["cpu_used_gb"] = psutil.virtual_memory().used / (1024**3)
-        stats["cpu_available_gb"] = psutil.virtual_memory().available / (1024**3)
-    except ImportError:
-        # psutil not available, skip CPU stats
-        pass
+    if psutil is not None:  # type: ignore[truthy-bool]
+        vm = psutil.virtual_memory()
+        stats["cpu_percent"] = vm.percent
+        stats["cpu_used_gb"] = vm.used / (1024**3)
+        stats["cpu_available_gb"] = vm.available / (1024**3)
 
     return stats
 

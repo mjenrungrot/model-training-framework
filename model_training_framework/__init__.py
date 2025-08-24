@@ -68,8 +68,10 @@ from .slurm import (
 
 # Import trainer classes
 from .trainer import (
+    CheckpointableIterable,
     CheckpointConfig,
     ChoiceRNGState,
+    DataLoaderManager,
     DataLoaderState,
     DDPConfig,
     EpochLengthPolicy,
@@ -77,6 +79,7 @@ from .trainer import (
     GenericTrainer,
     GenericTrainerConfig,
     MultiDataLoaderConfig,
+    MultiDataLoaderIterator,
     MultiTrainMicroState,
     MultiValMicroState,
     PerformanceConfig,
@@ -117,10 +120,12 @@ from .utils import (
 __all__ = [
     "BatchSubmissionResult",
     "CheckpointConfig",
+    "CheckpointableIterable",
     "ChoiceRNGState",
     "ConfigValidator",
     "DDPConfig",
     "DataConfig",
+    "DataLoaderManager",
     "DataLoaderState",
     "EpochLengthPolicy",
     "ExecutionMode",
@@ -137,6 +142,7 @@ __all__ = [
     # Main framework
     "ModelTrainingFramework",
     "MultiDataLoaderConfig",
+    "MultiDataLoaderIterator",
     "MultiTrainMicroState",
     "MultiValMicroState",
     "NamingStrategy",
