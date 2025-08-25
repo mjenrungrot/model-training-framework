@@ -25,19 +25,16 @@ def validate_iterable_dataset_checkpointing(
         return
 
     for i, loader in enumerate(loaders):
-        if loader is None:
-            continue
-
         dataset = loader.dataset
 
         # Check if it's an IterableDataset
         if isinstance(dataset, IterableDataset):
             # Check for checkpointing support
             has_state_dict = hasattr(dataset, "state_dict") and callable(
-                dataset.state_dict
+                getattr(dataset, "state_dict", None)
             )
             has_load_state_dict = hasattr(dataset, "load_state_dict") and callable(
-                dataset.load_state_dict
+                getattr(dataset, "load_state_dict", None)
             )
 
             if not (has_state_dict and has_load_state_dict):
@@ -67,9 +64,11 @@ def detect_iterable_dataset_type(dataset) -> str:
         return "map"
 
     # Check for checkpointing support
-    has_state_dict = hasattr(dataset, "state_dict") and callable(dataset.state_dict)
+    has_state_dict = hasattr(dataset, "state_dict") and callable(
+        getattr(dataset, "state_dict", None)
+    )
     has_load_state_dict = hasattr(dataset, "load_state_dict") and callable(
-        dataset.load_state_dict
+        getattr(dataset, "load_state_dict", None)
     )
 
     if has_state_dict and has_load_state_dict:
@@ -97,7 +96,10 @@ def estimate_iterable_dataset_length(dataset) -> int | None:
 
     # Check for custom length hint
     if hasattr(dataset, "length_hint"):
-        return dataset.length_hint
+        length_hint = dataset.length_hint
+        if isinstance(length_hint, int):
+            return length_hint
+        return None
 
     # No length information available
     return None

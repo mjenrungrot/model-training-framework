@@ -1,12 +1,33 @@
 """
 Trainer Configuration Classes
 
-This module defines configuration classes for the training engine:
-- CheckpointConfig for checkpoint behavior
-- PreemptionConfig for handling job preemption
-- PerformanceConfig for optimization settings
-- LoggingConfig for training logging
-- GenericTrainerConfig for overall trainer configuration
+This module defines configuration classes for the multi-dataloader-only training engine.
+All configurations assume multi-dataloader operation, even for single loader scenarios.
+
+Key Classes:
+- MultiDataLoaderConfig: Core configuration for dataloader management
+- CheckpointConfig: Checkpoint behavior and scheduling
+- PreemptionConfig: Job preemption handling
+- PerformanceConfig: Optimization settings
+- LoggingConfig: Training logging and metrics
+- GenericTrainerConfig: Overall trainer configuration
+
+Example (Single Dataloader):
+    config = GenericTrainerConfig(
+        multi=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,
+            dataloader_names=["main"]  # Single loader still needs config
+        )
+    )
+
+Example (Multiple Dataloaders):
+    config = GenericTrainerConfig(
+        multi=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.WEIGHTED,
+            dataloader_weights=[0.6, 0.3, 0.1],
+            dataloader_names=["large", "medium", "small"]
+        )
+    )
 """
 
 from __future__ import annotations

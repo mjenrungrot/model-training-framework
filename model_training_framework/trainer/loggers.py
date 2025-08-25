@@ -19,20 +19,22 @@ import torch
 logger = logging.getLogger(__name__)
 
 # Optional imports with graceful fallback
+# Predeclare optional modules to keep mypy happy when reassigning
+wandb_mod: Any | None = None
+TB_SummaryWriter: Any = None
+
 try:
-    import wandb
+    import wandb as wandb_mod
 
     WANDB_AVAILABLE = True
 except ImportError:
-    wandb = None
     WANDB_AVAILABLE = False
 
 try:
-    from torch.utils.tensorboard import SummaryWriter
+    from torch.utils.tensorboard import SummaryWriter as TB_SummaryWriter
 
     TENSORBOARD_AVAILABLE = True
 except ImportError:
-    SummaryWriter = None
     TENSORBOARD_AVAILABLE = False
 
 
@@ -111,9 +113,10 @@ class WandBLogger:
         """
         if not WANDB_AVAILABLE:
             raise ImportError("WandB not installed. Install with: pip install wandb")
-
-        self.wandb = wandb
-        self.run = self.wandb.init(
+        # Ensure instance attributes are typed as Any
+        self.wandb: Any = wandb_mod
+        assert self.wandb is not None
+        self.run: Any = self.wandb.init(
             project=project,
             entity=entity,
             name=run_name,
@@ -143,7 +146,7 @@ class WandBLogger:
         self, epoch: int, proportions: dict[str, float], counts: dict[str, int]
     ) -> None:
         """Log dataloader proportions to WandB."""
-        log_dict = {"epoch": epoch}
+        log_dict: dict[str, Any] = {"epoch": epoch}
 
         for loader_name, proportion in proportions.items():
             log_dict[f"loader_proportions/{loader_name}"] = proportion
@@ -155,7 +158,7 @@ class WandBLogger:
 
     def log_text(self, key: str, text: str, step: int | None = None) -> None:
         """Log text to WandB."""
-        log_dict = {key: self.wandb.Html(f"<pre>{text}</pre>")}
+        log_dict: dict[str, Any] = {key: self.wandb.Html(f"<pre>{text}</pre>")}
         if step is not None:
             self.run.log(log_dict, step=step)
         else:
@@ -184,7 +187,11 @@ class TensorBoardLogger:
 
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.writer = SummaryWriter(str(self.log_dir), comment=comment)
+        if TB_SummaryWriter is None:
+            raise ImportError(
+                "TensorBoard not available. Install with: pip install tensorboard"
+            )
+        self.writer = TB_SummaryWriter(str(self.log_dir), comment=comment)
 
     def log_metrics(self, metrics: dict[str, Any], step: int) -> None:
         """Log metrics to TensorBoard."""
@@ -238,7 +245,7 @@ class ConsoleLogger:
     def log_metrics(self, metrics: dict[str, Any], step: int) -> None:
         """Log metrics to console."""
         # Group metrics by prefix for cleaner output
-        grouped = {}
+        grouped: dict[str, list[str]] = {}
         for key, value in metrics.items():
             parts = key.split("/")
             if len(parts) > 1:
@@ -423,8 +430,8 @@ def create_logger(
         # Otherwise, create composite with console + another backend
         loggers = [ConsoleLogger()]
         if project is not None:
-            loggers.append(WandBLogger(project=project, **kwargs))
+            loggers.append(WandBLogger(project=project, **kwargs))  # pyright: ignore[reportArgumentType]
         elif log_dir is not None:
-            loggers.append(TensorBoardLogger(log_dir=log_dir, **kwargs))
-        return CompositeLogger(loggers)
+            loggers.append(TensorBoardLogger(log_dir=log_dir, **kwargs))  # pyright: ignore[reportArgumentType]
+        return CompositeLogger(loggers)  # pyright: ignore[reportArgumentType]
     raise ValueError(f"Unknown logger type: {logger_type}")

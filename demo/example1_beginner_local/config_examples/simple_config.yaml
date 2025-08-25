@@ -1,44 +1,69 @@
-# Simple Configuration for Beginner Local Training
-# This is the most basic configuration you need to get started
+# Simple Configuration for Single DataLoader
+# Note: Even single dataloader must use multi-loader configuration
 
 experiment_name: "my_first_experiment"
-description: "Learning the basics of the model training framework"
+description: "Learning the basics with multi-loader API"
 
-# Model configuration - defines your neural network
+# Model configuration
 model:
   name: "simple_mlp"
   hidden_size: 128
-  input_size: 784    # 28x28 MNIST-like images flattened
-  num_classes: 10    # 10 digit classes (0-9)
+  input_size: 784
+  num_classes: 10
 
-# Training parameters - how long and how fast to train
+# Training parameters
 training:
-  epochs: 5          # Start with fewer epochs for quick feedback
-  batch_size: 32     # Reasonable size for local development
-  learning_rate: 0.001  # Conservative learning rate
+  epochs: 5
+  batch_size: 32
+  learning_rate: 0.001
 
-# Data configuration - what data to use
+# Data configuration
 data:
   dataset_name: "dummy_mnist"
-  train_batches: 50  # Small dataset for quick iteration
-  val_batches: 10    # Validation data for monitoring
+  train_batches: 50
+  val_batches: 10
 
-# Optimizer settings - how to update model weights
+# Optimizer settings
 optimizer:
-  name: "adam"       # Adam is generally a good default
-  weight_decay: 0.01 # Small regularization
+  name: "adam"
+  weight_decay: 0.01
 
-# Logging and monitoring - track your progress
+# ============================================================================
+# MULTI-LOADER CONFIGURATION (Required even for single loader)
+# ============================================================================
+multi:
+  # For single loader, use SEQUENTIAL strategy
+  sampling_strategy: "sequential"
+  # Process all data
+  epoch_length_policy: "sum_of_lengths"
+  # Single name in list (required)
+  dataloader_names: ["main"]
+
+# Validation configuration
+validation:
+  frequency: "per_epoch"
+  # For single loader, aggregation doesn't matter but still required
+  aggregation: "micro_avg_weighted_by_samples"
+
+# Logging configuration
 logging:
+  logger_type: "console"
   log_level: "INFO"
-  use_wandb: false   # Disabled for simplicity
+  log_scalars_every_n_steps: 10
 
-# Checkpointing - save your progress
+# Checkpointing
 checkpoint:
   save_every_n_epochs: 2
   checkpoint_dir: "./checkpoints"
+  max_checkpoints: 5
 
-# Optional: Preemption handling for local development
+# Performance optimization
+performance:
+  gradient_accumulation_steps: 1
+  use_amp: false  # Automatic Mixed Precision
+  clip_grad_norm: 1.0
+
+# Preemption handling
 preemption:
   timeout_minutes: 10
   grace_period_seconds: 30

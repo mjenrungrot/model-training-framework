@@ -331,11 +331,11 @@ class LoggingHook(TrainerHooks):
 
     def on_train_start(self, trainer: GenericTrainer) -> None:
         """Log training start."""
-        self.logger.info(f"Training started with {trainer.config.max_epochs} epochs")
+        self.logger.info("Training started")
 
     def on_epoch_start(self, trainer: GenericTrainer, epoch: int) -> None:
         """Log epoch start."""
-        self.logger.info(f"Starting epoch {epoch + 1}/{trainer.config.max_epochs}")
+        self.logger.info(f"Starting epoch {epoch + 1}")
 
     def on_epoch_end(
         self,
@@ -445,14 +445,14 @@ class EarlyStoppingHook(TrainerHooks):
             mode: "min" for lower is better, "max" for higher is better
             min_delta: Minimum change to qualify as improvement
         """
-        self.monitor = monitor
-        self.patience = patience
-        self.mode = mode
-        self.min_delta = min_delta
+        self.monitor: str = monitor
+        self.patience: int = patience
+        self.mode: str = mode
+        self.min_delta: float = min_delta
 
-        self.best_score = None
-        self.counter = 0
-        self.should_stop = False
+        self.best_score: float | None = None
+        self.counter: int = 0
+        self.should_stop: bool = False
 
     def on_epoch_end(
         self,
@@ -467,26 +467,40 @@ class EarlyStoppingHook(TrainerHooks):
         score = metrics[self.monitor]
 
         if self.best_score is None:
-            self.best_score = score
+            # Initialize best score on first observation
+            try:
+                self.best_score = float(score)
+            except Exception:
+                # If score isn't numeric, don't update
+                return
+            return
+
+        # Compare according to mode (case-insensitive)
+        mode = self.mode.lower()
+        try:
+            current = float(score)
+            best = float(self.best_score)
+        except Exception:
+            return
+
+        is_improved = False
+        if mode == "min":
+            is_improved = current < (best - self.min_delta)
+        elif mode == "max":
+            is_improved = current > (best + self.min_delta)
+
+        if is_improved:
+            self.best_score = current
+            self.counter = 0
+            logger.info(f"Improvement detected: {self.monitor}={current:.4f}")
         else:
-            improved = False
-            if self.mode == "min":
-                improved = score < (self.best_score - self.min_delta)
-            else:
-                improved = score > (self.best_score + self.min_delta)
+            self.counter += 1
+            logger.info(
+                f"No improvement for {self.counter} epochs "
+                f"(best: {best:.4f}, current: {current:.4f})"
+            )
 
-            if improved:
-                self.best_score = score
-                self.counter = 0
-                logger.info(f"Improvement detected: {self.monitor}={score:.4f}")
-            else:
-                self.counter += 1
-                logger.info(
-                    f"No improvement for {self.counter} epochs "
-                    f"(best: {self.best_score:.4f}, current: {score:.4f})"
-                )
-
-                if self.counter >= self.patience:
-                    self.should_stop = True
-                    logger.info(f"Early stopping triggered after epoch {epoch + 1}")
-                    # Note: Actual stopping should be handled by trainer
+            if self.counter >= self.patience:
+                self.should_stop = True
+                logger.info(f"Early stopping triggered after epoch {epoch + 1}")
+                # Note: Actual stopping should be handled by trainer

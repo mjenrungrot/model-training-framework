@@ -69,6 +69,7 @@ class ModelTrainingFramework:
         self.experiments_dir = experiments_dir or self.project_root / "experiments"
 
         # Setup SLURM template path
+        self.slurm_template_path: Path | None = None
         if slurm_template_path:
             self.slurm_template_path = Path(slurm_template_path)
         else:
@@ -78,7 +79,6 @@ class ModelTrainingFramework:
                 self.project_root / "slurm" / "slurm_template.txt",
                 self.project_root / "slurm" / "slurm_template.sbatch",
             ]
-            self.slurm_template_path = None
             for candidate in template_candidates:
                 if candidate.exists():
                     self.slurm_template_path = candidate

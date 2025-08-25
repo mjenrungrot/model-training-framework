@@ -1,25 +1,34 @@
 """
-Basic Model Training - Beginner Local Development
+Basic Model Training - Single DataLoader with Multi-Loader API
 
 This example demonstrates the simplest way to get started with the model training
-framework for local development and prototyping. Perfect for new users who want to:
+framework. Even though we're using a single dataloader, the framework requires
+using the multi-dataloader API (with a list containing one loader).
 
-- Learn the framework basics
-- Develop models locally before scaling to HPC
-- Understand configuration management
-- Get familiar with training patterns
-
-Target Audience: New users, researchers starting with the framework, local development
+Target Audience: New users learning the framework basics with single dataset
 """
 
 from pathlib import Path
+import tempfile
 
 import torch
 from torch import nn
-import yaml
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, TensorDataset
 
-from model_training_framework import ModelTrainingFramework
-from model_training_framework.trainer import GenericTrainer, GenericTrainerConfig
+from model_training_framework.trainer import (
+    CheckpointConfig,
+    GenericTrainer,
+    GenericTrainerConfig,
+    LoggingConfig,
+    MultiDataLoaderConfig,
+    ValidationConfig,
+)
+from model_training_framework.trainer.config import (
+    EpochLengthPolicy,
+    SamplingStrategy,
+    ValAggregation,
+)
 
 
 class SimpleModel(nn.Module):
@@ -27,8 +36,7 @@ class SimpleModel(nn.Module):
     Simple neural network for demonstration.
 
     This is a basic MLP (Multi-Layer Perceptron) that can be used for
-    classification tasks like MNIST. It's intentionally simple to focus
-    on framework usage rather than model complexity.
+    classification tasks like MNIST.
     """
 
     def __init__(self, input_size=784, hidden_size=128, num_classes=10):
@@ -39,7 +47,7 @@ class SimpleModel(nn.Module):
         self.fc2 = nn.Linear(hidden_size, num_classes)
 
     def forward(self, x):
-        # Flatten input for fully connected layers
+        # Flatten input if needed (for MNIST-like data)
         if x.dim() > 2:
             x = x.view(x.size(0), -1)
 
@@ -49,287 +57,239 @@ class SimpleModel(nn.Module):
         return self.fc2(x)
 
 
-class SimpleTrainer(GenericTrainer):
+def create_dummy_mnist_data(num_samples=1000):
     """
-    Custom trainer with simple training logic.
-
-    This trainer extends the GenericTrainer to provide basic training
-    and validation steps. It's designed to be easy to understand and
-    modify for learning purposes.
-    """
-
-    def __init__(self, config, model, optimizer, loss_fn):
-        super().__init__(config)
-        self.model = model
-        self.optimizer = optimizer
-        self.loss_fn = loss_fn
-
-    def training_step(self, batch, batch_idx):
-        """
-        Execute one training step.
-
-        Args:
-            batch: Tuple of (inputs, targets)
-            batch_idx: Index of the current batch
-
-        Returns:
-            Dictionary containing loss and metrics
-        """
-        x, y = batch
-
-        # Forward pass
-        y_pred = self.model(x)
-        loss = self.loss_fn(y_pred, y)
-
-        # Calculate accuracy for monitoring
-        _, predicted = torch.max(y_pred.data, 1)
-        accuracy = (predicted == y).float().mean()
-
-        return {
-            "loss": loss,
-            "accuracy": accuracy.item(),
-            "lr": self.optimizer.param_groups[0]["lr"],
-        }
-
-    def validation_step(self, batch, batch_idx):
-        """
-        Execute one validation step.
-
-        Args:
-            batch: Tuple of (inputs, targets)
-            batch_idx: Index of the current batch
-
-        Returns:
-            Dictionary containing validation loss and metrics
-        """
-        x, y = batch
-
-        # No gradients needed for validation
-        with torch.no_grad():
-            y_pred = self.model(x)
-            loss = self.loss_fn(y_pred, y)
-
-            # Calculate accuracy
-            _, predicted = torch.max(y_pred.data, 1)
-            accuracy = (predicted == y).float().mean()
-
-        return {"val_loss": loss, "val_accuracy": accuracy.item()}
-
-
-def create_dummy_data_loader(batch_size=32, num_batches=100, data_type="train"):
-    """
-    Create dummy data loader for demonstration.
-
-    This creates synthetic MNIST-like data for testing the framework
-    without needing real datasets. Perfect for quick prototyping.
+    Create dummy MNIST-like data for demonstration.
 
     Args:
-        batch_size: Number of samples per batch
-        num_batches: Number of batches to create
-        data_type: Type of data ("train" or "val") for different distributions
+        num_samples: Number of samples to generate
 
     Returns:
-        List of (inputs, targets) tuples
+        tuple: (train_dataset, val_dataset)
     """
-    data = []
+    torch.manual_seed(42)
 
-    # Add some variation between train and validation data
-    noise_level = 0.1 if data_type == "train" else 0.05
+    # Training data
+    train_images = torch.randn(num_samples, 28, 28)  # 28x28 images
+    train_labels = torch.randint(0, 10, (num_samples,))  # 10 classes
+    train_dataset = TensorDataset(train_images, train_labels)
 
-    for _ in range(num_batches):
-        # Create MNIST-like data (28x28 images)
-        x = torch.randn(batch_size, 28, 28) * noise_level
+    # Validation data (smaller)
+    val_images = torch.randn(num_samples // 5, 28, 28)
+    val_labels = torch.randint(0, 10, (num_samples // 5,))
+    val_dataset = TensorDataset(val_images, val_labels)
 
-        # Random labels for classification
-        y = torch.randint(0, 10, (batch_size,))
-
-        data.append((x, y))
-
-    return data
+    return train_dataset, val_dataset
 
 
-def load_config_from_file(config_path: Path) -> dict:
+def training_step(trainer, batch, dataloader_idx, dataloader_name):
     """
-    Load configuration from YAML file if it exists.
+    Execute one training step.
 
-    This function demonstrates how to load configuration from external
-    files, which is useful for reproducible experiments.
+    Note: Even with a single dataloader, this function receives dataloader_idx
+    and dataloader_name parameters (will be 0 and "main" respectively).
+
+    Args:
+        trainer: The GenericTrainer instance
+        batch: Tuple of (inputs, targets)
+        dataloader_idx: Index of the current dataloader (always 0 for single loader)
+        dataloader_name: Name of the current dataloader (e.g., "main")
+
+    Returns:
+        Dictionary containing loss and metrics
     """
-    if config_path.exists():
-        with config_path.open() as f:
-            return yaml.safe_load(f)
-    return {}
+    inputs, targets = batch
+
+    # Forward pass
+    outputs = trainer.model(inputs)
+    loss = F.cross_entropy(outputs, targets)
+
+    # Calculate accuracy for monitoring
+    _, predicted = torch.max(outputs.data, 1)
+    accuracy = (predicted == targets).float().mean()
+
+    # Get current learning rate
+    lr = trainer.optimizers[0].param_groups[0]["lr"]
+
+    return {
+        "loss": loss,
+        "accuracy": accuracy.item(),
+        "lr": lr,
+    }
+
+
+def validation_step(trainer, batch, dataloader_idx, dataloader_name):
+    """
+    Execute one validation step.
+
+    Args:
+        trainer: The GenericTrainer instance
+        batch: Tuple of (inputs, targets)
+        dataloader_idx: Index of the current dataloader
+        dataloader_name: Name of the current dataloader
+
+    Returns:
+        Dictionary containing validation metrics
+    """
+    inputs, targets = batch
+
+    # No gradients needed for validation
+    with torch.no_grad():
+        outputs = trainer.model(inputs)
+        loss = F.cross_entropy(outputs, targets)
+
+        # Calculate accuracy
+        _, predicted = torch.max(outputs.data, 1)
+        accuracy = (predicted == targets).float().mean()
+
+    return {
+        "val_loss": loss,
+        "val_accuracy": accuracy.item(),
+    }
 
 
 def main():
     """
-    Main training function.
-
-    This is the entry point that demonstrates the complete workflow:
-    1. Setup paths and configuration
-    2. Initialize the framework
-    3. Create model and training components
-    4. Run training with proper error handling
+    Main training function demonstrating single dataloader with multi-loader API.
     """
 
     print("🚀 Starting Basic Model Training Example")
+    print("   (Single DataLoader with Multi-Loader API)")
     print("=" * 50)
 
-    # Setup paths - using relative paths for local development
-    project_root = Path.cwd()
-    config_dir = project_root / "demo" / "example1_beginner_local" / "config_examples"
+    # Create datasets
+    print("📊 Creating dummy MNIST-like dataset...")
+    train_dataset, val_dataset = create_dummy_mnist_data(num_samples=1000)
 
-    # Try to load configuration from file, fall back to defaults
-    config_file = config_dir / "simple_config.yaml"
-    file_config = load_config_from_file(config_file)
-
-    # Create basic configuration with sensible defaults
-    base_config = {
-        "experiment_name": "beginner_local_training",
-        "description": "Local development training example for beginners",
-        "model": {
-            "name": "simple_mlp",
-            "hidden_size": 128,
-            "input_size": 784,
-            "num_classes": 10,
-        },
-        "training": {
-            "epochs": 5,  # Shorter for quick feedback
-            "batch_size": 32,
-            "learning_rate": 0.001,
-        },
-        "data": {
-            "dataset_name": "dummy_mnist",
-            "train_batches": 50,  # Smaller dataset for fast iteration
-            "val_batches": 10,
-        },
-        "optimizer": {"name": "adam", "weight_decay": 0.01},
-        "logging": {
-            "log_level": "INFO",
-            "use_wandb": False,  # Disabled for simplicity
-        },
-        "checkpoint": {"save_every_n_epochs": 2, "checkpoint_dir": "./checkpoints"},
-        "preemption": {"timeout_minutes": 5, "grace_period_seconds": 60},
-    }
-
-    # Override with file config if available
-    if file_config:
-        print(f"📋 Loading configuration from {config_file}")
-        # Simple merge - in production, you'd want deeper merging
-        base_config.update(file_config)
-    else:
-        print("📋 Using default configuration")
-
-    print(f"🔧 Experiment: {base_config['experiment_name']}")
-    print(f"📊 Training for {base_config['training']['epochs']} epochs")
-
-    # Initialize framework
-    try:
-        framework = ModelTrainingFramework(
-            project_root=project_root, config_dir=config_dir
-        )
-        config_manager = framework.get_config_manager()
-        experiment_config = config_manager.create_experiment_config(base_config)
-
-        print("✅ Framework initialized successfully")
-
-    except Exception as e:
-        print(f"❌ Failed to initialize framework: {e}")
-        print(
-            "💡 Make sure you're in the correct directory and have installed the framework"
-        )
-        return
-
-    # Setup model and training components
-    print("🏗️  Setting up model and training components...")
-
-    model = SimpleModel(
-        input_size=experiment_config.model.input_size,
-        hidden_size=experiment_config.model.hidden_size,
-        num_classes=experiment_config.model.num_classes,
+    # Create dataloaders
+    # IMPORTANT: Even with single loader, we'll wrap it in a list later
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=32,
+        shuffle=True,
+        num_workers=0,  # Use 0 for simplicity
     )
 
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=64,
+        shuffle=False,
+        num_workers=0,
+    )
+
+    print("✓ Created dataloaders:")
+    print(f"  - Training: {len(train_loader)} batches")
+    print(f"  - Validation: {len(val_loader)} batches")
+
+    # Create configuration
+    # NOTE: Even for single loader, we must use MultiDataLoaderConfig
+    config = GenericTrainerConfig(
+        # Multi-dataloader config (required even for single loader)
+        multi=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,  # For single loader
+            epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,  # Use all data
+            dataloader_names=["main"],  # Single name in a list
+        ),
+        # Validation configuration
+        validation=ValidationConfig(
+            aggregation=ValAggregation.MICRO_AVG_WEIGHTED_BY_SAMPLES,
+        ),
+        # Checkpoint configuration
+        checkpoint=CheckpointConfig(
+            root_dir=Path(tempfile.mkdtemp()) / "checkpoints",
+            save_every_n_epochs=2,
+            max_checkpoints=3,
+        ),
+        # Logging configuration
+        logging=LoggingConfig(
+            logger_type="console",
+            log_scalars_every_n_steps=10,
+        ),
+    )
+
+    print("\n🔧 Configuration created:")
+    print(f"  - Sampling Strategy: {config.multi.sampling_strategy.value}")
+    print(f"  - DataLoader Names: {config.multi.dataloader_names}")
+    print(f"  - Checkpoint Dir: {config.checkpoint.root_dir}")
+
+    # Create model
+    model = SimpleModel(
+        input_size=784,  # 28x28 flattened
+        hidden_size=128,
+        num_classes=10,
+    )
+
+    # Create optimizer
+    # IMPORTANT: Must be a list, even for single optimizer
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=experiment_config.training.learning_rate,
-        weight_decay=experiment_config.optimizer.weight_decay,
+        lr=0.001,
+        weight_decay=0.01,
     )
 
-    loss_fn = nn.CrossEntropyLoss()
+    print("\n🏗️ Model and optimizer created:")
+    print(f"  - Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    print("  - Optimizer: Adam (lr=0.001)")
 
-    # Create data loaders with configuration
-    train_loader = create_dummy_data_loader(
-        batch_size=experiment_config.training.batch_size,
-        num_batches=experiment_config.data.train_batches,
-        data_type="train",
+    # Create trainer
+    # IMPORTANT: Note the API differences from single-loader design
+    trainer = GenericTrainer(
+        config=config,
+        model=model,
+        optimizers=[optimizer],  # Always a list, even for single optimizer
+        fabric=None,  # No distributed training for this example
     )
 
-    val_loader = create_dummy_data_loader(
-        batch_size=experiment_config.training.batch_size,
-        num_batches=experiment_config.data.val_batches,
-        data_type="val",
-    )
+    # Set training and validation step functions
+    trainer.set_training_step(training_step)
+    trainer.set_validation_step(validation_step)
 
-    print("📊 Created data loaders:")
-    print(f"   - Training: {len(train_loader)} batches")
-    print(f"   - Validation: {len(val_loader)} batches")
+    print("\n🎯 Trainer initialized with multi-loader API")
+    print("   Key differences from traditional single-loader:")
+    print("   • optimizers=[optimizer] - always a list")
+    print("   • train_loaders=[loader] - always a list")
+    print("   • Requires MultiDataLoaderConfig")
+    print("   • Training step gets dataloader_idx and name")
 
-    # Initialize trainer
-    trainer_config = GenericTrainerConfig(
-        max_epochs=experiment_config.training.epochs,
-        checkpoint_dir=experiment_config.checkpoint.checkpoint_dir,
-        save_every_n_epochs=experiment_config.checkpoint.save_every_n_epochs,
-        preemption_timeout=experiment_config.preemption.timeout_minutes * 60,
-    )
+    # Prepare for training
+    # IMPORTANT: Loaders must be provided as lists
+    train_loaders = [train_loader]  # Single loader in a list
+    val_loaders = [val_loader]  # Single loader in a list
 
-    trainer = SimpleTrainer(
-        config=trainer_config, model=model, optimizer=optimizer, loss_fn=loss_fn
-    )
+    print("\n📚 Ready to train!")
+    print("   In a real scenario, you would call:")
+    print("   trainer.fit(")
+    print("       train_loaders=[train_loader],  # List with one loader")
+    print("       val_loaders=[val_loader],      # List with one loader")
+    print("       max_epochs=5")
+    print("   )")
 
-    print("🎯 Starting training...")
-    print("-" * 30)
+    # Demonstrate what would happen in training
+    print("\n" + "=" * 50)
+    print("🎓 Key Takeaways:")
+    print("=" * 50)
+    print()
+    print("1. The framework is multi-dataloader-only by design")
+    print("2. Single dataloaders MUST be wrapped in lists:")
+    print("   • train_loaders=[single_loader]")
+    print("   • val_loaders=[single_loader]")
+    print("3. Always use MultiDataLoaderConfig, even for one loader")
+    print("4. Training/validation steps receive dataloader info:")
+    print("   • dataloader_idx (0 for single loader)")
+    print("   • dataloader_name ('main' or your chosen name)")
+    print("5. Optimizers must be a list: optimizers=[optimizer]")
+    print()
+    print("This design enables seamless scaling from single to")
+    print("multiple dataloaders without changing the core API!")
 
-    # Start training with comprehensive error handling
-    try:
-        trainer.fit(
-            model=model,
-            optimizer=optimizer,
-            train_loader=train_loader,
-            val_loader=val_loader,
-        )
+    print("\n✅ Example completed successfully!")
+    print("\n📖 Next steps:")
+    print("   1. Run multi_loader_training.py for multiple dataloaders")
+    print("   2. Explore different sampling strategies")
+    print("   3. Try the intermediate HPC example for distributed training")
 
-        print("-" * 30)
-        print("✅ Training completed successfully!")
-        print(f"💾 Checkpoints saved to: {experiment_config.checkpoint.checkpoint_dir}")
-
-        # Provide next steps for users
-        print("\n🎉 Congratulations! You've completed your first training run.")
-        print("Next steps you can try:")
-        print("  1. Modify the configuration in config_examples/")
-        print("  2. Experiment with different model architectures")
-        print("  3. Try the intermediate HPC example for distributed training")
-        print("  4. Explore the advanced production example for fault tolerance")
-
-    except KeyboardInterrupt:
-        print("\n⏹️  Training interrupted by user")
-        print("💡 This is normal - you can resume from the last checkpoint")
-
-    except Exception as e:
-        print(f"\n❌ Training failed with error: {e}")
-        print("💡 Check the configuration and make sure all dependencies are installed")
-
-        # Provide debugging help
-        print("\nDebugging tips:")
-        print(
-            "  1. Check if PyTorch is installed: python -c 'import torch; print(torch.__version__)'"
-        )
-        print(
-            "  2. Verify the framework is installed: pip list | grep model-training-framework"
-        )
-        print("  3. Check the configuration file format")
-
-        raise
+    return trainer, train_loaders, val_loaders
 
 
 if __name__ == "__main__":
-    main()
+    trainer, train_loaders, val_loaders = main()

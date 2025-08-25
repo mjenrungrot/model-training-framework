@@ -15,7 +15,7 @@ from pathlib import Path
 import random
 import shutil
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import torch
@@ -38,7 +38,8 @@ def save_checkpoint(path: Path, trainer: GenericTrainer) -> None:
         path: Path to save checkpoint
         trainer: GenericTrainer instance to save state from
     """
-    checkpoint_data = {
+    dmanager = getattr(trainer, "dataloader_manager", None)
+    checkpoint_data: dict[str, Any] = {
         # Format metadata
         "format_version": 1,
         "is_multi_dataloader_only": True,
@@ -70,14 +71,16 @@ def save_checkpoint(path: Path, trainer: GenericTrainer) -> None:
             else None,
         },
         # DataLoaderManager state
-        "dataloader_manager_state": trainer.dataloader_manager.get_state()
-        if hasattr(trainer, "dataloader_manager")
-        else None,
+        "dataloader_manager_state": (
+            dmanager.get_state() if dmanager is not None else None
+        ),
         # Optional explicit choice RNG state (for weighted sampling reproducibility)
         "choice_rng_state": (
-            trainer.dataloader_manager.choice_rng.get_state()
-            if hasattr(trainer, "dataloader_manager")
-            and getattr(trainer.dataloader_manager, "choice_rng", None) is not None
+            dmanager.choice_rng.get_state()
+            if (
+                dmanager is not None
+                and getattr(dmanager, "choice_rng", None) is not None
+            )
             else None
         ),
         # Resume state
@@ -159,18 +162,15 @@ def load_checkpoint(path: Path, trainer: GenericTrainer) -> None:
                     torch.cuda.set_rng_state(cuda_state, i)
 
     # Restore DataLoaderManager state
-    if checkpoint_data.get("dataloader_manager_state") and hasattr(
-        trainer, "dataloader_manager"
-    ):
-        trainer.dataloader_manager.load_state(
-            checkpoint_data["dataloader_manager_state"]
-        )
+    dmanager = getattr(trainer, "dataloader_manager", None)
+    if checkpoint_data.get("dataloader_manager_state") and dmanager is not None:
+        dmanager.load_state(checkpoint_data["dataloader_manager_state"])
         # Optionally restore explicit choice RNG state
         if checkpoint_data.get("choice_rng_state") is not None:
             try:
                 rng_state = checkpoint_data["choice_rng_state"]
-                if getattr(trainer.dataloader_manager, "choice_rng", None) is not None:
-                    trainer.dataloader_manager.choice_rng.set_state(rng_state)
+                if getattr(dmanager, "choice_rng", None) is not None:
+                    dmanager.choice_rng.set_state(rng_state)
             except Exception:
                 logger.debug(
                     "Failed to restore explicit choice RNG state", exc_info=True
@@ -182,7 +182,10 @@ def load_checkpoint(path: Path, trainer: GenericTrainer) -> None:
 
     # Restore optional fields
     if "metrics_history" in checkpoint_data:
-        trainer.metrics_history = checkpoint_data["metrics_history"]
+        from typing import cast as _cast
+
+        _trainer_any = _cast(Any, trainer)
+        _trainer_any.metrics_history = checkpoint_data["metrics_history"]
 
     logger.info(
         f"Loaded checkpoint format v1 from {path} (epoch={trainer.current_epoch}, step={trainer.global_step})"
@@ -411,8 +414,9 @@ class CheckpointManager:
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
         logger.info(f"Loading checkpoint from {checkpoint_path}")
-        return torch.load(
-            checkpoint_path, map_location=map_location, weights_only=False
+        return cast(
+            dict[str, Any],
+            torch.load(checkpoint_path, map_location=map_location, weights_only=False),
         )
 
     def restore_from_checkpoint(

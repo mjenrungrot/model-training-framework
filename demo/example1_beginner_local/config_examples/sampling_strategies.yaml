@@ -1,0 +1,309 @@
+# Sampling Strategy Examples
+# Detailed examples of each sampling strategy in the multi-dataloader architecture
+
+# ============================================================================
+# ROUND_ROBIN - Fair Alternation
+# ============================================================================
+# Use Case: When you want equal representation from all datasets
+# Behavior: Alternates between dataloaders in order: A, B, C, A, B, C, ...
+
+round_robin_example:
+  description: "Fair alternation between multiple datasets"
+
+  multi:
+    sampling_strategy: "round_robin"
+    dataloader_names: ["mnist", "cifar10", "fashion_mnist"]
+    epoch_length_policy: "sum_of_lengths"  # Process all data
+    cycle_short_loaders: true  # If one runs out, restart it
+
+  # Example schedule for 3 loaders:
+  # Step 1: mnist batch
+  # Step 2: cifar10 batch
+  # Step 3: fashion_mnist batch
+  # Step 4: mnist batch
+  # ... repeats ...
+
+
+# ============================================================================
+# WEIGHTED - Probabilistic Sampling
+# ============================================================================
+# Use Case: When datasets have different importance or sizes
+# Behavior: Samples based on weights (probabilistic, not deterministic order)
+
+weighted_basic:
+  description: "Sample more from important datasets"
+
+  multi:
+    sampling_strategy: "weighted"
+    dataloader_weights: [0.5, 0.3, 0.2]
+    dataloader_names: ["primary", "secondary", "auxiliary"]
+    epoch_length_policy: "fixed_num_steps"
+    steps_per_epoch: 1000
+    choice_rng_seed: 42  # Makes weighted sampling reproducible
+
+  # Over 1000 steps, expect approximately:
+  # - 500 batches from primary (50%)
+  # - 300 batches from secondary (30%)
+  # - 200 batches from auxiliary (20%)
+
+
+weighted_imbalanced:
+  description: "Handle severely imbalanced datasets"
+
+  multi:
+    sampling_strategy: "weighted"
+    # Oversample minority classes
+    dataloader_weights: [0.1, 0.2, 0.7]  # Inverse of actual sizes
+    dataloader_names: ["large_majority", "medium", "small_minority"]
+    epoch_length_policy: "fixed_num_steps"
+    steps_per_epoch: 2000
+
+  logging:
+    log_loader_proportions: true  # Monitor actual sampling rates
+
+
+weighted_dynamic:
+  description: "Weights that emphasize different datasets over time"
+
+  multi:
+    sampling_strategy: "weighted"
+    # Start with more pretraining, gradually shift to finetuning
+    dataloader_weights: [0.8, 0.2]  # Initial weights
+    dataloader_names: ["pretrain", "finetune"]
+    epoch_length_policy: "fixed_num_steps"
+    steps_per_epoch: 5000
+
+  # Note: Dynamic weight adjustment would require custom hooks
+  hooks:
+    hook_classes: ["custom.DynamicWeightScheduler"]
+    hook_configs:
+      weight_schedule:
+        initial: [0.8, 0.2]
+        final: [0.2, 0.8]
+        transition_epochs: 10
+
+
+# ============================================================================
+# ALTERNATING - Custom Patterns
+# ============================================================================
+# Use Case: When you need specific repeating patterns
+# Behavior: Follows the exact pattern specified
+
+alternating_simple:
+  description: "Simple AABAB pattern"
+
+  multi:
+    sampling_strategy: "alternating"
+    alternating_pattern: [0, 0, 1, 0, 1]  # A, A, B, A, B
+    dataloader_names: ["main", "augmented"]
+    epoch_length_policy: "sum_of_lengths"
+    burst_size: 1  # One batch at a time
+
+  # Pattern repeats: main, main, aug, main, aug, main, main, aug, main, aug, ...
+
+
+alternating_complex:
+  description: "Complex pattern for multi-task learning"
+
+  multi:
+    sampling_strategy: "alternating"
+    # Pattern: 3x TaskA, 2x TaskB, 1x TaskC, 1x TaskD
+    alternating_pattern: [0, 0, 0, 1, 1, 2, 3]
+    dataloader_names: ["task_a", "task_b", "task_c", "task_d"]
+    epoch_length_policy: "max_of_lengths"
+    burst_size: 2  # Take 2 batches per pattern element
+
+  # With burst_size=2:
+  # - 6 batches from task_a
+  # - 4 batches from task_b
+  # - 2 batches from task_c
+  # - 2 batches from task_d
+  # ... pattern repeats ...
+
+
+alternating_curriculum:
+  description: "Curriculum learning with increasing difficulty"
+
+  multi:
+    sampling_strategy: "alternating"
+    # More easy samples, fewer hard samples
+    alternating_pattern: [0, 0, 0, 0, 1, 1, 2]  # 4 easy, 2 medium, 1 hard
+    dataloader_names: ["easy", "medium", "hard"]
+    epoch_length_policy: "fixed_num_steps"
+    steps_per_epoch: 700  # 100 pattern repetitions
+
+
+# ============================================================================
+# SEQUENTIAL - One After Another
+# ============================================================================
+# Use Case: Process datasets in order, completing one before starting the next
+# Behavior: All of A, then all of B, then all of C
+
+sequential_basic:
+  description: "Process datasets sequentially"
+
+  multi:
+    sampling_strategy: "sequential"
+    dataloader_names: ["phase1", "phase2", "phase3"]
+    epoch_length_policy: "sum_of_lengths"
+
+  # Epoch structure:
+  # - All batches from phase1
+  # - All batches from phase2
+  # - All batches from phase3
+
+
+sequential_pretrain_finetune:
+  description: "Classic pretrain then finetune"
+
+  multi:
+    sampling_strategy: "sequential"
+    dataloader_names: ["pretrain_data", "finetune_data"]
+    epoch_length_policy: "sum_of_lengths"
+
+  # First epoch: all pretrain_data
+  # Could switch datasets between epochs with hooks
+
+
+sequential_staged_training:
+  description: "Multi-stage training pipeline"
+
+  multi:
+    sampling_strategy: "sequential"
+    dataloader_names: [
+      "stage1_unsupervised",
+      "stage2_weakly_supervised",
+      "stage3_fully_supervised",
+      "stage4_finetuning"
+    ]
+    epoch_length_policy: "sum_of_lengths"
+
+  checkpoint:
+    save_every_n_steps: 1000  # Save frequently during long sequential training
+
+
+# ============================================================================
+# EPOCH LENGTH POLICIES
+# ============================================================================
+
+epoch_policy_sum:
+  description: "Process all data from all loaders"
+
+  multi:
+    sampling_strategy: "round_robin"
+    epoch_length_policy: "sum_of_lengths"  # len(A) + len(B) + len(C)
+    dataloader_names: ["a", "b", "c"]
+    # If A=100, B=150, C=200, epoch = 450 steps
+
+
+epoch_policy_max:
+  description: "Continue until longest loader is exhausted"
+
+  multi:
+    sampling_strategy: "round_robin"
+    epoch_length_policy: "max_of_lengths"  # max(len(A), len(B), len(C))
+    dataloader_names: ["a", "b", "c"]
+    cycle_short_loaders: true  # Restart shorter loaders
+    # If A=100, B=150, C=200, epoch = 200 steps
+
+
+epoch_policy_min:
+  description: "Stop when shortest loader is exhausted"
+
+  multi:
+    sampling_strategy: "round_robin"
+    epoch_length_policy: "min_of_lengths"  # min(len(A), len(B), len(C))
+    dataloader_names: ["a", "b", "c"]
+    # If A=100, B=150, C=200, epoch = 100 steps
+    # Useful when you want balanced representation
+
+
+epoch_policy_fixed:
+  description: "Fixed number of steps regardless of data"
+
+  multi:
+    sampling_strategy: "weighted"
+    epoch_length_policy: "fixed_num_steps"
+    steps_per_epoch: 5000  # Exactly 5000 steps per epoch
+    dataloader_names: ["infinite_stream", "another_stream"]
+    # Useful for streaming data or very large datasets
+
+
+# ============================================================================
+# VALIDATION AGGREGATION STRATEGIES
+# ============================================================================
+
+validation_micro_avg:
+  description: "Weight by number of samples"
+
+  validation:
+    aggregation: "micro_avg_weighted_by_samples"
+    # If val_A has 1000 samples with 0.9 acc
+    # and val_B has 100 samples with 0.7 acc
+    # Overall = (1000*0.9 + 100*0.7) / 1100 = 0.88
+
+
+validation_macro_avg:
+  description: "Equal weight to each loader"
+
+  validation:
+    aggregation: "macro_avg_equal_loaders"
+    # If val_A has 0.9 acc and val_B has 0.7 acc
+    # Overall = (0.9 + 0.7) / 2 = 0.8
+    # Size doesn't matter
+
+
+validation_per_loader:
+  description: "Track each validation set separately"
+
+  validation:
+    aggregation: "primary_metric_per_loader"
+    per_loader_metrics: true
+    # Tracks val_A/loss, val_B/loss separately
+    # Useful for multi-task or multi-domain evaluation
+
+
+# ============================================================================
+# ADVANCED COMBINATIONS
+# ============================================================================
+
+advanced_multi_optimizer:
+  description: "Different optimizers for different dataloaders"
+
+  multi:
+    sampling_strategy: "weighted"
+    dataloader_weights: [0.6, 0.4]
+    dataloader_names: ["main_task", "auxiliary_task"]
+
+  # In code:
+  # optimizers = [
+  #   Adam(main_params, lr=0.001),
+  #   SGD(aux_params, lr=0.01)
+  # ]
+
+  per_loader_config:
+    main_task:
+      optimizer_idx: 0  # Use Adam
+      loss_weight: 1.0
+    auxiliary_task:
+      optimizer_idx: 1  # Use SGD
+      loss_weight: 0.5  # Downweight auxiliary loss
+
+
+advanced_mixed_validation:
+  description: "Different validation strategies per domain"
+
+  multi:
+    sampling_strategy: "round_robin"
+    dataloader_names: ["domain_a", "domain_b", "domain_c"]
+
+  validation:
+    # Global aggregation strategy
+    aggregation: "micro_avg_weighted_by_samples"
+
+    # But track per-domain metrics
+    per_loader_metrics: true
+
+    # Different validation frequencies possible with hooks
+    frequency: "every_n_steps"
+    every_n_steps: 100

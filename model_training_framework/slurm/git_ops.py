@@ -136,7 +136,7 @@ class GitManager:
         check: bool = True,
         capture_output: bool = True,
         cwd: Path | None = None,
-    ) -> subprocess.CompletedProcess:
+    ) -> subprocess.CompletedProcess[str]:
         """
         Run a git command safely.
 
@@ -156,7 +156,7 @@ class GitManager:
         working_dir = cwd or self.project_root
 
         try:
-            result = subprocess.run(
+            result: subprocess.CompletedProcess[str] = subprocess.run(
                 cmd,
                 cwd=working_dir,
                 check=check,

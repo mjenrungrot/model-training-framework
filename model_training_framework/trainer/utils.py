@@ -22,9 +22,10 @@ import numpy as np
 import torch
 
 try:
-    import psutil  # type: ignore[import-not-found]
+    import psutil as _psutil
 except Exception:  # pragma: no cover - optional dependency not required
-    psutil = None  # type: ignore[assignment]
+    _psutil = None
+psutil: Any | None = _psutil
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -294,7 +295,7 @@ def get_device_info() -> dict[str, Any]:
     Returns:
         Dictionary with device information
     """
-    info = {
+    info: dict[str, Any] = {
         "cpu_count": torch.get_num_threads(),
         "cuda_available": torch.cuda.is_available(),
         "cuda_device_count": 0
@@ -303,10 +304,11 @@ def get_device_info() -> dict[str, Any]:
         "cuda_devices": [],
     }
 
+    cuda_devices: list[dict[str, Any]] = []
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
             device_props = torch.cuda.get_device_properties(i)
-            info["cuda_devices"].append(
+            cuda_devices.append(
                 {
                     "device_id": i,
                     "name": device_props.name,
@@ -314,6 +316,7 @@ def get_device_info() -> dict[str, Any]:
                     "compute_capability": f"{device_props.major}.{device_props.minor}",
                 }
             )
+    info["cuda_devices"] = cuda_devices
 
     return info
 
@@ -460,7 +463,7 @@ def count_samples_in_batch(batch: Any) -> int:
     """
     # Handle tensor directly
     if isinstance(batch, torch.Tensor):
-        return batch.size(0)
+        return int(batch.size(0))
 
     # Handle tuple/list batches
     if isinstance(batch, tuple | list):
@@ -469,17 +472,17 @@ def count_samples_in_batch(batch: Any) -> int:
             raise ValueError("Cannot determine batch size for empty sequence")
         # Tuple/list of tensors: use first element's batch dimension
         if isinstance(batch[0], torch.Tensor):
-            return batch[0].size(0)
+            return int(batch[0].size(0))
 
     # Handle dict with common keys
     if isinstance(batch, dict):
         for key in ["input", "inputs", "data", "x"]:
             if key in batch and isinstance(batch[key], torch.Tensor):
-                return batch[key].size(0)
+                return int(batch[key].size(0))
         # Try first tensor value in dict
         for value in batch.values():
             if isinstance(value, torch.Tensor):
-                return value.size(0)
+                return int(value.size(0))
 
     # Fallback to len
     try:
@@ -523,7 +526,7 @@ def balanced_interleave(quota: list[int]) -> list[int]:
     if total == 0:
         return []
 
-    result = []
+    result: list[int] = []
     credits = [0.0] * len(quota)
     increments = [q / total for q in quota]
 
@@ -534,8 +537,8 @@ def balanced_interleave(quota: list[int]) -> list[int]:
                 credits[i] += increments[i]
 
         # Find index with maximum credit (that still has quota)
-        max_credit = -1
-        max_idx = -1
+        max_credit: float = float("-inf")
+        max_idx: int = -1
         for i in range(len(credits)):
             if quota[i] > 0 and credits[i] > max_credit:
                 max_credit = credits[i]
@@ -567,15 +570,18 @@ def ddp_is_primary(fabric: Any) -> bool:
 
     # Check for is_global_zero attribute (Lightning Fabric)
     if hasattr(fabric, "is_global_zero"):
-        return fabric.is_global_zero
+        igz = fabric.is_global_zero
+        return bool(igz)
 
     # Check for global_rank attribute
     if hasattr(fabric, "global_rank"):
-        return fabric.global_rank == 0
+        gr = fabric.global_rank
+        return isinstance(gr, int) and gr == 0
 
     # Check for rank attribute
     if hasattr(fabric, "rank"):
-        return fabric.rank == 0
+        r = fabric.rank
+        return isinstance(r, int) and r == 0
 
     # Default to primary in single-process mode
     return True
@@ -651,7 +657,14 @@ def ddp_all_gather(
     # Try fabric all_gather method
     if hasattr(fabric, "all_gather"):
         try:
-            return fabric.all_gather(tensor)
+            result = fabric.all_gather(tensor)
+            # Try to narrow common return types
+            if isinstance(result, torch.Tensor) or (
+                isinstance(result, list)
+                and (not result or isinstance(result[0], torch.Tensor))
+            ):
+                return result
+            return tensor
         except Exception:
             # Return unchanged in single-process mode
             return tensor
@@ -680,7 +693,10 @@ def ddp_all_reduce(fabric: Any, tensor: torch.Tensor, op: str = "mean") -> torch
     # Try fabric all_reduce method
     if hasattr(fabric, "all_reduce"):
         try:
-            return fabric.all_reduce(tensor, op=op)
+            result = fabric.all_reduce(tensor, op=op)
+            if isinstance(result, torch.Tensor):
+                return result
+            return tensor
         except Exception:
             # Return unchanged in single-process mode
             return tensor
@@ -704,7 +720,13 @@ def ddp_world_size(fabric: Any) -> int:
 
     # Check for world_size attribute
     if hasattr(fabric, "world_size"):
-        return fabric.world_size
+        ws = fabric.world_size
+        if isinstance(ws, int):
+            return ws
+        try:
+            return int(ws)
+        except Exception:
+            return 1
 
     # Default to 1
     return 1
@@ -720,19 +742,22 @@ def ddp_rank(fabric: Any) -> int:
     Returns:
         Process rank (0 if not distributed)
     """
-    if fabric is None:
-        return 0
-
-    # Check for global_rank attribute
-    if hasattr(fabric, "global_rank"):
-        return fabric.global_rank
-
-    # Check for rank attribute
-    if hasattr(fabric, "rank"):
-        return fabric.rank
-
-    # Default to 0
-    return 0
+    result = 0
+    if fabric is not None:
+        gr = getattr(fabric, "global_rank", None)
+        if gr is not None:
+            try:
+                result = int(gr)
+            except Exception:
+                result = 0
+        else:
+            r = getattr(fabric, "rank", None)
+            if r is not None:
+                try:
+                    result = int(r)
+                except Exception:
+                    result = 0
+    return result
 
 
 class Stopwatch:
@@ -840,7 +865,7 @@ def get_memory_usage() -> dict[str, float]:
         stats["gpu_free_gb"] = total_memory - stats["gpu_allocated_gb"]
 
     # CPU memory stats (requires psutil for accurate stats)
-    if psutil is not None:  # type: ignore[truthy-bool]
+    if psutil is not None:
         vm = psutil.virtual_memory()
         stats["cpu_percent"] = vm.percent
         stats["cpu_used_gb"] = vm.used / (1024**3)

@@ -115,7 +115,7 @@ class ChoiceRNGState:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
-        data = {"seed": self.seed}
+        data: dict[str, Any] = {"seed": self.seed, "state": None}
         if self.state is not None:
             # Pickle the numpy RNG state
             data["state"] = pickle.dumps(self.state).hex()
@@ -233,7 +233,7 @@ class ResumeState:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
-        data = {
+        data: dict[str, Any] = {
             "phase": self.phase.value,
             "epoch": self.epoch,
             "global_step": self.global_step,
@@ -316,7 +316,7 @@ def capture_rng_state() -> RNGState:
         RNGState containing serialized states from PyTorch, NumPy, and Python
     """
     # Capture PyTorch state (including CUDA if available)
-    torch_state_dict = {
+    torch_state_dict: dict[str, Any] = {
         "cpu": torch.get_rng_state(),
     }
 

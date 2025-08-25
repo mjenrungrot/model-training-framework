@@ -453,7 +453,7 @@ class MetricsManager:
             return {}
 
         # Collect all metric keys
-        all_keys = set()
+        all_keys: set[str] = set()
         for loader_metrics in loader_metrics_dict.values():
             all_keys.update(loader_metrics.metrics.keys())
 

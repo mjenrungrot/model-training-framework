@@ -1,19 +1,44 @@
 """
 Multi-DataLoader Training Support
 
-This module provides the multi-dataloader-only training functionality:
-- DataLoaderManager for managing multiple dataloaders
+This module provides the foundation for the multi-dataloader-only training engine.
+All training, including single dataloader scenarios, must use the multi-dataloader API.
+
+Features:
+- DataLoaderManager for managing one or more dataloaders
 - Multi-dataloader iterators with deterministic scheduling
 - Sampling strategies (SEQUENTIAL, ROUND_ROBIN, WEIGHTED, ALTERNATING)
 - Epoch length policies (SUM_OF_LENGTHS, MAX_OF_LENGTHS, MIN_OF_LENGTHS, FIXED_NUM_STEPS)
 - Checkpointable iteration state for fault tolerance
 - DDP synchronization support
+
+Single Dataloader Usage:
+    # Even with one dataloader, use the multi-dataloader API
+    manager = DataLoaderManager(
+        train_loaders=[single_loader],  # Wrap in list
+        config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,
+            dataloader_names=["main"]
+        )
+    )
+
+Multi-Dataloader Usage:
+    # With multiple dataloaders
+    manager = DataLoaderManager(
+        train_loaders=[loader_a, loader_b, loader_c],
+        config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.WEIGHTED,
+            dataloader_weights=[0.5, 0.3, 0.2],
+            dataloader_names=["dataset_a", "dataset_b", "dataset_c"]
+        )
+    )
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 import logging
+import sys
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
@@ -147,27 +172,29 @@ class MultiDataLoaderIterator:
         if state.sampler_state is not None:
             try:
                 # Prefer explicit load_state_dict if available
+                batch_sampler = getattr(loader, "batch_sampler", None)
+                sampler = getattr(loader, "sampler", None)
                 if (
-                    hasattr(loader, "batch_sampler")
-                    and hasattr(getattr(loader, "batch_sampler", None), "sampler")
-                    and hasattr(loader.batch_sampler.sampler, "load_state_dict")
+                    batch_sampler is not None
+                    and hasattr(batch_sampler, "sampler")
+                    and hasattr(batch_sampler.sampler, "load_state_dict")
                 ):
-                    loader.batch_sampler.sampler.load_state_dict(state.sampler_state)
+                    batch_sampler.sampler.load_state_dict(state.sampler_state)
                     sampler_restored = True
                     self.logger.debug(
                         f"Successfully restored batch sampler state for loader {loader_idx} "
                         f"at batch {state.batch_idx}"
                     )
-                elif hasattr(loader.sampler, "load_state_dict"):
-                    loader.sampler.load_state_dict(state.sampler_state)
+                elif sampler is not None and hasattr(sampler, "load_state_dict"):
+                    sampler.load_state_dict(state.sampler_state)
                     sampler_restored = True
                     self.logger.debug(
                         f"Successfully restored sampler state for loader {loader_idx} "
                         f"at batch {state.batch_idx}"
                     )
-                elif hasattr(loader.sampler, "set_state"):
+                elif sampler is not None and hasattr(sampler, "set_state"):
                     # Support custom samplers exposing set_state
-                    loader.sampler.set_state(state.sampler_state)
+                    sampler.set_state(state.sampler_state)
                     sampler_restored = True
                     self.logger.debug(
                         f"Successfully restored sampler state via set_state for loader {loader_idx} "
@@ -209,6 +236,7 @@ class MultiDataLoaderIterator:
         iterator = self.loader_iterators[loader_idx]
 
         try:
+            assert iterator is not None
             batch = next(iterator)
             state.batch_idx += 1
             return batch
@@ -235,7 +263,9 @@ class MultiDataLoaderIterator:
 
                 # Try again
                 try:
-                    batch = next(self.loader_iterators[loader_idx])
+                    it2 = self.loader_iterators[loader_idx]
+                    assert it2 is not None
+                    batch = next(it2)
                     state.batch_idx += 1
                     return batch
                 except StopIteration as err:
@@ -331,12 +361,16 @@ class MultiDataLoaderIterator:
             state = self.loader_states[i]
 
             # Capture sampler state for map-style datasets
-            if hasattr(loader.sampler, "state_dict"):
-                state.sampler_state = loader.sampler.state_dict()
-            elif hasattr(loader, "batch_sampler") and hasattr(
-                loader.batch_sampler.sampler, "state_dict"
+            sampler = getattr(loader, "sampler", None)
+            batch_sampler = getattr(loader, "batch_sampler", None)
+            if sampler is not None and hasattr(sampler, "state_dict"):
+                state.sampler_state = sampler.state_dict()
+            elif (
+                batch_sampler is not None
+                and hasattr(batch_sampler, "sampler")
+                and hasattr(batch_sampler.sampler, "state_dict")
             ):
-                state.sampler_state = loader.batch_sampler.sampler.state_dict()
+                state.sampler_state = batch_sampler.sampler.state_dict()
 
             # Capture dataset state for iterable datasets
             if isinstance(loader.dataset, CheckpointableIterable):
@@ -369,13 +403,18 @@ class MultiDataLoaderIterator:
 
 class DataLoaderManager:
     """
-    Manages multiple dataloaders with deterministic scheduling.
+    Manages one or more dataloaders with deterministic scheduling.
 
-    Responsible for:
+    This is the core component of the multi-dataloader-only training engine.
+    Even single dataloader scenarios are managed through this class.
+
+    Responsibilities:
     - Building deterministic schedules for each epoch
     - Managing dataloader lifecycle and state
     - Handling DDP synchronization
     - Supporting fault-tolerant resume
+
+    Note: Always provide dataloaders as lists, even for single loader scenarios.
     """
 
     def __init__(
@@ -407,6 +446,7 @@ class DataLoaderManager:
 
         # Initialize choice RNG for weighted sampling
         self.choice_rng_state = ChoiceRNGState(seed=self.config.choice_rng_seed)
+        # Always initialize choice_rng for reproducible scheduling
         if self.choice_rng_state.seed is not None:
             self.choice_rng = np.random.RandomState(self.choice_rng_state.seed)
         else:
@@ -479,7 +519,7 @@ class DataLoaderManager:
             raise ValueError(f"Unknown policy: {policy}")
 
         # Build round-robin schedule with burst size
-        schedule = []
+        schedule: list[int] = []
         loader_idx = 0
         while len(schedule) < total_steps:
             # Add burst_size batches from current loader
@@ -527,7 +567,7 @@ class DataLoaderManager:
             raise ValueError(f"Unknown policy: {policy}")
 
         # Build sequential schedule
-        schedule = []
+        schedule: list[int] = []
         for i in range(n_loaders):
             if policy == EpochLengthPolicy.SUM_OF_LENGTHS:
                 # Use actual length for each loader
@@ -597,7 +637,7 @@ class DataLoaderManager:
 
         # Apply burst size if needed
         if burst_size > 1:
-            schedule = []
+            schedule: list[int] = []
             for idx in base_schedule:
                 for _ in range(burst_size):
                     schedule.append(idx)
@@ -626,7 +666,7 @@ class DataLoaderManager:
         if not pattern:
             return []
 
-        schedule = []
+        schedule: list[int] = []
         pattern_idx = 0
 
         while len(schedule) < total_steps:
@@ -705,13 +745,13 @@ class DataLoaderManager:
                     )
 
         # Get loader lengths
-        lengths = []
+        lengths: list[int] = []
         for loader in loaders:
             try:
                 lengths.append(len(loader))
             except TypeError:
-                # Infinite loader
-                lengths.append(float("inf"))
+                # Infinite loader: use a very large integer sentinel to keep types integral
+                lengths.append(sys.maxsize)
 
         # Build schedule based on strategy
         if self.config.sampling_strategy == SamplingStrategy.ROUND_ROBIN:
@@ -882,8 +922,7 @@ class DataLoaderManager:
 
         # Restore choice RNG
         if state.get("choice_rng") is not None:
-            if self.choice_rng is None:
-                self.choice_rng = np.random.RandomState()
+            # choice_rng exists; update its state
             self.choice_rng.set_state(state["choice_rng"])
 
         # Store iterator states for later restoration when iterators are created
@@ -905,8 +944,6 @@ class DataLoaderManager:
                     )
 
                 if broadcasted_state.get("choice_rng") is not None:
-                    if self.choice_rng is None:
-                        self.choice_rng = np.random.RandomState()
                     self.choice_rng.set_state(broadcasted_state["choice_rng"])
 
                 self._stored_train_state = broadcasted_state.get("train_iterator_state")

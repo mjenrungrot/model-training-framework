@@ -507,7 +507,7 @@ class SLURMLauncher:
         Returns:
             Dictionary with validation results
         """
-        status = {
+        status: dict[str, Any] = {
             "slurm_available": False,
             "commands_available": [],
             "missing_commands": [],
@@ -518,14 +518,19 @@ class SLURMLauncher:
         # Check SLURM commands
         slurm_commands = ["sbatch", "squeue", "scancel", "sinfo"]
 
+        commands_available: list[str] = []
+        missing_commands: list[str] = []
         for cmd in slurm_commands:
             try:
                 subprocess.run([cmd, "--version"], capture_output=True, check=True)
-                status["commands_available"].append(cmd)
+                commands_available.append(cmd)
             except (subprocess.CalledProcessError, FileNotFoundError):
-                status["missing_commands"].append(cmd)
+                missing_commands.append(cmd)
 
-        status["slurm_available"] = len(status["missing_commands"]) == 0
+        status["commands_available"] = commands_available
+        status["missing_commands"] = missing_commands
+
+        status["slurm_available"] = len(missing_commands) == 0
 
         # Validate template
         if self.template_path.exists():

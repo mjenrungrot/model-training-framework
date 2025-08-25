@@ -169,6 +169,7 @@ ignore = [
     "B008",   # Do not perform function calls in argument defaults
     "B905",   # `zip()` without an explicit `strict=` parameter
     "N806",   # Variable in function should be lowercase
+    "N812",   # Lowercase imported as non-lowercase
     "PLR0913", # Too many arguments to function call
     "PLR0912", # Too many branches
     "PLR0915", # Too many statements

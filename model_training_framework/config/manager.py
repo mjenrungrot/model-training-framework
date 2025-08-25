@@ -15,7 +15,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -80,7 +80,9 @@ class ConfigurationManager:
         config_data = self._load_config_file(resolved_path)
 
         # Perform environment variable substitution
-        config_data = self._substitute_environment_variables(config_data)
+        config_data = cast(
+            dict[str, Any], self._substitute_environment_variables(config_data)
+        )
 
         # Cache the loaded config
         if use_cache:
@@ -212,11 +214,11 @@ class ConfigurationManager:
 
         if suffix in [".yaml", ".yml"]:
             with config_path.open() as f:
-                return yaml.safe_load(f) or {}
+                return cast(dict[str, Any], yaml.safe_load(f) or {})
 
         elif suffix == ".json":
             with config_path.open() as f:
-                return json.load(f)
+                return cast(dict[str, Any], json.load(f))
 
         else:
             raise ValueError(f"Unsupported configuration file format: {suffix}")

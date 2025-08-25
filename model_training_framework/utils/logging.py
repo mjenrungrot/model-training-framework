@@ -122,7 +122,7 @@ def setup_logging(
 
     # Use colorlog if available and colors requested
     if HAS_COLORLOG and use_colors:
-        console_formatter = colorlog.ColoredFormatter(
+        console_formatter: logging.Formatter = colorlog.ColoredFormatter(
             format_string
             or "%(log_color)s[%(asctime)s] %(levelname)-8s%(reset)s %(name)s: %(message)s",
             datefmt=date_format or "%Y-%m-%d %H:%M:%S",
@@ -147,9 +147,10 @@ def setup_logging(
         if log_file:
             log_path = Path(log_file)
         else:
-            log_dir = Path(log_dir)
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_path = log_dir / "training_framework.log"
+            assert log_dir is not None
+            log_dir_path = Path(log_dir)
+            log_dir_path.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir_path / "training_framework.log"
 
         # Ensure log directory exists
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -274,7 +275,7 @@ class LoggingContext:
         """
         self.logger_name = logger_name
         self.temp_level = temp_level
-        self.original_level = None
+        self.original_level: int | None = None
 
     def __enter__(self) -> logging.Logger:
         """Enter context and change logging level."""
@@ -290,7 +291,8 @@ class LoggingContext:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit context and restore original logging level."""
         logger = logging.getLogger(self.logger_name)
-        logger.setLevel(self.original_level)
+        if self.original_level is not None:
+            logger.setLevel(self.original_level)
 
 
 def log_function_call(func):
@@ -342,21 +344,10 @@ def create_experiment_logger(
     )
 
 
-# Setup default logging for the package
-class _LoggerSingleton:
-    """Singleton holder for default logger."""
-
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = setup_logging(
-                level=logging.INFO, logger_name="model_training_framework"
-            )
-            configure_third_party_loggers()
-        return cls._instance
-
-
+# Setup default logging for the package with lazy initialization
+@functools.lru_cache(maxsize=1)
 def get_default_logger() -> logging.Logger:
     """Get the default logger for the package."""
-    return _LoggerSingleton()
+    logger = setup_logging(level=logging.INFO, logger_name="model_training_framework")
+    configure_third_party_loggers()
+    return logger

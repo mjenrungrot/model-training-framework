@@ -119,13 +119,35 @@ class GenericTrainer:
     """
     Multi-dataloader trainer with preemption safety and fault tolerance.
 
-    This trainer provides:
+    This trainer is designed as a multi-dataloader-only engine. Even single dataloader
+    scenarios must use the multi-dataloader API with a list containing one loader.
+
+    Features:
     - Multi-dataloader training with deterministic scheduling
     - Per-loader optimizer routing and loss weighting
     - Fault-tolerant training with SLURM preemption handling
     - Instruction-level resume capability
     - Distributed training support via Lightning Fabric
     - Comprehensive monitoring and logging
+
+    Example:
+        # Single dataloader (must still use list)
+        trainer = GenericTrainer(
+            config=config,
+            model=model,
+            optimizers=[optimizer],  # Always a list
+            fabric=fabric
+        )
+        trainer.fit(
+            train_loaders=[train_loader],  # Single loader in list
+            val_loaders=[val_loader]       # Single loader in list
+        )
+
+        # Multiple dataloaders
+        trainer.fit(
+            train_loaders=[loader_a, loader_b, loader_c],
+            val_loaders=[val_a, val_b]
+        )
     """
 
     def __init__(
@@ -139,12 +161,28 @@ class GenericTrainer:
         """
         Initialize the multi-dataloader trainer.
 
+        Note: This trainer operates exclusively in multi-dataloader mode.
+        Single dataloader usage requires wrapping the loader in a list.
+
         Args:
-            config: Trainer configuration
+            config: Trainer configuration with MultiDataLoaderConfig
             model: Model to train
-            optimizers: List of optimizers (can be one or multiple)
+            optimizers: List of optimizers (always a list, even for single optimizer)
             schedulers: Optional list of learning rate schedulers
             fabric: Optional Lightning Fabric instance for distributed training
+
+        Example:
+            config = GenericTrainerConfig(
+                multi=MultiDataLoaderConfig(
+                    sampling_strategy=SamplingStrategy.ROUND_ROBIN,
+                    dataloader_names=["main"]  # Even for single loader
+                )
+            )
+            trainer = GenericTrainer(
+                config=config,
+                model=model,
+                optimizers=[optimizer],  # Single optimizer in list
+            )
         """
         self.config = config
         self.fabric = fabric
@@ -213,10 +251,17 @@ class GenericTrainer:
         # Initialize logger based on configuration
         self.logger: LoggerProtocol | None = None
         if ddp_is_primary(fabric):  # Only create logger on primary rank
+            from pathlib import Path
+
+            log_dir = (
+                Path(config.logging.tensorboard_dir)
+                if config.logging.tensorboard_dir
+                else None
+            )
             self.logger = create_logger(
                 logger_type=config.logging.logger_type,
                 project=config.logging.wandb_project,
-                log_dir=config.logging.tensorboard_dir,
+                log_dir=log_dir,
                 entity=config.logging.wandb_entity,
                 tags=config.logging.wandb_tags,
                 notes=config.logging.wandb_notes,
@@ -348,6 +393,7 @@ class GenericTrainer:
             self.config.multi.sampling_strategy == SamplingStrategy.WEIGHTED
             and self.config.multi.dataloader_weights
         ):
+            assert self.metrics_manager is not None
             self.metrics_manager.set_expected_proportions(
                 self.config.multi.dataloader_weights
             )
@@ -427,6 +473,7 @@ class GenericTrainer:
             self.hook_manager.call_hook("on_epoch_start", self, epoch)
 
             # Reset metrics for new epoch
+            assert self.metrics_manager is not None
             self.metrics_manager.reset_epoch("both")
 
             # Update resume state
@@ -473,6 +520,7 @@ class GenericTrainer:
 
             # Optionally aggregate metrics across ranks for DDP
             if self.config.logging.all_reduce_metrics and self.fabric is not None:
+                assert self.metrics_manager is not None
                 self.metrics_manager.aggregate_across_ranks(self.fabric)
 
             # Get combined metrics from MetricsManager
@@ -591,6 +639,7 @@ class GenericTrainer:
         self.model.train()
 
         # Create epoch iterator
+        assert self.dataloader_manager is not None
         iterator = self.dataloader_manager.create_epoch_iterator("train", epoch)
 
         # Accumulation state
@@ -598,6 +647,7 @@ class GenericTrainer:
         accumulated_loss = 0.0
 
         # Get validation loaders for step-based validation
+        assert self.dataloader_manager is not None
         val_loaders = self.dataloader_manager.val_loaders
 
         for loader_idx, batch in iterator:
@@ -608,12 +658,14 @@ class GenericTrainer:
                     self._save_checkpoint(force=True)
                 # All ranks wait for checkpoint save
                 ddp_barrier(self.fabric)
+                assert self.metrics_manager is not None
                 return self.metrics_manager.get_train_metrics(
                     include_global=self.config.logging.log_global_metrics,
                     include_per_loader=self.config.logging.log_per_loader_metrics,
                 )
 
             # Get loader name
+            assert self.dataloader_manager is not None
             loader_name = self.dataloader_manager.train_names[loader_idx]
 
             # Call on_train_batch_start hook
@@ -655,6 +707,7 @@ class GenericTrainer:
             batch_size = self._get_batch_size(batch)
 
             # Add metrics to MetricsManager
+            assert self.metrics_manager is not None
             self.metrics_manager.add_train_batch(loader_idx, step_metrics, batch_size)
 
             # Call on_train_batch_end hook
@@ -744,6 +797,7 @@ class GenericTrainer:
                     self.steps_since_validation = 0
 
         # Return aggregated metrics from MetricsManager
+        assert self.metrics_manager is not None
         return self.metrics_manager.get_train_metrics(
             include_global=self.config.logging.log_global_metrics,
             include_per_loader=self.config.logging.log_per_loader_metrics,
@@ -753,6 +807,7 @@ class GenericTrainer:
         """Execute one validation epoch with multi-dataloader support."""
         if (
             self.validation_step_fn is None
+            or self.dataloader_manager is None
             or self.dataloader_manager.val_loaders is None
         ):
             return {}
@@ -760,11 +815,14 @@ class GenericTrainer:
         self.model.eval()
 
         # Create epoch iterator
+        assert self.dataloader_manager is not None
         iterator = self.dataloader_manager.create_epoch_iterator("val", epoch)
 
         with torch.no_grad():
             for loader_idx, batch in iterator:
                 # Get loader name
+                assert self.dataloader_manager is not None
+                assert self.dataloader_manager is not None
                 loader_name = self.dataloader_manager.val_names[loader_idx]
 
                 # Call on_validation_batch_start hook
@@ -787,6 +845,7 @@ class GenericTrainer:
                 )
 
                 # Validation step
+                assert self.validation_step_fn is not None
                 step_metrics = self.validation_step_fn(
                     self, batch, loader_idx, loader_name
                 )
@@ -795,6 +854,7 @@ class GenericTrainer:
                 batch_size = self._get_batch_size(batch)
 
                 # Add metrics to MetricsManager
+                assert self.metrics_manager is not None
                 self.metrics_manager.add_val_batch(loader_idx, step_metrics, batch_size)
 
                 # Call on_validation_batch_end hook
@@ -808,6 +868,7 @@ class GenericTrainer:
                 )
 
         # Return aggregated validation metrics from MetricsManager
+        assert self.metrics_manager is not None
         return self.metrics_manager.get_val_metrics(
             include_global=self.config.logging.log_global_metrics,
             include_per_loader=self.config.logging.log_per_loader_metrics,
@@ -832,17 +893,19 @@ class GenericTrainer:
         # Execute training step with AMP if configured and CUDA is available
         if self.config.performance.use_amp and torch.cuda.is_available():
             with autocast("cuda"):
+                assert self.training_step_fn is not None
                 step_metrics = self.training_step_fn(
                     self, batch, loader_idx, loader_name
                 )
         else:
+            assert self.training_step_fn is not None
             step_metrics = self.training_step_fn(self, batch, loader_idx, loader_name)
 
         loss = step_metrics["loss"]
         # Coerce numeric losses to tensors and ensure requires_grad for backward
         if not isinstance(loss, torch.Tensor):
             try:
-                device = next(self.model.parameters()).device  # type: ignore[attr-defined]
+                device = next(self.model.parameters()).device
             except Exception:
                 device = None
             loss = torch.tensor(float(loss), device=device, requires_grad=True)
@@ -991,6 +1054,7 @@ class GenericTrainer:
         # Per-loader metrics
         if self.config.validation.per_loader_metrics:
             for loader_idx, metrics in per_loader_metrics.items():
+                assert self.dataloader_manager is not None
                 loader_name = self.dataloader_manager.val_names[loader_idx]
                 for key, values in metrics.items():
                     avg_value = sum(values) / len(values)
@@ -1004,7 +1068,7 @@ class GenericTrainer:
                 # Weight by sample count
                 total_samples = sum(per_loader_samples.values())
 
-                all_keys = set()
+                all_keys: set[str] = set()
                 for metrics in per_loader_metrics.values():
                     all_keys.update(metrics.keys())
 
@@ -1021,12 +1085,11 @@ class GenericTrainer:
             elif aggregation == ValAggregation.MACRO_AVG_EQUAL_LOADERS:
                 # Equal weight per loader
                 # num_loaders intentionally not needed; average across present keys
-
-                all_keys = set()
+                metric_keys: set[str] = set()
                 for metrics in per_loader_metrics.values():
-                    all_keys.update(metrics.keys())
+                    metric_keys.update(metrics.keys())
 
-                for key in all_keys:
+                for key in metric_keys:
                     total = 0.0
                     count = 0
                     for _loader_idx, metrics in per_loader_metrics.items():
@@ -1204,6 +1267,7 @@ class GenericTrainer:
                     and self.dataloader_manager
                 ):
                     # Top-level state (from free save function)
+                    assert self.dataloader_manager is not None
                     self.dataloader_manager.load_state(
                         broadcast_data["dataloader_manager_state"], skip_broadcast=True
                     )
@@ -1213,6 +1277,7 @@ class GenericTrainer:
                     and self.dataloader_manager
                 ):
                     # State inside resume_state (from CheckpointManager)
+                    assert self.dataloader_manager is not None
                     self.dataloader_manager.load_state(
                         self.resume_state.dataloader_manager_state, skip_broadcast=True
                     )
@@ -1222,6 +1287,7 @@ class GenericTrainer:
                 if broadcast_data["choice_rng_state"] and hasattr(
                     self.dataloader_manager, "choice_rng"
                 ):
+                    assert self.dataloader_manager is not None
                     self.dataloader_manager.choice_rng.set_state(
                         broadcast_data["choice_rng_state"]
                     )
@@ -1231,6 +1297,8 @@ class GenericTrainer:
                     and hasattr(self.dataloader_manager, "choice_rng")
                 ):
                     # Use the helper function for resume_state.choice_rng
+                    assert self.dataloader_manager is not None
+                    assert hasattr(self.dataloader_manager, "choice_rng")
                     restore_choice_rng_state(
                         self.resume_state.choice_rng, self.dataloader_manager.choice_rng
                     )

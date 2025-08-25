@@ -1,219 +1,424 @@
 """
-Distributed Training - Intermediate HPC Usage
+Distributed Training with Multi-DataLoader Architecture - Intermediate HPC Usage
 
-This example demonstrates how to set up and manage distributed training
-across multiple compute nodes using SLURM job scheduling. Perfect for:
+This example demonstrates distributed training using the multi-dataloader-only
+architecture across multiple compute nodes with SLURM job scheduling. Perfect for:
 
-- Multi-GPU and multi-node training
-- Large-scale model training that requires distributed computing
+- Multi-GPU and multi-node training with multiple datasets
+- Large-scale model training with the multi-loader API
 - Batch job submission with automatic resource management
-- Production-grade experiment tracking and monitoring
+- Production-grade experiment tracking with multiple data sources
 
 Target Audience: Researchers scaling to multi-node training, HPC teams
 """
 
-from datetime import datetime
 import json
 from pathlib import Path
 
-from model_training_framework import ModelTrainingFramework
-from model_training_framework.config import (
-    ConfigurationManager,
-    ExecutionMode,
-    ExperimentConfig,
+import torch
+from torch import nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
+
+# Multi-loader architecture imports
+from model_training_framework.trainer import (
+    CheckpointConfig,
+    DDPConfig,
+    FaultToleranceConfig,
+    GenericTrainerConfig,
+    LoggingConfig,
+    MultiDataLoaderConfig,
+    PerformanceConfig,
+    PreemptionConfig,
+    ValidationConfig,
 )
-from model_training_framework.slurm import SLURMLauncher
-from model_training_framework.slurm.git_ops import GitManager
+from model_training_framework.trainer.config import (
+    EpochLengthPolicy,
+    SamplingStrategy,
+    ValAggregation,
+    ValidationFrequency,
+)
+
+# Note: In production, you'd import SLURM helpers from your utilities, e.g.
+# Example import: model_training_framework.slurm.SLURMLauncher
+# Example import: model_training_framework.slurm.git_ops.GitManager
 
 
-def create_distributed_experiment_configs() -> list[ExperimentConfig]:
+class DistributedTransformer(nn.Module):
+    """Large transformer model for distributed training."""
+
+    def __init__(self, vocab_size=50000, hidden_size=768, num_layers=12, num_heads=12):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, hidden_size)
+        self.pos_encoding = nn.Parameter(torch.randn(1, 512, hidden_size))
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_size,
+            nhead=num_heads,
+            dim_feedforward=hidden_size * 4,
+            dropout=0.1,
+            batch_first=True,
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.output = nn.Linear(hidden_size, vocab_size)
+
+    def forward(self, x):
+        seq_len = x.size(1)
+        x = self.embedding(x)
+        x = x + self.pos_encoding[:, :seq_len, :]
+        x = self.transformer(x)
+        return self.output(x)
+
+
+def create_distributed_experiment_configs() -> list[GenericTrainerConfig]:
     """
-    Create experiment configurations for distributed training scenarios.
+    Create experiment configurations for distributed training with multi-loader architecture.
 
-    This function demonstrates how to set up experiments that scale across
-    multiple nodes and GPUs, with different distributed training strategies.
+    This function demonstrates various distributed setups, including:
+    - Single-node multi-GPU with single dataloader
+    - Multi-node training with single dataloader
+    - Multi-node training with multiple dataloaders
 
     Returns:
-        List of experiment configurations for different distributed setups
+        List of GenericTrainerConfig for different distributed setups
     """
 
-    # Base configuration for distributed training
-    base_config = {
-        "description": "Distributed training on HPC cluster",
-        # Model configuration - larger models that benefit from distribution
-        "model": {
-            "name": "large_transformer",
-            "num_layers": 12,
-            "num_heads": 16,
-            "attention_dropout": 0.1,
-            "layer_dropout": 0.1,
-        },
-        # Training configuration for distributed setup
-        "training": {
-            "epochs": 100,
-            "gradient_accumulation_steps": 1,
-            "gradient_clip_norm": 1.0,
-            "save_strategy": "epoch",
-            "evaluation_strategy": "epoch",
-            "logging_steps": 100,
-        },
-        # Data configuration
-        "data": {
-            "dataset_name": "large_research_dataset",
-            "train_split": "train",
-            "val_split": "validation",
-            "test_split": "test",
-            "num_workers": 8,  # Per GPU
-            "pin_memory": True,
-        },
-        # Optimizer for large-scale training
-        "optimizer": {
-            "name": "adamw",
-            "weight_decay": 0.01,
-            "betas": [0.9, 0.999],
-            "eps": 1e-8,
-        },
-        # Scheduler for long training
-        "scheduler": {
-            "name": "cosine",
-            "warmup_ratio": 0.1,
-            "min_lr": 1e-6,
-        },
-        # Distributed training configuration
-        "distributed": {
-            "backend": "nccl",  # NCCL for GPU communication
-            "init_method": "env://",  # Use environment variables
-            "find_unused_parameters": False,
-            "gradient_as_bucket_view": True,
-        },
-        # Logging and monitoring for distributed training
-        "logging": {
-            "log_level": "INFO",
-            "use_wandb": True,
-            "wandb_project": "distributed_training_hpc",
-            "log_interval": 50,
-            "save_logs": True,
-        },
+    configs = []
+
+    # ===========================================================================
+    # Config 1: Single-node multi-GPU (4 GPUs) with single dataloader
+    # ===========================================================================
+    single_node_config = GenericTrainerConfig(
+        # Multi-loader config (required even for single loader)
+        multi=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,
+            epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,
+            dataloader_names=["main"],  # Single loader in list
+        ),
+        # Distributed configuration
+        ddp=DDPConfig(
+            backend="nccl",
+            sync_schedules_across_ranks=True,
+            validate_schedule_consistency=True,
+            find_unused_parameters=False,
+            gradient_as_bucket_view=True,
+            broadcast_buffers=True,
+            bucket_cap_mb=25,
+        ),
+        # Performance settings for distributed training
+        performance=PerformanceConfig(
+            gradient_accumulation_steps=1,
+            use_amp=True,  # Mixed precision for efficiency
+            clip_grad_norm=1.0,
+            dataloader_num_workers=8,  # Per GPU
+            pin_memory=True,
+            persistent_workers=True,
+        ),
         # Checkpointing for fault tolerance
-        "checkpoint": {
-            "save_every_n_epochs": 5,
-            "save_best_only": False,  # Save all for distributed training
-            "checkpoint_dir": "./distributed_checkpoints",
-            "async_save": True,  # Non-blocking checkpoint saves
-        },
-        # Preemption handling for long jobs
-        "preemption": {
-            "timeout_minutes": 60,  # 1 hour timeout
-            "grace_period_seconds": 300,  # 5 minutes grace period
-            "save_on_signal": True,
-            "resume_from_checkpoint": True,
-        },
+        checkpoint=CheckpointConfig(
+            root_dir="./distributed_checkpoints/single_node",
+            save_every_n_epochs=5,
+            save_every_n_steps=1000,
+            max_checkpoints=10,
+            save_rng=True,
+            save_optimizer=True,
+        ),
+        # Fault tolerance settings
+        fault_tolerance=FaultToleranceConfig(
+            save_sampler_state=True,
+            save_dataset_state=True,
+            verify_deterministic_resume=True,
+            checkpoint_timeout_sec=300.0,
+        ),
+        # Preemption handling for HPC
+        preemption=PreemptionConfig(
+            max_checkpoint_sec=300.0,
+            requeue_job=True,
+            resume_from_latest_symlink=True,
+        ),
+        # Logging configuration
+        logging=LoggingConfig(
+            logger_type="composite",
+            composite_loggers=["console", "tensorboard"],
+            log_per_loader_metrics=True,
+            log_loader_proportions=False,  # Not needed for single loader
+            all_reduce_metrics=True,  # Aggregate across GPUs
+        ),
+        # Validation configuration
+        validation=ValidationConfig(
+            frequency=ValidationFrequency.PER_EPOCH,
+            aggregation=ValAggregation.MICRO_AVG_WEIGHTED_BY_SAMPLES,
+        ),
+    )
+    configs.append(("single_node_4gpu", single_node_config))
+
+    # ===========================================================================
+    # Config 2: Multi-node training (2 nodes, 8 GPUs) with single dataloader
+    # ===========================================================================
+    multi_node_config = GenericTrainerConfig(
+        multi=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,
+            epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,
+            dataloader_names=["main"],
+        ),
+        ddp=DDPConfig(
+            backend="nccl",
+            sync_schedules_across_ranks=True,
+            validate_schedule_consistency=True,
+            # Larger bucket for multi-node communication
+            bucket_cap_mb=50,
+        ),
+        performance=PerformanceConfig(
+            gradient_accumulation_steps=2,  # Larger effective batch
+            use_amp=True,
+            clip_grad_norm=1.0,
+            dataloader_num_workers=10,
+        ),
+        checkpoint=CheckpointConfig(
+            root_dir="./distributed_checkpoints/multi_node",
+            save_every_n_epochs=2,
+            save_every_n_steps=500,
+        ),
+        fault_tolerance=FaultToleranceConfig(
+            save_sampler_state=True,
+            save_dataset_state=True,
+        ),
+        logging=LoggingConfig(
+            logger_type="wandb",
+            wandb_project="distributed_multi_node",
+            all_reduce_metrics=True,
+        ),
+        validation=ValidationConfig(
+            frequency=ValidationFrequency.EVERY_N_STEPS,
+            every_n_steps=500,
+            aggregation=ValAggregation.MICRO_AVG_WEIGHTED_BY_SAMPLES,
+        ),
+    )
+    configs.append(("multi_node_2x4gpu", multi_node_config))
+
+    # ===========================================================================
+    # Config 3: Multi-node with multiple dataloaders (Advanced)
+    # ===========================================================================
+    multi_loader_distributed_config = GenericTrainerConfig(
+        # Multiple dataloaders with round-robin sampling
+        multi=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.ROUND_ROBIN,
+            epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,
+            dataloader_names=["primary", "auxiliary", "augmented"],
+            cycle_short_loaders=True,  # Important for uneven datasets
+        ),
+        ddp=DDPConfig(
+            backend="nccl",
+            sync_schedules_across_ranks=True,
+            validate_schedule_consistency=True,  # Critical for multi-loader
+        ),
+        performance=PerformanceConfig(
+            gradient_accumulation_steps=4,
+            use_amp=True,
+            clip_grad_norm=1.0,
+        ),
+        checkpoint=CheckpointConfig(
+            root_dir="./distributed_checkpoints/multi_loader",
+            save_every_n_epochs=1,
+        ),
+        logging=LoggingConfig(
+            logger_type="composite",
+            composite_loggers=["console", "tensorboard", "wandb"],
+            log_per_loader_metrics=True,  # Track each dataset
+            log_loader_proportions=True,  # Monitor sampling balance
+            all_reduce_metrics=True,
+        ),
+        validation=ValidationConfig(
+            frequency=ValidationFrequency.PER_EPOCH,
+            aggregation=ValAggregation.MACRO_AVG_EQUAL_LOADERS,  # Equal weight per dataset
+            per_loader_metrics=True,
+        ),
+    )
+    configs.append(("multi_node_multi_loader", multi_loader_distributed_config))
+
+    # ===========================================================================
+    # Config 4: Large-scale with weighted multi-loader sampling
+    # ===========================================================================
+    weighted_distributed_config = GenericTrainerConfig(
+        multi=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.WEIGHTED,
+            dataloader_weights=[0.6, 0.3, 0.1],  # Primary, secondary, rare
+            epoch_length_policy=EpochLengthPolicy.FIXED_NUM_STEPS,
+            steps_per_epoch=10000,  # Fixed steps for consistent epochs
+            dataloader_names=["primary", "secondary", "rare"],
+            choice_rng_seed=42,  # Deterministic weighted sampling
+        ),
+        ddp=DDPConfig(
+            backend="nccl",
+            sync_schedules_across_ranks=True,
+            validate_schedule_consistency=True,
+        ),
+        performance=PerformanceConfig(
+            gradient_accumulation_steps=8,  # Very large effective batch
+            use_amp=True,
+        ),
+        checkpoint=CheckpointConfig(
+            root_dir="./distributed_checkpoints/weighted",
+            save_every_n_steps=2000,
+        ),
+        logging=LoggingConfig(
+            logger_type="wandb",
+            log_per_loader_metrics=True,
+            log_loader_proportions=True,  # Monitor actual vs expected weights
+            all_reduce_metrics=True,
+        ),
+        validation=ValidationConfig(
+            aggregation=ValAggregation.MICRO_AVG_WEIGHTED_BY_SAMPLES,
+        ),
+    )
+    configs.append(("large_scale_weighted", weighted_distributed_config))
+
+    return configs
+
+
+def distributed_training_step(trainer, batch, dataloader_idx, dataloader_name):
+    """
+    Training step for distributed multi-loader training.
+
+    This function handles batches from any dataloader in the distributed setting.
+
+    Args:
+        trainer: GenericTrainer instance
+        batch: Current batch (inputs, targets)
+        dataloader_idx: Index of the current dataloader
+        dataloader_name: Name of the current dataloader
+
+    Returns:
+        Dictionary with loss and metrics
+    """
+    inputs, targets = batch
+
+    # Forward pass
+    outputs = trainer.model(inputs)
+
+    # Compute loss (assuming language modeling)
+    loss = F.cross_entropy(
+        outputs.view(-1, outputs.size(-1)),
+        targets.view(-1),
+        ignore_index=-100,  # Padding token
+    )
+
+    # Compute metrics
+    with torch.no_grad():
+        _, predicted = outputs.max(-1)
+        mask = targets != -100
+        accuracy = ((predicted == targets) & mask).float().sum() / mask.sum()
+
+    # Return metrics with dataloader prefix
+    return {
+        "loss": loss,
+        f"{dataloader_name}/loss": loss.item(),
+        f"{dataloader_name}/accuracy": accuracy.item(),
+        f"{dataloader_name}/perplexity": torch.exp(loss).item(),
     }
 
-    experiments = []
-    config_manager = ConfigurationManager(Path.cwd())
 
-    # Experiment 1: Single-node multi-GPU (4 GPUs)
-    config_single_node = base_config.copy()
-    config_single_node.update(
-        {
-            "experiment_name": "single_node_4gpu_medium",
-            "model": {
-                **base_config["model"],
-                "hidden_size": 768,
-            },
-            "training": {
-                **base_config["training"],
-                "batch_size": 32,  # Per GPU
-                "learning_rate": 2e-4,
-            },
-            "slurm": {
-                "job_name": "dist_1node_4gpu",
-                "time_limit": "24:00:00",
-                "nodes": 1,
-                "ntasks_per_node": 4,  # 4 GPUs
-                "cpus_per_task": 8,  # 8 CPUs per GPU
-                "mem": "128G",  # High memory for large model
-                "gres": "gpu:4",  # 4 GPUs per node
-                "partition": "gpu",
-                "exclusive": True,  # Exclusive node access
-            },
-        }
-    )
+def distributed_validation_step(trainer, batch, dataloader_idx, dataloader_name):
+    """Validation step for distributed multi-loader training."""
+    inputs, targets = batch
 
-    # Experiment 2: Multi-node training (2 nodes, 8 GPUs total)
-    config_multi_node = base_config.copy()
-    config_multi_node.update(
-        {
-            "experiment_name": "multi_node_2x4gpu_large",
-            "model": {
-                **base_config["model"],
-                "hidden_size": 1024,
-            },
-            "training": {
-                **base_config["training"],
-                "batch_size": 24,  # Smaller per-GPU batch for large model
-                "learning_rate": 3e-4,
-            },
-            "slurm": {
-                "job_name": "dist_2node_8gpu",
-                "time_limit": "36:00:00",
-                "nodes": 2,
-                "ntasks_per_node": 4,  # 4 GPUs per node
-                "cpus_per_task": 10,  # More CPUs for data processing
-                "mem": "256G",  # Very high memory
-                "gres": "gpu:4",
-                "partition": "gpu",
-                "exclusive": True,
-            },
-        }
-    )
+    with torch.no_grad():
+        outputs = trainer.model(inputs)
+        loss = F.cross_entropy(
+            outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-100
+        )
 
-    # Experiment 3: Large-scale training (4 nodes, 16 GPUs)
-    config_large_scale = base_config.copy()
-    config_large_scale.update(
-        {
-            "experiment_name": "large_scale_4x4gpu_xl",
-            "model": {
-                **base_config["model"],
-                "hidden_size": 1536,
-                "num_layers": 24,
-            },
-            "training": {
-                **base_config["training"],
-                "batch_size": 16,  # Small per-GPU batch for very large model
-                "learning_rate": 1e-4,  # Conservative LR for large scale
-                "gradient_accumulation_steps": 2,  # Increase effective batch size
-            },
-            "slurm": {
-                "job_name": "dist_4node_16gpu",
-                "time_limit": "72:00:00",  # Longer time limit
-                "nodes": 4,
-                "ntasks_per_node": 4,
-                "cpus_per_task": 12,
-                "mem": "512G",  # Maximum memory
-                "gres": "gpu:4",
-                "partition": "gpu",
-                "exclusive": True,
-                "account": "research",  # May need specific account for large jobs
-            },
-        }
-    )
+        _, predicted = outputs.max(-1)
+        mask = targets != -100
+        accuracy = ((predicted == targets) & mask).float().sum() / mask.sum()
 
-    # Convert to ExperimentConfig objects
-    for config_dict in [config_single_node, config_multi_node, config_large_scale]:
-        experiment_config = config_manager.create_experiment_config(config_dict)
-        experiments.append(experiment_config)
+    return {
+        "val_loss": loss,
+        f"val_{dataloader_name}/loss": loss.item(),
+        f"val_{dataloader_name}/accuracy": accuracy.item(),
+    }
 
-    return experiments
+
+def create_distributed_dataloaders(
+    batch_size: int, world_size: int, rank: int, num_loaders: int = 1
+) -> tuple[list, list]:
+    """
+    Create distributed dataloaders with proper sampling.
+
+    Args:
+        batch_size: Batch size per GPU
+        world_size: Total number of processes
+        rank: Current process rank
+        num_loaders: Number of dataloaders to create
+
+    Returns:
+        Tuple of (train_loaders, val_loaders)
+    """
+    train_loaders = []
+    val_loaders = []
+
+    for i in range(num_loaders):
+        # Create synthetic datasets (in production, load real data)
+        torch.manual_seed(42 + i)  # Different seed per dataset
+
+        # Different sizes for different datasets
+        train_size = 10000 * (i + 1)
+        val_size = 1000 * (i + 1)
+
+        # Create tensors (simulating tokenized text)
+        train_data = TensorDataset(
+            torch.randint(0, 50000, (train_size, 128)),  # Input tokens
+            torch.randint(0, 50000, (train_size, 128)),  # Target tokens
+        )
+        val_data = TensorDataset(
+            torch.randint(0, 50000, (val_size, 128)),
+            torch.randint(0, 50000, (val_size, 128)),
+        )
+
+        # Create distributed samplers
+        train_sampler = DistributedSampler(
+            train_data,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=True,
+            seed=42,
+        )
+        val_sampler = DistributedSampler(
+            val_data,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=False,
+        )
+
+        # Create dataloaders
+        train_loader = DataLoader(
+            train_data,
+            batch_size=batch_size,
+            sampler=train_sampler,
+            num_workers=4,
+            pin_memory=True,
+            persistent_workers=True,
+        )
+        val_loader = DataLoader(
+            val_data,
+            batch_size=batch_size * 2,  # Larger batch for validation
+            sampler=val_sampler,
+            num_workers=2,
+            pin_memory=True,
+        )
+
+        train_loaders.append(train_loader)
+        val_loaders.append(val_loader)
+
+    return train_loaders, val_loaders
 
 
 def create_slurm_distributed_template(template_path: Path) -> None:
     """
-    Create a SLURM template optimized for distributed training.
+    Create a SLURM template for distributed multi-loader training.
 
-    This template includes all necessary setup for multi-node distributed
-    training with proper environment configuration and error handling.
+    This template handles multi-node setup and calls the training script
+    with proper multi-loader configuration.
     """
 
     template_content = """#!/bin/bash
@@ -234,17 +439,15 @@ def create_slurm_distributed_template(template_path: Path) -> None:
 echo "=========================================="
 echo "SLURM Job Information:"
 echo "Job ID: $SLURM_JOB_ID"
-echo "Job Name: $SLURM_JOB_NAME"
 echo "Nodes: $SLURM_JOB_NUM_NODES"
 echo "Tasks per node: $SLURM_NTASKS_PER_NODE"
-echo "CPUs per task: $SLURM_CPUS_PER_TASK"
 echo "Node list: $SLURM_JOB_NODELIST"
-echo "Start time: $(date)"
 echo "=========================================="
 
 # Environment setup
 source ~/.bashrc
-# source activate distributed_training  # Uncomment for conda
+# module load cuda/11.8  # Adjust for your system
+# source activate distributed_env
 
 # Set distributed training environment variables
 export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
@@ -253,76 +456,31 @@ export WORLD_SIZE=$SLURM_NTASKS
 export RANK=$SLURM_PROCID
 export LOCAL_RANK=$SLURM_LOCALID
 
-# NCCL configuration for optimal performance
+# NCCL configuration
 export NCCL_DEBUG=INFO
 export NCCL_IB_DISABLE=0
-export NCCL_NET_GDR_DISABLE=0
 export NCCL_SOCKET_IFNAME=^docker0,lo
 
 # CUDA configuration
 export CUDA_VISIBLE_DEVICES=$SLURM_LOCALID
 
-echo "Distributed Training Environment:"
+echo "Distributed Environment:"
 echo "MASTER_ADDR: $MASTER_ADDR"
-echo "MASTER_PORT: $MASTER_PORT"
 echo "WORLD_SIZE: $WORLD_SIZE"
 echo "RANK: $RANK"
-echo "LOCAL_RANK: $LOCAL_RANK"
-echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 echo "=========================================="
 
 # Change to project directory
 cd {{project_root}}
 
-# Print system information
-echo "System Information:"
-echo "Python version: $(python --version)"
-echo "PyTorch version: $(python -c 'import torch; print(torch.__version__)')"
-echo "NCCL version: $(python -c 'import torch; print(torch.cuda.nccl.version())')"
-echo "Number of GPUs: $(nvidia-smi -L | wc -l)"
-echo "GPU information:"
-nvidia-smi
-echo "=========================================="
-
-# Create output directory
-mkdir -p {{output_dir}}/{{experiment_name}}
-
-# Function to handle cleanup on job termination
-cleanup() {
-    echo "Job termination signal received. Performing cleanup..."
-    # Kill all background processes
-    pkill -P $$
-    echo "Cleanup completed at: $(date)"
-}
-
-# Set up signal handlers
-trap cleanup SIGTERM SIGINT
-
-# Start distributed training
-echo "Starting distributed training..."
-echo "Command: python -m torch.distributed.launch --nproc_per_node=$SLURM_NTASKS_PER_NODE --nnodes=$SLURM_JOB_NUM_NODES --node_rank=$SLURM_NODEID --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT -m model_training_framework.scripts.distributed_train --config {{config_path}} --experiment-name {{experiment_name}} --output-dir {{output_dir}}"
-
-python -m torch.distributed.launch \\
-    --nproc_per_node=$SLURM_NTASKS_PER_NODE \\
-    --nnodes=$SLURM_JOB_NUM_NODES \\
-    --node_rank=$SLURM_NODEID \\
-    --master_addr=$MASTER_ADDR \\
-    --master_port=$MASTER_PORT \\
-    -m model_training_framework.scripts.distributed_train \\
-    --config {{config_path}} \\
-    --experiment-name {{experiment_name}} \\
-    --output-dir {{output_dir}} \\
-    --distributed
-
-# Check exit status
-if [ $? -eq 0 ]; then
-    echo "Training completed successfully at: $(date)"
-    echo "Results saved to: {{output_dir}}/{{experiment_name}}"
-else
-    echo "Training failed at: $(date)"
-    echo "Check error logs for details"
-    exit 1
-fi
+# Run distributed training with multi-loader architecture
+srun python demo/example2_intermediate_hpc/distributed_train_script.py \\
+    --config-name {{config_name}} \\
+    --num-loaders {{num_loaders}} \\
+    --batch-size {{batch_size}} \\
+    --learning-rate {{learning_rate}} \\
+    --max-epochs {{max_epochs}} \\
+    --output-dir {{output_dir}}/{{experiment_name}}
 
 echo "=========================================="
 echo "Job completed at: $(date)"
@@ -332,246 +490,250 @@ echo "Job completed at: $(date)"
         f.write(template_content)
 
 
+def create_distributed_training_script(script_path: Path) -> None:
+    """
+    Create the actual distributed training script that will be called by SLURM.
+
+    This script demonstrates proper multi-loader usage in distributed setting.
+    """
+
+    script_content = '''#!/usr/bin/env python
+"""
+Distributed training script for multi-loader architecture.
+This script is called by SLURM with proper environment variables set.
+"""
+
+import argparse
+import os
+from pathlib import Path
+
+import torch
+import torch.distributed as dist
+from lightning.fabric import Fabric
+
+from demo.example2_intermediate_hpc.distributed_training import (
+    DistributedTransformer,
+    create_distributed_dataloaders,
+    distributed_training_step,
+    distributed_validation_step,
+    create_distributed_experiment_configs,
+)
+from model_training_framework.trainer import GenericTrainer
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config-name", type=str, required=True)
+    parser.add_argument("--num-loaders", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--max-epochs", type=int, default=10)
+    parser.add_argument("--output-dir", type=str, default="./output")
+    args = parser.parse_args()
+
+    # Get distributed info from environment
+    rank = int(os.environ.get("RANK", 0))
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+
+    # Initialize Fabric for distributed training
+    fabric = Fabric(
+        accelerator="gpu",
+        devices="auto",
+        strategy="ddp",
+    )
+    fabric.launch()
+
+    # Get configuration
+    configs = create_distributed_experiment_configs()
+    config = None
+    for name, cfg in configs:
+        if name == args.config_name:
+            config = cfg
+            break
+
+    if config is None:
+        raise ValueError(f"Config {args.config_name} not found")
+
+    # Create model
+    model = DistributedTransformer(
+        vocab_size=50000,
+        hidden_size=768,
+        num_layers=12,
+        num_heads=12,
+    )
+
+    # Create optimizer (always a list for multi-loader architecture)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=args.learning_rate,
+        weight_decay=0.01,
+    )
+
+    # Setup with Fabric
+    model, optimizer = fabric.setup(model, optimizer)
+
+    # Create dataloaders
+    train_loaders, val_loaders = create_distributed_dataloaders(
+        batch_size=args.batch_size,
+        world_size=world_size,
+        rank=rank,
+        num_loaders=args.num_loaders,
+    )
+
+    # Setup dataloaders with Fabric
+    train_loaders = [fabric.setup_dataloaders(loader) for loader in train_loaders]
+    val_loaders = [fabric.setup_dataloaders(loader) for loader in val_loaders]
+
+    # Create trainer with multi-loader API
+    trainer = GenericTrainer(
+        config=config,
+        model=model,
+        optimizers=[optimizer],  # Always a list
+        fabric=fabric,
+    )
+
+    # Set training and validation functions
+    trainer.set_training_step(distributed_training_step)
+    trainer.set_validation_step(distributed_validation_step)
+
+    # Train with multi-loader API
+    trainer.fit(
+        train_loaders=train_loaders,  # List of loaders
+        val_loaders=val_loaders,      # List of loaders
+        max_epochs=args.max_epochs,
+    )
+
+    print(f"Training completed on rank {rank}")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+    with script_path.open("w") as f:
+        f.write(script_content)
+
+    # Make script executable (demo-only)  # nosec B103
+    script_path.chmod(0o755)
+
+
 def main():
     """
-    Main distributed training function.
-
-    Demonstrates the complete workflow for setting up and managing
-    distributed training jobs on HPC clusters.
+    Main function demonstrating distributed training with multi-loader architecture.
     """
 
-    print("🚀 Distributed Training - HPC Setup")
-    print("=" * 50)
+    print("🚀 Distributed Training with Multi-DataLoader Architecture")
+    print("=" * 60)
 
     # Setup paths
     project_root = Path.cwd()
     config_dir = project_root / "demo" / "example2_intermediate_hpc" / "configs"
     output_dir = project_root / "distributed_experiments"
-    scripts_dir = project_root / "scripts"
+    scripts_dir = project_root / "demo" / "example2_intermediate_hpc"
 
     # Create directories
-    config_dir.mkdir(exist_ok=True)
-    output_dir.mkdir(exist_ok=True)
-    scripts_dir.mkdir(exist_ok=True)
-
-    # Initialize framework
-    print("🔧 Initializing framework...")
-    ModelTrainingFramework(project_root=project_root, config_dir=config_dir)
+    config_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Create experiment configurations
-    print("📋 Creating distributed training configurations...")
-    experiments = create_distributed_experiment_configs()
+    print("\n📋 Creating distributed training configurations...")
+    configs = create_distributed_experiment_configs()
 
-    print(f"Created {len(experiments)} distributed training experiments:")
-    for i, exp in enumerate(experiments, 1):
-        slurm_config = exp.slurm
-        total_gpus = (
-            slurm_config.nodes * slurm_config.ntasks_per_node if slurm_config else 0
-        )
-
-        print(f"   {i}. {exp.experiment_name}")
-        print(f"      Model: {exp.model.hidden_size}h x {exp.model.num_layers}l")
+    print(f"Created {len(configs)} distributed configurations:\n")
+    for i, (name, config) in enumerate(configs, 1):
+        print(f"{i}. {name}")
+        print(f"   Sampling Strategy: {config.multi.sampling_strategy.value}")
+        print(f"   DataLoaders: {config.multi.dataloader_names}")
+        print(f"   DDP Backend: {config.ddp.backend if config.ddp else 'None'}")
         print(
-            f"      Scale: {slurm_config.nodes if slurm_config else 0} nodes, "
-            f"{total_gpus} GPUs total"
-        )
-        print(
-            f"      Batch: {exp.training.batch_size} per GPU "
-            f"(effective: {exp.training.batch_size * total_gpus})"
-        )
-        print(
-            f"      Resources: {slurm_config.mem if slurm_config else 'N/A'}, "
-            f"{slurm_config.time_limit if slurm_config else 'N/A'}"
+            f"   Gradient Accumulation: {config.performance.gradient_accumulation_steps}"
         )
         print()
 
-    # Create SLURM template for distributed training
-    slurm_template_path = scripts_dir / "distributed_slurm_template.sh"
-    if not slurm_template_path.exists():
-        print("🔧 Creating distributed SLURM template...")
-        create_slurm_distributed_template(slurm_template_path)
-        print(f"   Template created: {slurm_template_path}")
+    # Create SLURM template
+    slurm_template_path = scripts_dir / "slurm_template.sh"
+    print("📝 Creating SLURM template for distributed training...")
+    create_slurm_distributed_template(slurm_template_path)
+    print(f"   Template saved: {slurm_template_path}")
 
-    # Setup SLURM launcher
-    print("⚙️  Setting up SLURM launcher...")
-    launcher = SLURMLauncher(
-        slurm_template_path=str(slurm_template_path), output_dir=str(output_dir)
-    )
+    # Create training script
+    train_script_path = scripts_dir / "distributed_train_script.py"
+    print("\n📜 Creating distributed training script...")
+    create_distributed_training_script(train_script_path)
+    print(f"   Script saved: {train_script_path}")
 
-    # Save experiment configurations for reference
-    configs_summary = []
-    for exp in experiments:
-        config_summary = {
-            "experiment_name": exp.experiment_name,
-            "model_size": exp.model.hidden_size,
-            "num_layers": exp.model.num_layers,
-            "batch_size": exp.training.batch_size,
-            "learning_rate": exp.training.learning_rate,
-            "nodes": exp.slurm.nodes if exp.slurm else 0,
-            "gpus_per_node": exp.slurm.ntasks_per_node if exp.slurm else 0,
-            "total_gpus": (exp.slurm.nodes * exp.slurm.ntasks_per_node)
-            if exp.slurm
-            else 0,
+    # Save configurations for reference
+    print("\n💾 Saving configuration details...")
+    for name, config in configs:
+        config_path = config_dir / f"{name}_config.json"
+        config_dict = {
+            "name": name,
+            "sampling_strategy": config.multi.sampling_strategy.value,
+            "dataloader_names": config.multi.dataloader_names,
+            "ddp_backend": config.ddp.backend if config.ddp else None,
+            "checkpoint_dir": str(config.checkpoint.root_dir),
         }
-        configs_summary.append(config_summary)
+        with config_path.open("w") as f:
+            json.dump(config_dict, f, indent=2)
+        print(f"   Saved: {config_path.name}")
 
-    summary_path = output_dir / "experiment_summary.json"
-    with summary_path.open("w") as f:
-        json.dump(configs_summary, f, indent=2)
-    print(f"💾 Saved experiment summary: {summary_path}")
+    # Provide usage instructions
+    print("\n" + "=" * 60)
+    print("📚 Usage Instructions")
+    print("=" * 60)
 
-    # Dry run validation
-    print("\n🔍 Running dry run validation...")
+    print("\n1. Single-Node Multi-GPU (4 GPUs):")
+    print("   sbatch --job-name=single_node \\")
+    print("          --nodes=1 --ntasks-per-node=4 --gres=gpu:4 \\")
+    print("          slurm_template.sh")
 
-    try:
-        dry_run_result = launcher.submit_experiment_batch(
-            experiments=experiments, execution_mode=ExecutionMode.DRY_RUN
-        )
+    print("\n2. Multi-Node (2 nodes, 8 GPUs total):")
+    print("   sbatch --job-name=multi_node \\")
+    print("          --nodes=2 --ntasks-per-node=4 --gres=gpu:4 \\")
+    print("          slurm_template.sh")
 
-        print("✅ Dry run validation completed")
-        print(
-            f"   Success rate: {len(dry_run_result.successful_jobs)}/{len(experiments)}"
-        )
+    print("\n3. Multi-Node with Multiple DataLoaders:")
+    print("   sbatch --job-name=multi_loader \\")
+    print("          --nodes=2 --ntasks-per-node=4 --gres=gpu:4 \\")
+    print("          --export=num_loaders=3 \\")
+    print("          slurm_template.sh")
 
-        if dry_run_result.failed_jobs:
-            print("⚠️  Some configurations had issues:")
-            for exp_name, error in dry_run_result.failed_jobs.items():
-                print(f"      {exp_name}: {error}")
-        else:
-            print("🎯 All configurations validated successfully")
+    print("\n" + "=" * 60)
+    print("🔑 Key Features Demonstrated")
+    print("=" * 60)
 
-    except Exception as e:
-        print(f"❌ Dry run validation failed: {e}")
-        return
+    features = [
+        "✓ Multi-loader architecture in distributed setting",
+        "✓ Single loader wrapped in list (multi-loader API)",
+        "✓ Multiple dataloaders with different sampling strategies",
+        "✓ DDP configuration for multi-node training",
+        "✓ Fault-tolerant checkpointing with exact resume",
+        "✓ Per-loader metrics tracking in distributed mode",
+        "✓ SLURM integration with proper environment setup",
+        "✓ Lightning Fabric for simplified distributed training",
+    ]
 
-    # Git integration demonstration
-    print("\n🌿 Git integration for experiment tracking...")
+    for feature in features:
+        print(f"   {feature}")
 
-    try:
-        git_manager = GitManager(str(project_root))
+    print("\n" + "=" * 60)
+    print("⚠️  Important Notes")
+    print("=" * 60)
 
-        # Create experiment branch
-        branch_name = (
-            f"distributed_experiments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        )
+    notes = [
+        "• Always use lists for dataloaders: train_loaders=[loader]",
+        "• Always use lists for optimizers: optimizers=[optimizer]",
+        "• Training step signature: (trainer, batch, dataloader_idx, dataloader_name)",
+        "• DDP synchronization is automatic with sync_schedules_across_ranks=True",
+        "• Checkpoints include sampler state for exact resume",
+    ]
 
-        with git_manager.branch_context(branch_name):
-            print(f"   Created experiment branch: {branch_name}")
-            print(f"   Commit hash: {git_manager.get_current_commit()}")
-
-            # Save git info with experiments
-            git_info = {
-                "branch": branch_name,
-                "commit": git_manager.get_current_commit(),
-                "timestamp": datetime.now().isoformat(),
-                "experiments": [exp.experiment_name for exp in experiments],
-            }
-
-            git_info_path = output_dir / "git_info.json"
-            with git_info_path.open("w") as f:
-                json.dump(git_info, f, indent=2)
-
-        print("   Returned to original branch")
-
-    except Exception as e:
-        print(f"⚠️  Git integration failed: {e}")
-        print("   (This is normal if not in a git repository)")
-
-    # Ready for submission
-    print("\n🚀 Ready for SLURM submission!")
-    print("=" * 30)
-
-    print("To submit the jobs, uncomment the submission section below.")
-    print("Consider starting with the smallest experiment first.")
-
-    # Commented out for safety - uncomment to actually submit
-    """
-    print("Submitting distributed training jobs...")
-
-    try:
-        submission_result = launcher.submit_experiment_batch(
-            experiments=experiments,
-            execution_mode=ExecutionMode.SLURM,
-            max_concurrent_jobs=2  # Limit concurrent large jobs
-        )
-
-        print(f"✅ Successfully submitted {len(submission_result.successful_jobs)} jobs")
-
-        for job_id in submission_result.successful_jobs:
-            print(f"   Job ID: {job_id}")
-
-        if submission_result.failed_jobs:
-            print("❌ Failed submissions:")
-            for exp_name, error in submission_result.failed_jobs.items():
-                print(f"   {exp_name}: {error}")
-
-        # Monitor jobs
-        print("\\n📊 Monitoring distributed training jobs...")
-        print("Use the job monitoring utilities to track progress")
-
-    except Exception as e:
-        print(f"❌ Submission failed: {e}")
-    """
-
-    # Provide next steps and monitoring guidance
-    print("\n📋 Next Steps:")
-    print("1. Review experiment configurations and resource requirements")
-    print("2. Test with the smallest experiment first")
-    print("3. Monitor GPU utilization and communication efficiency")
-    print("4. Check for proper load balancing across nodes")
-    print("5. Use distributed training best practices")
-
-    print("\n💡 Monitoring Commands:")
-    print("   squeue -u $USER                    # Check job queue")
-    print("   scontrol show job <job_id>         # Detailed job info")
-    print("   ssh <node> nvidia-smi              # Check GPU utilization")
-    print("   tail -f <output_file>.out          # Monitor training progress")
-
-    print("\n🔧 Troubleshooting Tips:")
-    print("   - Check NCCL communication between nodes")
-    print("   - Verify network configuration for multi-node jobs")
-    print("   - Monitor memory usage on all nodes")
-    print("   - Check for load balancing issues")
+    for note in notes:
+        print(f"   {note}")
 
     print("\n✅ Distributed training setup complete!")
-
-
-def demonstrate_distributed_best_practices():
-    """
-    Demonstrate best practices for distributed training on HPC systems.
-    """
-
-    print("\n🎯 Distributed Training Best Practices")
-    print("-" * 40)
-
-    practices = [
-        "1. Use gradient accumulation to maintain effective batch size",
-        "2. Scale learning rate with number of GPUs (linear scaling rule)",
-        "3. Use warm-up periods for large-scale training",
-        "4. Monitor communication overhead vs computation",
-        "5. Use appropriate data loading strategies (multiple workers)",
-        "6. Implement proper checkpointing for fault tolerance",
-        "7. Use mixed precision training to reduce memory usage",
-        "8. Profile your training to identify bottlenecks",
-    ]
-
-    for practice in practices:
-        print(f"   {practice}")
-
-    print("\n🚨 Common Issues and Solutions:")
-    issues = [
-        "NCCL timeouts → Check network configuration and firewall",
-        "Uneven GPU utilization → Check data distribution and loading",
-        "Memory errors → Reduce batch size or use gradient checkpointing",
-        "Slow training → Profile communication vs computation ratio",
-    ]
-
-    for issue in issues:
-        print(f"   {issue}")
-
-    print("\n✅ Best practices review complete")
+    print("   Ready for SLURM submission with multi-loader architecture")
 
 
 if __name__ == "__main__":
     main()
-    demonstrate_distributed_best_practices()

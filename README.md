@@ -1,15 +1,19 @@
 # Model Training Framework
 
-A comprehensive Python package for machine learning model training, job launching, and configuration management with SLURM integration.
+A comprehensive Python package for multi-dataloader machine learning model training with fault tolerance, SLURM integration, and deterministic scheduling.
+
+## 🎯 Key Design: Multi-DataLoader-Only Architecture
+
+**This framework is designed exclusively for multi-dataloader training.** Even single dataloader scenarios must use the multi-dataloader API with a list containing one loader. This unified design enables seamless scaling and consistent behavior across all use cases.
 
 ## Features
 
-- **Fault-Tolerant Training**: Preemption-safe training with instruction-level checkpointing
+- **Multi-DataLoader Training**: Built-in support for training with multiple datasets simultaneously
+- **Deterministic Scheduling**: ROUND_ROBIN, WEIGHTED, ALTERNATING, and SEQUENTIAL strategies
+- **Fault-Tolerant Training**: Preemption-safe with instruction-level checkpointing and exact resume
 - **SLURM Integration**: Seamless job launching and management on HPC clusters
-- **Parameter Grid Search**: Automatic enumeration and naming of experiment configurations
-- **Configuration Management**: Structured configuration system with validation
-- **Experiment Tracking**: Comprehensive logging and reproducibility features
-- **Distributed Training**: Multi-node and multi-GPU support via Lightning Fabric
+- **Flexible Aggregation**: Multiple validation aggregation strategies for multi-loader scenarios
+- **Distributed Training**: Multi-node and multi-GPU support via Lightning Fabric with DDP
 
 ## Installation
 
@@ -25,71 +29,349 @@ pip install -e ".[dev,wandb,docs]"
 
 ## Quick Start
 
-### 1. Basic Usage
+### 1. Single DataLoader (Using Multi-Loader API)
 
 ```python
-from model_training_framework import ModelTrainingFramework
-from pathlib import Path
+from model_training_framework.trainer import (
+    GenericTrainer,
+    GenericTrainerConfig,
+    MultiDataLoaderConfig,
+    SamplingStrategy,
+    EpochLengthPolicy,
+)
 
-# Initialize framework
-framework = ModelTrainingFramework(project_root=Path("/path/to/project"))
+# Configuration for single loader (still uses multi-loader config)
+config = GenericTrainerConfig(
+    multi=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,
+        dataloader_names=["main"],  # Single name in list
+    )
+)
 
-# Create experiment configuration
-config = framework.create_experiment({
-    "experiment_name": "resnet_baseline",
-    "model": {
-        "type": "resnet50",
-        "num_classes": 1000
-    },
-    "training": {
-        "max_epochs": 100,
-        "batch_size": 64
-    },
-    "optimizer": {
-        "type": "adamw",
-        "lr": 1e-3
-    }
-})
-
-# Execute experiment
-result = framework.run_single_experiment(
+# Create trainer - note the list syntax
+trainer = GenericTrainer(
     config=config,
-    script_path="scripts/train.py"
+    model=model,
+    optimizers=[optimizer],  # Always a list
+)
+
+# Training step signature includes dataloader info
+def training_step(trainer, batch, dataloader_idx, dataloader_name):
+    # dataloader_idx will be 0, dataloader_name will be "main"
+    loss = compute_loss(trainer.model, batch)
+    return {"loss": loss}
+
+trainer.set_training_step(training_step)
+
+# Fit with single loader wrapped in list
+trainer.fit(
+    train_loaders=[train_loader],  # Single loader in list
+    val_loaders=[val_loader],      # Single loader in list
+    max_epochs=10
 )
 ```
 
-### 2. Parameter Grid Search
+### 2. Multiple DataLoaders with Different Strategies
+
+#### Round-Robin Strategy (Fair Alternation)
 
 ```python
-# Create parameter grid
-grid = framework.create_parameter_grid(
-    name="learning_rate_search",
-    parameters={
-        "optimizer.lr": [1e-4, 5e-4, 1e-3, 5e-3],
-        "optimizer.weight_decay": [0.0, 0.01, 0.1],
-        "training.batch_size": [32, 64, 128]
-    }
+from model_training_framework.trainer.config import (
+    SamplingStrategy,
+    ValAggregation,
 )
 
-# Execute grid search
-results = framework.run_grid_search(
-    base_config="configs/base_config.yaml",
-    parameter_grids=[grid],
-    script_path="scripts/train.py"
+# Alternates between dataloaders: A, B, A, B, ...
+config = GenericTrainerConfig(
+    multi=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.ROUND_ROBIN,
+        epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,
+        dataloader_names=["dataset_a", "dataset_b", "dataset_c"],
+    ),
+    validation=ValidationConfig(
+        aggregation=ValAggregation.MACRO_AVG_EQUAL_LOADERS,
+    ),
+)
+
+trainer = GenericTrainer(
+    config=config,
+    model=model,
+    optimizers=[optimizer],
+)
+
+# Training with multiple loaders
+trainer.fit(
+    train_loaders=[loader_a, loader_b, loader_c],
+    val_loaders=[val_a, val_b, val_c],
+    max_epochs=20,
 )
 ```
 
-### 3. Job Monitoring
+#### Weighted Strategy (Importance-Based Sampling)
 
 ```python
-# Monitor running jobs
-status = framework.monitor_jobs()
-print(f"Active jobs: {len(status['active_jobs'])}")
+# Sample based on dataset importance/size
+config = GenericTrainerConfig(
+    multi=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.WEIGHTED,
+        dataloader_weights=[0.5, 0.3, 0.2],  # 50%, 30%, 20%
+        epoch_length_policy=EpochLengthPolicy.FIXED_NUM_STEPS,
+        steps_per_epoch=1000,
+        dataloader_names=["primary", "auxiliary", "synthetic"],
+    ),
+    logging=LoggingConfig(
+        log_loader_proportions=True,  # Monitor actual sampling
+    ),
+)
+```
 
-# Wait for specific experiments to complete
-completed = framework.wait_for_experiments(
-    job_ids=["12345", "12346", "12347"],
-    timeout=3600  # 1 hour
+#### Alternating Pattern (Custom Schedule)
+
+```python
+# Define explicit pattern: 2x A, 1x B, 1x C, repeat
+config = GenericTrainerConfig(
+    multi=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.ALTERNATING,
+        alternating_pattern=[0, 0, 1, 2],  # Indices into loader list
+        burst_size=3,  # Take 3 batches at a time
+        dataloader_names=["main", "augmented", "hard_negatives"],
+    ),
+)
+```
+
+### 3. Validation Aggregation Strategies
+
+```python
+from model_training_framework.trainer.config import ValAggregation
+
+# Micro-average: Weight by number of samples
+config = GenericTrainerConfig(
+    validation=ValidationConfig(
+        aggregation=ValAggregation.MICRO_AVG_WEIGHTED_BY_SAMPLES,
+        per_loader_metrics=True,  # Track per-loader metrics
+        global_metrics=True,      # Also track aggregated
+    ),
+)
+
+# Macro-average: Equal weight to each loader
+config = GenericTrainerConfig(
+    validation=ValidationConfig(
+        aggregation=ValAggregation.MACRO_AVG_EQUAL_LOADERS,
+    ),
+)
+
+# Per-loader tracking for multi-task
+config = GenericTrainerConfig(
+    validation=ValidationConfig(
+        aggregation=ValAggregation.PRIMARY_METRIC_PER_LOADER,
+    ),
+)
+```
+
+### 4. Checkpoint and Resume
+
+```python
+# Checkpoint configuration
+config = GenericTrainerConfig(
+    checkpoint=CheckpointConfig(
+        save_every_n_epochs=1,
+        save_every_n_steps=500,
+        max_checkpoints=5,
+    ),
+    fault_tolerance=FaultToleranceConfig(
+        save_sampler_state=True,  # For exact resume
+        save_dataset_state=True,
+        verify_deterministic_resume=True,
+    ),
+)
+
+# Resume from checkpoint
+if checkpoint_path.exists():
+    trainer.load_checkpoint(checkpoint_path)
+    # Resumes from exact batch/sample
+```
+
+### 5. Advanced Multi-Loader Patterns
+
+#### Multi-Task Learning
+
+```python
+# Different optimizers for different tasks
+optimizers = [
+    torch.optim.Adam(model.task_a_params(), lr=0.001),
+    torch.optim.SGD(model.task_b_params(), lr=0.01),
+]
+
+config = GenericTrainerConfig(
+    multi=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.WEIGHTED,
+        dataloader_weights=[0.6, 0.4],
+        dataloader_names=["task_a", "task_b"],
+    ),
+    per_loader_optimizers={
+        "task_a": {"optimizer_idx": 0, "loss_weight": 1.0},
+        "task_b": {"optimizer_idx": 1, "loss_weight": 0.5},
+    },
+)
+
+trainer = GenericTrainer(
+    config=config,
+    model=multi_task_model,
+    optimizers=optimizers,  # Multiple optimizers
+)
+```
+
+#### Curriculum Learning
+
+```python
+# Sequential processing with increasing difficulty
+config = GenericTrainerConfig(
+    multi=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        dataloader_names=["easy", "medium", "hard"],
+        epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,
+    ),
+)
+
+# Or use alternating pattern for gradual transition
+config = GenericTrainerConfig(
+    multi=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.ALTERNATING,
+        # More easy, fewer hard samples
+        alternating_pattern=[0, 0, 0, 0, 1, 1, 2],
+        dataloader_names=["easy", "medium", "hard"],
+    ),
+)
+```
+
+### 6. DDP with Multi-Loaders
+
+```python
+# DDP configuration for multi-loader training
+from lightning.fabric import Fabric
+
+fabric = Fabric(accelerator="gpu", devices=4, strategy="ddp")
+fabric.launch()
+
+config = GenericTrainerConfig(
+    multi=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.ROUND_ROBIN,
+        dataloader_names=["shard_1", "shard_2"],
+    ),
+    ddp=DDPConfig(
+        sync_schedules_across_ranks=True,
+        validate_schedule_consistency=True,
+    ),
+)
+
+# Fabric handles distributed setup
+model, *optimizers = fabric.setup(model, *optimizers)
+trainer = GenericTrainer(
+    config=config,
+    model=model,
+    optimizers=optimizers,
+    fabric=fabric,
+)
+```
+
+## 📚 Examples
+
+Comprehensive examples are available in the `demo/` directory:
+
+### Beginner Examples
+
+- **[basic_model_training.py](demo/example1_beginner_local/basic_model_training.py)**: Single dataloader with multi-loader API
+- **[multi_loader_training.py](demo/example1_beginner_local/multi_loader_training.py)**: Multiple dataloaders with various strategies
+
+### Configuration Examples
+
+- **[multi_loader_config.yaml](demo/example1_beginner_local/config_examples/multi_loader_config.yaml)**: Complete configuration examples
+- **[sampling_strategies.yaml](demo/example1_beginner_local/config_examples/sampling_strategies.yaml)**: All sampling strategies explained
+
+## 🔄 Migration Guide
+
+### Migrating from Single-Loader to Multi-Loader API
+
+**Old (Single-Loader) Pattern:**
+
+```python
+# ❌ Old pattern - no longer supported
+trainer = Trainer(model, optimizer)
+trainer.fit(train_loader, val_loader)
+```
+
+**New (Multi-Loader) Pattern:**
+
+```python
+# ✅ New pattern - required for all training
+config = GenericTrainerConfig(
+    multi=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        dataloader_names=["main"],
+    )
+)
+trainer = GenericTrainer(
+    config=config,
+    model=model,
+    optimizers=[optimizer],  # List required
+)
+trainer.fit(
+    train_loaders=[train_loader],  # List required
+    val_loaders=[val_loader],      # List required
+)
+```
+
+### Key Changes
+
+1. **Always use lists for loaders**: `train_loaders=[loader]`
+2. **Always use lists for optimizers**: `optimizers=[optimizer]`
+3. **Require MultiDataLoaderConfig**: Even for single loader
+4. **Training step signature changed**:
+
+   ```python
+   # Old: def training_step(batch)
+   # New:
+   def training_step(trainer, batch, dataloader_idx, dataloader_name):
+       pass
+   ```
+
+## 🎯 Use Cases
+
+### When to Use Each Sampling Strategy
+
+| Strategy | Use Case | Example |
+|----------|----------|---------|
+| **ROUND_ROBIN** | Fair representation from all datasets | Multi-domain training |
+| **WEIGHTED** | Imbalanced datasets or importance-based | 70% main task, 30% auxiliary |
+| **ALTERNATING** | Specific patterns needed | Curriculum learning patterns |
+| **SEQUENTIAL** | Process datasets in order | Pretrain → Finetune → Adapt |
+
+### Common Patterns
+
+**Handling Imbalanced Datasets:**
+
+```python
+# Oversample minority class
+config = GenericTrainerConfig(
+    multi=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.WEIGHTED,
+        dataloader_weights=[0.2, 0.8],  # Inverse of actual sizes
+        dataloader_names=["majority", "minority"],
+    ),
+)
+```
+
+**Multi-Domain Training:**
+
+```python
+# Equal representation from each domain
+config = GenericTrainerConfig(
+    multi=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.ROUND_ROBIN,
+        dataloader_names=["domain_a", "domain_b", "domain_c"],
+        cycle_short_loaders=True,  # Restart shorter loaders
+    ),
 )
 ```
 
