@@ -12,19 +12,181 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import random
 import shutil
 import time
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import torch
 
 if TYPE_CHECKING:
     from .config import CheckpointConfig
+    from .core import GenericTrainer
     from .states import ResumeState
 
 from .utils import timeout
 
 logger = logging.getLogger(__name__)
+
+
+def save_checkpoint(path: Path, trainer: GenericTrainer) -> None:
+    """
+    Save checkpoint in format version 1.
+
+    Args:
+        path: Path to save checkpoint
+        trainer: GenericTrainer instance to save state from
+    """
+    checkpoint_data = {
+        # Format metadata
+        "format_version": 1,
+        "is_multi_dataloader_only": True,
+        "save_timestamp": time.time(),
+        # Basic training state
+        "epoch": trainer.current_epoch,
+        "global_step": trainer.global_step,
+        # Model state
+        "model_state_dict": trainer.model.state_dict(),
+        # Multi-optimizer support
+        "optimizer_state_dicts": [opt.state_dict() for opt in trainer.optimizers],
+        # Multi-scheduler support
+        "scheduler_state_dicts": [sched.state_dict() for sched in trainer.schedulers]
+        if trainer.schedulers
+        else [],
+        # AMP scaler state
+        "amp_scaler_state": trainer.scaler.state_dict()
+        if hasattr(trainer, "scaler") and trainer.scaler
+        else None,
+        # RNG states
+        "rng_states": {
+            "python_random": random.getstate(),
+            "numpy_random": np.random.get_state(),  # noqa: NPY002
+            "torch_cpu": torch.get_rng_state(),
+            "torch_cuda": [
+                torch.cuda.get_rng_state(i) for i in range(torch.cuda.device_count())
+            ]
+            if torch.cuda.is_available()
+            else None,
+        },
+        # DataLoaderManager state
+        "dataloader_manager_state": trainer.dataloader_manager.get_state()
+        if hasattr(trainer, "dataloader_manager")
+        else None,
+        # Optional explicit choice RNG state (for weighted sampling reproducibility)
+        "choice_rng_state": (
+            trainer.dataloader_manager.choice_rng.get_state()
+            if hasattr(trainer, "dataloader_manager")
+            and getattr(trainer.dataloader_manager, "choice_rng", None) is not None
+            else None
+        ),
+        # Resume state
+        "resume_state": trainer.resume_state,
+        # Optional: metrics history
+        "metrics_history": getattr(trainer, "metrics_history", None),
+        # Optional: config snapshot
+        "config_snapshot": trainer.config if hasattr(trainer, "config") else None,
+    }
+
+    # Save checkpoint
+    torch.save(checkpoint_data, path)
+    logger.info(f"Saved checkpoint format v1 to {path}")
+
+
+def load_checkpoint(path: Path, trainer: GenericTrainer) -> None:
+    """
+    Load checkpoint in format version 1.
+
+    Args:
+        path: Path to load checkpoint from
+        trainer: GenericTrainer instance to restore state to
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {path}")
+
+    checkpoint_data = torch.load(
+        path,
+        map_location=trainer.device if hasattr(trainer, "device") else None,
+        weights_only=False,
+    )
+
+    # Validate format version
+    if checkpoint_data.get("format_version") != 1:
+        raise ValueError(
+            f"Unsupported checkpoint format version: {checkpoint_data.get('format_version')}"
+        )
+
+    # Restore basic training state
+    trainer.current_epoch = checkpoint_data["epoch"]
+    trainer.global_step = checkpoint_data["global_step"]
+
+    # Restore model state
+    trainer.model.load_state_dict(checkpoint_data["model_state_dict"])
+
+    # Restore all optimizer states
+    optimizer_states = checkpoint_data.get("optimizer_state_dicts", [])
+    for i, opt_state in enumerate(optimizer_states):
+        if i < len(trainer.optimizers):
+            trainer.optimizers[i].load_state_dict(opt_state)
+
+    # Restore all scheduler states
+    scheduler_states = checkpoint_data.get("scheduler_state_dicts", [])
+    if trainer.schedulers:
+        for i, sched_state in enumerate(scheduler_states):
+            if i < len(trainer.schedulers):
+                trainer.schedulers[i].load_state_dict(sched_state)
+
+    # Restore AMP scaler state
+    if (
+        checkpoint_data.get("amp_scaler_state")
+        and hasattr(trainer, "scaler")
+        and trainer.scaler
+    ):
+        trainer.scaler.load_state_dict(checkpoint_data["amp_scaler_state"])
+
+    # Restore RNG states
+    rng_states = checkpoint_data.get("rng_states", {})
+    if rng_states:
+        if "python_random" in rng_states:
+            random.setstate(rng_states["python_random"])
+        if "numpy_random" in rng_states:
+            np.random.set_state(rng_states["numpy_random"])  # noqa: NPY002
+        if "torch_cpu" in rng_states:
+            torch.set_rng_state(rng_states["torch_cpu"])
+        if rng_states.get("torch_cuda") and torch.cuda.is_available():
+            for i, cuda_state in enumerate(rng_states["torch_cuda"]):
+                if i < torch.cuda.device_count():
+                    torch.cuda.set_rng_state(cuda_state, i)
+
+    # Restore DataLoaderManager state
+    if checkpoint_data.get("dataloader_manager_state") and hasattr(
+        trainer, "dataloader_manager"
+    ):
+        trainer.dataloader_manager.load_state(
+            checkpoint_data["dataloader_manager_state"]
+        )
+        # Optionally restore explicit choice RNG state
+        if checkpoint_data.get("choice_rng_state") is not None:
+            try:
+                rng_state = checkpoint_data["choice_rng_state"]
+                if getattr(trainer.dataloader_manager, "choice_rng", None) is not None:
+                    trainer.dataloader_manager.choice_rng.set_state(rng_state)
+            except Exception:
+                logger.debug(
+                    "Failed to restore explicit choice RNG state", exc_info=True
+                )
+
+    # Restore resume state
+    if "resume_state" in checkpoint_data:
+        trainer.resume_state = checkpoint_data["resume_state"]
+
+    # Restore optional fields
+    if "metrics_history" in checkpoint_data:
+        trainer.metrics_history = checkpoint_data["metrics_history"]
+
+    logger.info(
+        f"Loaded checkpoint format v1 from {path} (epoch={trainer.current_epoch}, step={trainer.global_step})"
+    )
 
 
 class CheckpointManager:
@@ -102,26 +264,28 @@ class CheckpointManager:
     def save_checkpoint(
         self,
         model: torch.nn.Module,
-        optimizer: torch.optim.Optimizer,
-        scheduler: Any | None = None,
+        optimizers: list[torch.optim.Optimizer] | torch.optim.Optimizer | None = None,
+        schedulers: list[Any] | Any | None = None,
         resume_state: ResumeState | None = None,
         epoch: int = 0,
         global_step: int = 0,
         metrics: dict[str, float] | None = None,
         timeout_seconds: float | None = None,
+        scaler: torch.cuda.amp.GradScaler | None = None,
     ) -> Path:
         """
-        Save a checkpoint with model, optimizer, and training state.
+        Save a checkpoint with model, optimizers, and training state.
 
         Args:
             model: Model to save
-            optimizer: Optimizer to save
-            scheduler: Learning rate scheduler to save
+            optimizers: Optimizer(s) to save (single or list)
+            schedulers: Learning rate scheduler(s) to save (single or list)
             resume_state: Training resume state
             epoch: Current epoch
             global_step: Current global step
             metrics: Current metrics for best checkpoint tracking
             timeout_seconds: Timeout for save operation
+            scaler: AMP GradScaler for mixed precision training
 
         Returns:
             Path to saved checkpoint file
@@ -129,14 +293,21 @@ class CheckpointManager:
         Raises:
             TimeoutError: If save operation exceeds timeout
         """
+        # Handle backward compatibility: convert single optimizer/scheduler to list
+        if optimizers is not None and not isinstance(optimizers, list):
+            optimizers = [optimizers]
+        if schedulers is not None and not isinstance(schedulers, list):
+            schedulers = [schedulers] if schedulers else []
         # Generate checkpoint filename
         checkpoint_filename = self.config.filename_template.format(
             epoch=epoch, step=global_step, timestamp=int(time.time())
         )
         checkpoint_path = self.checkpoint_dir / checkpoint_filename
 
-        # Prepare checkpoint data
+        # Prepare checkpoint data with format v1
         checkpoint_data = {
+            "format_version": 1,
+            "is_multi_dataloader_only": True,
             "model_state_dict": model.state_dict(),
             "epoch": epoch,
             "global_step": global_step,
@@ -145,13 +316,35 @@ class CheckpointManager:
             "config": self.config,
         }
 
-        # Add optimizer state if requested
-        if self.config.save_optimizer:
-            checkpoint_data["optimizer_state_dict"] = optimizer.state_dict()
+        # Add optimizer states if requested (multi-optimizer support)
+        if self.config.save_optimizer and optimizers:
+            checkpoint_data["optimizer_state_dicts"] = [
+                opt.state_dict() for opt in optimizers
+            ]
 
-        # Add scheduler state if requested and available
-        if self.config.save_scheduler and scheduler is not None:
-            checkpoint_data["scheduler_state_dict"] = scheduler.state_dict()
+        # Add scheduler states if requested and available (multi-scheduler support)
+        if self.config.save_scheduler and schedulers:
+            checkpoint_data["scheduler_state_dicts"] = [
+                sched.state_dict() for sched in schedulers
+            ]
+
+        # Add RNG states if requested
+        if self.config.save_rng:
+            checkpoint_data["rng_states"] = {
+                "python_random": random.getstate(),
+                "numpy_random": np.random.get_state(),  # noqa: NPY002
+                "torch_cpu": torch.get_rng_state(),
+                "torch_cuda": [
+                    torch.cuda.get_rng_state(i)
+                    for i in range(torch.cuda.device_count())
+                ]
+                if torch.cuda.is_available()
+                else None,
+            }
+
+        # Add AMP scaler state if provided
+        if scaler is not None:
+            checkpoint_data["amp_scaler_state"] = scaler.state_dict()
 
         # Add resume state if provided
         if resume_state is not None:
@@ -218,45 +411,95 @@ class CheckpointManager:
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
         logger.info(f"Loading checkpoint from {checkpoint_path}")
-        return torch.load(checkpoint_path, map_location=map_location)
+        return torch.load(
+            checkpoint_path, map_location=map_location, weights_only=False
+        )
 
     def restore_from_checkpoint(
         self,
         model: torch.nn.Module,
-        optimizer: torch.optim.Optimizer,
-        scheduler: Any | None = None,
+        optimizers: list[torch.optim.Optimizer] | torch.optim.Optimizer | None = None,
+        schedulers: list[Any] | Any | None = None,
         checkpoint_path: str | Path | None = None,
         strict: bool = True,
+        scaler: torch.cuda.amp.GradScaler | None = None,
     ) -> tuple[int, int, ResumeState | None]:
         """
-        Restore model, optimizer, and scheduler from checkpoint.
+        Restore model, optimizers, and schedulers from checkpoint.
 
         Args:
             model: Model to restore state to
-            optimizer: Optimizer to restore state to
-            scheduler: Scheduler to restore state to
+            optimizers: Optimizer(s) to restore state to (single or list)
+            schedulers: Scheduler(s) to restore state to (single or list)
             checkpoint_path: Path to checkpoint (uses latest if None)
             strict: Whether to strictly enforce state dict matching
+            scaler: AMP GradScaler to restore state to
 
         Returns:
             Tuple of (epoch, global_step, resume_state)
         """
         checkpoint_data = self.load_checkpoint(checkpoint_path)
 
+        # Handle backward compatibility: convert single optimizer/scheduler to list
+        if optimizers is not None and not isinstance(optimizers, list):
+            optimizers = [optimizers]
+        if schedulers is not None and not isinstance(schedulers, list):
+            schedulers = [schedulers] if schedulers else []
+
         # Restore model state
         model.load_state_dict(checkpoint_data["model_state_dict"], strict=strict)
 
-        # Restore optimizer state if available
-        if "optimizer_state_dict" in checkpoint_data and self.config.save_optimizer:
-            optimizer.load_state_dict(checkpoint_data["optimizer_state_dict"])
-
-        # Restore scheduler state if available
+        # Restore optimizer states (multi-optimizer support)
         if (
-            "scheduler_state_dict" in checkpoint_data
-            and scheduler is not None
-            and self.config.save_scheduler
+            "optimizer_state_dicts" in checkpoint_data
+            and self.config.save_optimizer
+            and optimizers
         ):
-            scheduler.load_state_dict(checkpoint_data["scheduler_state_dict"])
+            for i, opt_state in enumerate(checkpoint_data["optimizer_state_dicts"]):
+                if i < len(optimizers):
+                    optimizers[i].load_state_dict(opt_state)
+        # Fallback for old format
+        elif (
+            "optimizer_state_dict" in checkpoint_data
+            and self.config.save_optimizer
+            and optimizers
+        ):
+            optimizers[0].load_state_dict(checkpoint_data["optimizer_state_dict"])
+
+        # Restore scheduler states (multi-scheduler support)
+        if (
+            "scheduler_state_dicts" in checkpoint_data
+            and self.config.save_scheduler
+            and schedulers
+        ):
+            for i, sched_state in enumerate(checkpoint_data["scheduler_state_dicts"]):
+                if i < len(schedulers):
+                    schedulers[i].load_state_dict(sched_state)
+        # Fallback for old format
+        elif (
+            "scheduler_state_dict" in checkpoint_data
+            and self.config.save_scheduler
+            and schedulers
+        ):
+            schedulers[0].load_state_dict(checkpoint_data["scheduler_state_dict"])
+
+        # Restore RNG states if saved and requested
+        if "rng_states" in checkpoint_data and self.config.save_rng:
+            rng_states = checkpoint_data["rng_states"]
+            if "python_random" in rng_states:
+                random.setstate(rng_states["python_random"])
+            if "numpy_random" in rng_states:
+                np.random.set_state(rng_states["numpy_random"])  # noqa: NPY002
+            if "torch_cpu" in rng_states:
+                torch.set_rng_state(rng_states["torch_cpu"])
+            if rng_states.get("torch_cuda") and torch.cuda.is_available():
+                for i, cuda_state in enumerate(rng_states["torch_cuda"]):
+                    if i < torch.cuda.device_count():
+                        torch.cuda.set_rng_state(cuda_state, i)
+
+        # Restore AMP scaler state if available
+        if "amp_scaler_state" in checkpoint_data and scaler is not None:
+            scaler.load_state_dict(checkpoint_data["amp_scaler_state"])
 
         # Extract training state
         epoch = checkpoint_data.get("epoch", 0)
@@ -323,6 +566,14 @@ class CheckpointManager:
 
         except OSError as e:
             logger.warning(f"Failed to update latest symlink: {e}")
+            # Fallback: copy file for platforms without symlink support (e.g., Windows)
+            try:
+                shutil.copy2(checkpoint_path, self.latest_path)
+                logger.debug(
+                    f"Copied latest checkpoint to {self.latest_path} as fallback"
+                )
+            except Exception as copy_err:
+                logger.warning(f"Failed to copy latest checkpoint fallback: {copy_err}")
 
     def _maybe_update_best_checkpoint(
         self, checkpoint_path: Path, metrics: dict[str, float]
@@ -365,6 +616,17 @@ class CheckpointManager:
 
             except OSError as e:
                 logger.warning(f"Failed to update best checkpoint symlink: {e}")
+                # Fallback: copy file
+                try:
+                    shutil.copy2(checkpoint_path, self.best_path)
+                    self.best_metric_value = current_value
+                    logger.info(
+                        f"Copied best checkpoint to {self.best_path} as fallback"
+                    )
+                except Exception as copy_err:
+                    logger.warning(
+                        f"Failed to copy best checkpoint fallback: {copy_err}"
+                    )
 
     def _cleanup_old_checkpoints(self) -> None:
         """Remove old checkpoints beyond the maximum count."""

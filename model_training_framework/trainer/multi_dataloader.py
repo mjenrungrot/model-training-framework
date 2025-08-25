@@ -117,32 +117,79 @@ class MultiDataLoaderIterator:
         loader = self.loaders[loader_idx]
         state = self.loader_states[loader_idx]
 
-        # Create base iterator
-        iterator = iter(loader)
-
-        # Restore state if resuming
-        if state.batch_idx > 0:
-            # Skip batches to reach saved position
-            # For map-style datasets with samplers
-            if hasattr(loader.sampler, "set_state") and state.sampler_state is not None:
-                # Restore sampler state directly if supported
-                loader.sampler.set_state(state.sampler_state)
-            else:
-                # Skip batches to reach position
-                for _ in range(state.batch_idx):
-                    try:
-                        next(iterator)
-                    except StopIteration:
-                        # Loader exhausted during skip
-                        state.exhausted = True
-                        return iterator
-
-        # For iterable datasets, restore dataset state
+        # Restore dataset/sampler state prior to iterator creation where possible
+        # to avoid consuming elements during skip.
+        dataset_restored = False
         if (
             hasattr(loader.dataset, "load_state_dict")
             and state.dataset_state is not None
         ):
-            loader.dataset.load_state_dict(state.dataset_state)
+            try:
+                loader.dataset.load_state_dict(state.dataset_state)
+                dataset_restored = True
+                self.logger.debug(
+                    f"Successfully restored dataset state for loader {loader_idx} "
+                    f"at batch {state.batch_idx}"
+                )
+            except Exception:
+                # Log and fall through to skip-based restoration if dataset restoration fails
+                self.logger.debug(
+                    "Dataset state restore failed; falling back to skip-based restoration",
+                    exc_info=True,
+                )
+
+        sampler_restored = False
+        if state.sampler_state is not None:
+            try:
+                # Prefer explicit load_state_dict if available
+                if (
+                    hasattr(loader, "batch_sampler")
+                    and hasattr(getattr(loader, "batch_sampler", None), "sampler")
+                    and hasattr(loader.batch_sampler.sampler, "load_state_dict")
+                ):
+                    loader.batch_sampler.sampler.load_state_dict(state.sampler_state)
+                    sampler_restored = True
+                    self.logger.debug(
+                        f"Successfully restored batch sampler state for loader {loader_idx} "
+                        f"at batch {state.batch_idx}"
+                    )
+                elif hasattr(loader.sampler, "load_state_dict"):
+                    loader.sampler.load_state_dict(state.sampler_state)
+                    sampler_restored = True
+                    self.logger.debug(
+                        f"Successfully restored sampler state for loader {loader_idx} "
+                        f"at batch {state.batch_idx}"
+                    )
+                elif hasattr(loader.sampler, "set_state"):
+                    # Support custom samplers exposing set_state
+                    loader.sampler.set_state(state.sampler_state)
+                    sampler_restored = True
+                    self.logger.debug(
+                        f"Successfully restored sampler state via set_state for loader {loader_idx} "
+                        f"at batch {state.batch_idx}"
+                    )
+            except Exception:
+                # If sampler restoration fails, we'll fall back to skip-based approach
+                sampler_restored = False
+
+        # Create base iterator after attempting to restore state
+        iterator = iter(loader)
+
+        # Skip forward only when we cannot restore via dataset/sampler APIs
+        if state.batch_idx > 0 and not (dataset_restored or sampler_restored):
+            self.logger.warning(
+                f"Falling back to skip-based restoration for loader {loader_idx} "
+                f"(skipping {state.batch_idx} batches). "
+                f"Consider implementing state_dict/load_state_dict methods on your "
+                f"dataset or sampler for more efficient deterministic resume."
+            )
+            for _ in range(state.batch_idx):
+                try:
+                    next(iterator)
+                except StopIteration:
+                    # Loader exhausted during skip
+                    state.exhausted = True
+                    return iterator
 
         return iterator
 
@@ -292,6 +339,28 @@ class MultiDataLoaderIterator:
 
         return self.loader_states
 
+    def get_state(self) -> dict[str, Any]:
+        """Get complete iterator state for checkpointing."""
+        return {
+            "schedule_position": self.schedule_position,
+            "loader_states": [state.to_dict() for state in self.get_loader_states()],
+            "total_batches": self.total_batches,
+            "loader_cycles": self.loader_cycles,
+            "prefetched_batches": self.prefetched_batches,
+        }
+
+    def load_state(self, state: dict[str, Any]) -> None:
+        """Load iterator state from checkpoint."""
+        self.schedule_position = state["schedule_position"]
+        self.total_batches = state["total_batches"]
+        self.loader_cycles = state["loader_cycles"]
+        self.prefetched_batches = state.get("prefetched_batches", 0)
+
+        # Restore loader states
+        self.loader_states = [
+            DataLoaderState.from_dict(s) for s in state["loader_states"]
+        ]
+
 
 class DataLoaderManager:
     """
@@ -337,6 +406,12 @@ class DataLoaderManager:
             self.choice_rng = np.random.RandomState(self.choice_rng_state.seed)
         else:
             self.choice_rng = np.random.RandomState()
+
+        # Store iterator references for state management
+        self._train_iterator: MultiDataLoaderIterator | None = None
+        self._val_iterator: MultiDataLoaderIterator | None = None
+        self._stored_train_state: dict[str, Any] | None = None
+        self._stored_val_state: dict[str, Any] | None = None
 
     def _validate_and_set_names(self) -> None:
         """Validate loaders and set names if not provided."""
@@ -581,9 +656,13 @@ class DataLoaderManager:
         if phase == "train":
             loaders = self.train_loaders
             names = self.train_names
+            # Check for stored state to restore later
+            stored_state = self._stored_train_state if resume_state is None else None
         elif phase == "val":
             loaders = self.val_loaders
             names = self.val_names
+            # Check for stored state to restore later
+            stored_state = self._stored_val_state if resume_state is None else None
         else:
             raise ValueError(f"Unknown phase: {phase}")
 
@@ -629,6 +708,11 @@ class DataLoaderManager:
         elif self.config.sampling_strategy == SamplingStrategy.WEIGHTED:
             if self.config.dataloader_weights is None:
                 raise ValueError("Weights required for WEIGHTED strategy")
+            if len(self.config.dataloader_weights) != len(loaders):
+                raise ValueError(
+                    "Number of dataloader_weights must match number of loaders: "
+                    f"got {len(self.config.dataloader_weights)} weights for {len(loaders)} loaders"
+                )
 
             # Determine total steps
             if self.config.epoch_length_policy == EpochLengthPolicy.FIXED_NUM_STEPS:
@@ -688,7 +772,7 @@ class DataLoaderManager:
             schedule = ddp_broadcast_object(self.fabric, schedule, src=0)
 
         # Create iterator
-        return MultiDataLoaderIterator(
+        iterator = MultiDataLoaderIterator(
             loaders=loaders,
             names=names,
             schedule=schedule,
@@ -697,3 +781,57 @@ class DataLoaderManager:
             fabric=self.fabric,
             logger=self.logger,
         )
+
+        # Store iterator reference for state management
+        if phase == "train":
+            self._train_iterator = iterator
+            # Restore stored state if available
+            if stored_state:
+                iterator.load_state(stored_state)
+                self._stored_train_state = None  # Clear after use
+        else:
+            self._val_iterator = iterator
+            # Restore stored state if available
+            if stored_state:
+                iterator.load_state(stored_state)
+                self._stored_val_state = None  # Clear after use
+
+        return iterator
+
+    def get_state(self) -> dict[str, Any]:
+        """Get complete manager state for checkpointing."""
+        state = {
+            "choice_rng_state": self.choice_rng_state.to_dict(),
+            "choice_rng": self.choice_rng.get_state() if self.choice_rng else None,
+        }
+
+        # Include iterator states if they exist
+        if self._train_iterator is not None:
+            state["train_iterator_state"] = self._train_iterator.get_state()
+        elif self._stored_train_state is not None:
+            # Include stored state if no active iterator
+            state["train_iterator_state"] = self._stored_train_state
+
+        if self._val_iterator is not None:
+            state["val_iterator_state"] = self._val_iterator.get_state()
+        elif self._stored_val_state is not None:
+            # Include stored state if no active iterator
+            state["val_iterator_state"] = self._stored_val_state
+
+        return state
+
+    def load_state(self, state: dict[str, Any]) -> None:
+        """Load manager state from checkpoint."""
+        # Restore choice RNG state
+        if "choice_rng_state" in state:
+            self.choice_rng_state = ChoiceRNGState.from_dict(state["choice_rng_state"])
+
+        # Restore choice RNG
+        if state.get("choice_rng") is not None:
+            if self.choice_rng is None:
+                self.choice_rng = np.random.RandomState()
+            self.choice_rng.set_state(state["choice_rng"])
+
+        # Store iterator states for later restoration when iterators are created
+        self._stored_train_state = state.get("train_iterator_state")
+        self._stored_val_state = state.get("val_iterator_state")

@@ -159,6 +159,11 @@ class GenericTrainer:
         # DataLoader manager (initialized in fit())
         self.dataloader_manager: DataLoaderManager | None = None
 
+        # AMP scaler for mixed precision training
+        self.scaler: torch.cuda.amp.GradScaler | None = None
+        if config.performance.use_amp and torch.cuda.is_available():
+            self.scaler = torch.cuda.amp.GradScaler()
+
         # User-defined step functions
         self.training_step_fn: TrainingStep | None = None
         self.validation_step_fn: ValidationStep | None = None
@@ -231,11 +236,17 @@ class GenericTrainer:
                 )
 
         # Resume from checkpoint if specified
+        resumed = False
         if resume_from_checkpoint:
             self._resume_from_checkpoint(resume_from_checkpoint)
+            resumed = True
 
-        # Setup reproducibility if configured
-        if hasattr(self.config, "seed") and self.config.seed is not None:
+        # Setup reproducibility if configured and not resuming
+        if (
+            not resumed
+            and hasattr(self.config, "seed")
+            and self.config.seed is not None
+        ):
             seed_all(self.config.seed)
 
         logger.info(
@@ -432,18 +443,21 @@ class GenericTrainer:
                 self._optimizer_step(loader_idx)
                 accumulated_loss = 0.0
 
-            # Step-based validation
-            if (
-                val_loaders  # only if non-empty list
-                and self.config.validation.frequency
-                == ValidationFrequency.EVERY_N_STEPS
-                and self.config.validation.every_n_steps is not None
-            ):
-                self.steps_since_validation += 1
-                if self.steps_since_validation >= self.config.validation.every_n_steps:
-                    val_metrics = self._validation_epoch(epoch)
-                    self._log_epoch_metrics(epoch, val_metrics, prefix="step_val")
-                    self.steps_since_validation = 0
+                # Step-based validation (only count after optimizer steps)
+                if (
+                    val_loaders  # only if non-empty list
+                    and self.config.validation.frequency
+                    == ValidationFrequency.EVERY_N_STEPS
+                    and self.config.validation.every_n_steps is not None
+                ):
+                    self.steps_since_validation += 1
+                    if (
+                        self.steps_since_validation
+                        >= self.config.validation.every_n_steps
+                    ):
+                        val_metrics = self._validation_epoch(epoch)
+                        self._log_epoch_metrics(epoch, val_metrics, prefix="step_val")
+                        self.steps_since_validation = 0
 
             # Log step metrics
             if (
@@ -463,6 +477,19 @@ class GenericTrainer:
             # Use the last loader's optimizer
             last_loader_idx = loader_idx  # From the last iteration
             self._optimizer_step(last_loader_idx)
+
+            # Check for step-based validation after final optimizer step
+            if (
+                val_loaders  # only if non-empty list
+                and self.config.validation.frequency
+                == ValidationFrequency.EVERY_N_STEPS
+                and self.config.validation.every_n_steps is not None
+            ):
+                self.steps_since_validation += 1
+                if self.steps_since_validation >= self.config.validation.every_n_steps:
+                    val_metrics = self._validation_epoch(epoch)
+                    self._log_epoch_metrics(epoch, val_metrics, prefix="step_val")
+                    self.steps_since_validation = 0
 
         # Aggregate metrics
         return self._aggregate_metrics(per_loader_metrics, per_loader_samples)
@@ -546,7 +573,7 @@ class GenericTrainer:
 
         # Execute training step with AMP if configured and CUDA is available
         if self.config.performance.use_amp and torch.cuda.is_available():
-            with autocast():
+            with autocast("cuda"):
                 step_metrics = self.training_step_fn(
                     self, batch, loader_idx, loader_name
                 )
@@ -576,7 +603,16 @@ class GenericTrainer:
             save_rng=self.config.checkpoint.save_rng,
         )
 
-        if self.fabric is not None:
+        # Use scaler for backward pass if available
+        if self.scaler is not None:
+            # Scale loss and backward
+            scaled_loss = self.scaler.scale(loss)
+            if self.fabric is not None:
+                self.fabric.backward(scaled_loss)
+            else:
+                scaled_loss.backward()
+        # Regular backward
+        elif self.fabric is not None:
             self.fabric.backward(loss)
         else:
             loss.backward()
@@ -603,15 +639,32 @@ class GenericTrainer:
             save_rng=self.config.checkpoint.save_rng,
         )
 
-        # Gradient clipping
-        if self.config.performance.clip_grad_norm is not None:
-            torch.nn.utils.clip_grad_norm_(
-                self.model.parameters(),
-                self.config.performance.clip_grad_norm,
-            )
+        # Handle optimizer step with or without scaler
+        if self.scaler is not None:
+            # Unscale gradients before clipping
+            self.scaler.unscale_(optimizer)
 
-        # Optimizer step
-        optimizer.step()
+            # Gradient clipping
+            if self.config.performance.clip_grad_norm is not None:
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(),
+                    self.config.performance.clip_grad_norm,
+                )
+
+            # Optimizer step with scaler
+            self.scaler.step(optimizer)
+            self.scaler.update()
+        else:
+            # Gradient clipping without scaler
+            if self.config.performance.clip_grad_norm is not None:
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(),
+                    self.config.performance.clip_grad_norm,
+                )
+
+            # Regular optimizer step
+            optimizer.step()
+
         optimizer.zero_grad()
         self.global_step += 1
 
@@ -629,6 +682,18 @@ class GenericTrainer:
         # Record performance
         self.performance_monitor.record_step_time()
         self.performance_monitor.record_memory_usage()
+
+        # Optional step-based checkpoint save
+        try:
+            if self.checkpoint_manager.should_save_checkpoint(
+                self.current_epoch, self.global_step
+            ):
+                self._save_checkpoint()
+        except Exception:
+            # Don't interrupt training if periodic save fails; it will retry on next opportunity
+            logger.debug(
+                "Step-based checkpoint save skipped due to error", exc_info=True
+            )
 
     def _aggregate_metrics(
         self,
@@ -761,12 +826,21 @@ class GenericTrainer:
     ) -> None:
         """Save checkpoint with timeout handling."""
         try:
-            # Note: Full checkpoint implementation deferred to PR6
-            # This is a placeholder that saves basic state
+            # Update resume state with dataloader manager state
+            if self.dataloader_manager:
+                self.resume_state = update_resume_state(
+                    self.resume_state,
+                    self.resume_state.phase,
+                    dataloader_manager_state=self.dataloader_manager.get_state(),
+                    save_rng=self.config.checkpoint.save_rng,
+                    choice_rng=getattr(self.dataloader_manager, "choice_rng", None),
+                )
+
+            # Save checkpoint with all optimizers and schedulers
             self.checkpoint_manager.save_checkpoint(
                 model=self.model,
-                optimizer=self.optimizers[0],  # Save first optimizer for now
-                scheduler=self.schedulers[0] if self.schedulers else None,
+                optimizers=self.optimizers,  # Save all optimizers
+                schedulers=self.schedulers,  # Save all schedulers
                 resume_state=self.resume_state,
                 epoch=self.current_epoch,
                 global_step=self.global_step,
@@ -774,6 +848,7 @@ class GenericTrainer:
                 timeout_seconds=self.config.preemption.max_checkpoint_sec
                 if not force
                 else None,
+                scaler=self.scaler,  # Save AMP scaler state
             )
         except Exception:
             logger.exception("Failed to save checkpoint: ")
@@ -783,14 +858,14 @@ class GenericTrainer:
     def _resume_from_checkpoint(self, checkpoint_path: str) -> None:
         """Resume training from checkpoint."""
         try:
-            # Note: Full resume implementation deferred to PR6
-            # This is a placeholder that restores basic state
+            # Restore checkpoint with all optimizers and schedulers
             epoch, global_step, resume_state = (
                 self.checkpoint_manager.restore_from_checkpoint(
                     model=self.model,
-                    optimizer=self.optimizers[0],  # Restore first optimizer for now
-                    scheduler=self.schedulers[0] if self.schedulers else None,
+                    optimizers=self.optimizers,  # Restore all optimizers
+                    schedulers=self.schedulers,  # Restore all schedulers
                     checkpoint_path=checkpoint_path,
+                    scaler=self.scaler,  # Restore AMP scaler state
                 )
             )
 
@@ -803,6 +878,22 @@ class GenericTrainer:
                 # Restore RNG state if available
                 if resume_state.rng is not None:
                     restore_rng_state(resume_state.rng)
+
+                # Restore DataLoaderManager state if available
+                if resume_state.dataloader_manager_state and self.dataloader_manager:
+                    self.dataloader_manager.load_state(
+                        resume_state.dataloader_manager_state
+                    )
+
+                # Restore choice RNG if available
+                if resume_state.choice_rng and hasattr(
+                    self.dataloader_manager, "choice_rng"
+                ):
+                    from .states import restore_choice_rng_state
+
+                    restore_choice_rng_state(
+                        resume_state.choice_rng, self.dataloader_manager.choice_rng
+                    )
 
             logger.info(f"Resumed from checkpoint: epoch={epoch}, step={global_step}")
 
