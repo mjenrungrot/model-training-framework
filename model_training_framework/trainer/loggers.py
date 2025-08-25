@@ -389,6 +389,11 @@ def create_logger(
         ValueError: If logger_type is not recognized
     """
     if logger_type == "wandb":
+        if project is None:
+            logger.warning(
+                "WandB logger requested without a project. Falling back to console."
+            )
+            return ConsoleLogger(**kwargs)
         return WandBLogger(project=project, **kwargs)
     if logger_type == "tensorboard":
         if log_dir is None:

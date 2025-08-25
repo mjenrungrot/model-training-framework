@@ -257,13 +257,13 @@ class LoggingConfig:
     TensorBoard, CSV files, and console output.
     """
 
-    # Logger type selection
+    # Logger type selection (default to console; opt-in for external services)
     logger_type: str = (
-        "wandb"  # Options: "wandb", "tensorboard", "console", "composite"
+        "console"  # Options: "console", "wandb", "tensorboard", "composite"
     )
 
     # Legacy W&B configuration (kept for backward compatibility)
-    use_wandb: bool = True  # Whether to use Weights & Biases for experiment tracking
+    use_wandb: bool = False  # Whether to use Weights & Biases for experiment tracking
     wandb_project: str | None = None  # W&B project name (uses experiment name if None)
     wandb_entity: str | None = None  # W&B entity/team name
     wandb_tags: list[str] = field(default_factory=list)  # Tags for W&B experiment
