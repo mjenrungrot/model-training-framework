@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from torch import Tensor
 
-    from model_training_framework.trainer.core import GenericTrainer
+    from .core import GenericTrainer
 
 logger = logging.getLogger(__name__)
 

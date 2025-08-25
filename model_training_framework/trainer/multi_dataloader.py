@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import logging
-import sys
+import math
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
@@ -744,17 +744,24 @@ class DataLoaderManager:
                         f"on loader {idx} ({names[idx]})"
                     )
 
-        # Get loader lengths
-        lengths: list[int] = []
+        # Get loader lengths (support infinite loaders explicitly)
+        lengths: list[float] = []
         for loader in loaders:
             try:
-                lengths.append(len(loader))
+                lengths.append(float(len(loader)))
             except TypeError:
-                # Infinite loader: use a very large integer sentinel to keep types integral
-                lengths.append(sys.maxsize)
+                # Infinite loader
+                lengths.append(math.inf)
 
         # Build schedule based on strategy
         if self.config.sampling_strategy == SamplingStrategy.ROUND_ROBIN:
+            # Disallow infinite loaders unless a fixed number of steps is provided
+            if any(math.isinf(L) for L in lengths) and (
+                self.config.epoch_length_policy != EpochLengthPolicy.FIXED_NUM_STEPS
+            ):
+                raise ValueError(
+                    "ROUND_ROBIN with infinite loaders requires FIXED_NUM_STEPS; set steps_per_epoch."
+                )
             schedule = self.build_round_robin_schedule(
                 lengths,
                 self.config.epoch_length_policy,
@@ -762,6 +769,13 @@ class DataLoaderManager:
                 self.config.steps_per_epoch,
             )
         elif self.config.sampling_strategy == SamplingStrategy.SEQUENTIAL:
+            # Disallow infinite loaders unless a fixed number of steps is provided
+            if any(math.isinf(L) for L in lengths) and (
+                self.config.epoch_length_policy != EpochLengthPolicy.FIXED_NUM_STEPS
+            ):
+                raise ValueError(
+                    "SEQUENTIAL with infinite loaders requires FIXED_NUM_STEPS; set steps_per_epoch."
+                )
             schedule = self.build_sequential_schedule(
                 lengths,
                 self.config.epoch_length_policy,
@@ -783,18 +797,20 @@ class DataLoaderManager:
                     raise ValueError("steps_per_epoch required for FIXED_NUM_STEPS")
                 total_steps = self.config.steps_per_epoch
             elif self.config.epoch_length_policy == EpochLengthPolicy.SUM_OF_LENGTHS:
-                total_steps = sum(
-                    length for length in lengths if length != float("inf")
-                )
+                if any(math.isinf(L) for L in lengths):
+                    raise ValueError(
+                        "SUM_OF_LENGTHS cannot be used with infinite loaders; use FIXED_NUM_STEPS."
+                    )
+                total_steps = int(sum(lengths))
             elif self.config.epoch_length_policy == EpochLengthPolicy.MAX_OF_LENGTHS:
-                finite_lengths = [
-                    length for length in lengths if length != float("inf")
-                ]
-                total_steps = max(finite_lengths) if finite_lengths else 0
+                finite_lengths = [L for L in lengths if not math.isinf(L)]
+                total_steps = int(max(finite_lengths)) if finite_lengths else 0
             elif self.config.epoch_length_policy == EpochLengthPolicy.MIN_OF_LENGTHS:
-                total_steps = min(
-                    length for length in lengths if length != float("inf")
-                )
+                if any(math.isinf(L) for L in lengths):
+                    raise ValueError(
+                        "MIN_OF_LENGTHS requires all loaders to be finite; use FIXED_NUM_STEPS."
+                    )
+                total_steps = int(min(lengths))
             else:
                 raise ValueError(f"Unknown policy: {self.config.epoch_length_policy}")
 
@@ -813,14 +829,18 @@ class DataLoaderManager:
                     raise ValueError("steps_per_epoch required for FIXED_NUM_STEPS")
                 total_steps = self.config.steps_per_epoch
             elif self.config.epoch_length_policy == EpochLengthPolicy.SUM_OF_LENGTHS:
-                total_steps = sum(
-                    length for length in lengths if length != float("inf")
-                )
+                if any(math.isinf(L) for L in lengths):
+                    raise ValueError(
+                        "SUM_OF_LENGTHS cannot be used with infinite loaders; use FIXED_NUM_STEPS."
+                    )
+                total_steps = int(sum(lengths))
             else:
                 # For alternating, default to sum
-                total_steps = sum(
-                    length for length in lengths if length != float("inf")
-                )
+                if any(math.isinf(L) for L in lengths):
+                    raise ValueError(
+                        "ALTERNATING with infinite loaders requires FIXED_NUM_STEPS; set steps_per_epoch."
+                    )
+                total_steps = int(sum(lengths))
 
             schedule = self.build_alternating_schedule(
                 self.config.alternating_pattern,

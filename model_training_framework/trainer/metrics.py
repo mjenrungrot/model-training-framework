@@ -19,7 +19,7 @@ from typing import Any
 
 import torch
 
-from model_training_framework.trainer.utils import ddp_all_reduce
+from .utils import ddp_all_reduce
 
 logger = logging.getLogger(__name__)
 

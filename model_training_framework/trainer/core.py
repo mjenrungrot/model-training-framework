@@ -368,18 +368,15 @@ class GenericTrainer:
         )
 
         # Initialize metrics manager with loader names and aggregation strategy
-        # Map validation aggregation policy to metrics aggregation strategy
+        # Map ValidationConfig.aggregation (ValAggregation) to AggregationStrategy
         aggregation_strategy = AggregationStrategy.WEIGHTED_AVERAGE  # Default
-        if self.config.validation and hasattr(
-            self.config.validation, "aggregation_policy"
-        ):
-            val_agg = self.config.validation.aggregation_policy
-            # Map ValAggregation to AggregationStrategy
+        if self.config.validation:
+            val_agg = self.config.validation.aggregation
             if val_agg == ValAggregation.MICRO_AVG_WEIGHTED_BY_SAMPLES:
                 aggregation_strategy = AggregationStrategy.WEIGHTED_AVERAGE
             elif val_agg == ValAggregation.MACRO_AVG_EQUAL_LOADERS:
                 aggregation_strategy = AggregationStrategy.SIMPLE_AVERAGE
-            # PRIMARY and CUSTOM default to WEIGHTED_AVERAGE for now
+            # PRIMARY_METRIC_PER_LOADER and CUSTOM default to WEIGHTED_AVERAGE for now
 
         self.metrics_manager = MetricsManager(
             train_loader_names=self.dataloader_manager.train_names,

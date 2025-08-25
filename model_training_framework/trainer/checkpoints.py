@@ -248,11 +248,10 @@ class CheckpointManager:
         ):
             return True
 
-        # Check epoch-based saving
+        # Check epoch-based saving (epochs are 0-based internally)
         if (
             self.config.save_every_n_epochs is not None
-            and epoch > 0
-            and epoch % self.config.save_every_n_epochs == 0
+            and (epoch + 1) % self.config.save_every_n_epochs == 0
         ):
             return True
 
