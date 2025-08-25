@@ -25,12 +25,22 @@ from .config import (
     ValidationFrequency,
     validate_trainer_config,
 )
-from .multi_dataloader import DataLoaderManager
+from .hooks import (
+    EarlyStoppingHook,
+    GradientMonitorHook,
+    HookManager,
+    LoggingHook,
+    ModelCheckpointHook,
+)
+from .loggers import LoggerProtocol, create_logger
+from .metrics import MetricsManager
+from .multi_dataloader import DataLoaderManager, SamplingStrategy
 from .states import (
     MultiTrainMicroState,
     MultiValMicroState,
     TrainerPhase,
     create_initial_resume_state,
+    restore_choice_rng_state,
     restore_rng_state,
     update_resume_state,
 )
@@ -38,6 +48,7 @@ from .utils import (
     EarlyStopping,
     PerformanceMonitor,
     SignalHandler,
+    ddp_all_reduce,
     ddp_barrier,
     ddp_broadcast_object,
     ddp_is_primary,
@@ -123,7 +134,6 @@ class GenericTrainer:
         optimizers: list[Optimizer],
         schedulers: list[_LRScheduler] | None = None,
         fabric: Any = None,  # Lightning Fabric
-        wandb_run: Any = None,
     ):
         """
         Initialize the multi-dataloader trainer.
@@ -134,11 +144,9 @@ class GenericTrainer:
             optimizers: List of optimizers (can be one or multiple)
             schedulers: Optional list of learning rate schedulers
             fabric: Optional Lightning Fabric instance for distributed training
-            wandb_run: Optional Weights & Biases run for logging
         """
         self.config = config
         self.fabric = fabric
-        self.wandb_run = wandb_run
 
         # Setup model and optimizers with Fabric if available
         if fabric is not None:
@@ -201,6 +209,62 @@ class GenericTrainer:
         # Validation step counter
         self.steps_since_validation = 0
 
+        # Initialize logger based on configuration
+        self.logger: LoggerProtocol | None = None
+        if ddp_is_primary(fabric):  # Only create logger on primary rank
+            self.logger = create_logger(
+                logger_type=config.logging.logger_type,
+                project=config.logging.wandb_project,
+                log_dir=config.logging.tensorboard_dir,
+                entity=config.logging.wandb_entity,
+                tags=config.logging.wandb_tags,
+                notes=config.logging.wandb_notes,
+                loggers_list=config.logging.composite_loggers,
+            )
+
+        # Initialize metrics manager
+        self.metrics_manager: MetricsManager | None = None
+
+        # Initialize hook manager
+        self.hook_manager = HookManager()
+
+        # Load custom hooks from class paths first
+        for hook_class_path in config.hooks.hook_classes:
+            try:
+                # Dynamic import of hook class
+                module_path, class_name = hook_class_path.rsplit(".", 1)
+                module = __import__(module_path, fromlist=[class_name])
+                hook_class = getattr(module, class_name)
+
+                # Get hook-specific config if available
+                hook_config = config.hooks.hook_configs.get(class_name, {})
+
+                # Instantiate and register hook
+                hook_instance = hook_class(**hook_config)
+                self.hook_manager.register_hook(hook_instance)
+            except Exception:
+                logger.exception(f"Failed to load hook: {hook_class_path}")
+                if not config.hooks.continue_on_hook_error:
+                    raise
+
+        # Register built-in hooks last so user hooks run first
+        if config.hooks.enable_logging_hook:
+            self.hook_manager.register_hook(
+                LoggingHook(config.logging.console_log_level)
+            )
+        if config.hooks.enable_gradient_monitor:
+            self.hook_manager.register_hook(
+                GradientMonitorHook(**config.hooks.gradient_monitor_config)
+            )
+        if config.hooks.enable_model_checkpoint_hook:
+            self.hook_manager.register_hook(
+                ModelCheckpointHook(**config.hooks.model_checkpoint_config)
+            )
+        if config.hooks.enable_early_stopping_hook:
+            self.hook_manager.register_hook(
+                EarlyStoppingHook(**config.hooks.early_stopping_config)
+            )
+
         logger.info(f"Initialized GenericTrainer with {len(optimizers)} optimizer(s)")
 
     def set_training_step(self, training_step_fn: TrainingStep) -> None:
@@ -244,6 +308,22 @@ class GenericTrainer:
             logger=logger,
         )
 
+        # Initialize metrics manager with loader names
+        self.metrics_manager = MetricsManager(
+            train_loader_names=self.dataloader_manager.train_names,
+            val_loader_names=self.dataloader_manager.val_names if val_loaders else None,
+            track_proportions=self.config.logging.log_loader_proportions,
+        )
+
+        # Set expected proportions for WEIGHTED strategy
+        if (
+            self.config.multi.sampling_strategy == SamplingStrategy.WEIGHTED
+            and self.config.multi.dataloader_weights
+        ):
+            self.metrics_manager.set_expected_proportions(
+                self.config.multi.dataloader_weights
+            )
+
         # Validate optimizer configuration
         if self.config.per_loader_optimizer_id is not None:
             max_optimizer_id = max(self.config.per_loader_optimizer_id)
@@ -282,6 +362,17 @@ class GenericTrainer:
             self._save_checkpoint(force=True)
             raise
         finally:
+            # Fire training end hooks and cleanup logger/resources
+            try:
+                self.hook_manager.call_hook("on_train_end", self)
+            except Exception:
+                logger.debug("on_train_end hook error", exc_info=True)
+            # Close logger (primary rank only)
+            try:
+                if self.logger and ddp_is_primary(self.fabric):
+                    self.logger.close()
+            except Exception:
+                logger.debug("Logger close error", exc_info=True)
             self.signal_handler.restore_handlers()
 
         logger.info("Training completed")
@@ -294,12 +385,21 @@ class GenericTrainer:
     ) -> None:
         """Main training loop implementation."""
 
+        # Call on_train_start hook
+        self.hook_manager.call_hook("on_train_start", self)
+
         for epoch in range(self.current_epoch, max_epochs):
             # Note: epoch is the 0-based epoch index
             # current_epoch will be updated to epoch+1 after successful completion
 
             # Synchronize at epoch start for DDP
             ddp_barrier(self.fabric)
+
+            # Call on_epoch_start hook
+            self.hook_manager.call_hook("on_epoch_start", self, epoch)
+
+            # Reset metrics for new epoch
+            self.metrics_manager.reset_epoch("both")
 
             # Update resume state
             self.resume_state = update_resume_state(
@@ -317,7 +417,7 @@ class GenericTrainer:
                 return
 
             # Training epoch
-            train_metrics = self._train_epoch(epoch)
+            self._train_epoch(epoch)
 
             # Validation based on frequency configuration
             val_metrics = {}
@@ -336,13 +436,50 @@ class GenericTrainer:
                     pass  # Validation already triggered during training if needed
 
                 if should_validate:
+                    # Call validation hooks around per-epoch validation
+                    self.hook_manager.call_hook("on_validation_start", self, epoch)
                     val_metrics = self._validation_epoch(epoch)
+                    self.hook_manager.call_hook(
+                        "on_validation_end", self, epoch, val_metrics
+                    )
 
-            # Combine metrics
-            epoch_metrics = {**train_metrics, **val_metrics}
+            # Optionally aggregate metrics across ranks for DDP
+            if self.config.logging.all_reduce_metrics and self.fabric is not None:
+                self.metrics_manager.aggregate_across_ranks(self.fabric)
 
-            # Log epoch metrics
-            self._log_epoch_metrics(epoch, epoch_metrics)
+            # Get combined metrics from MetricsManager
+            epoch_metrics = {
+                **self.metrics_manager.get_train_metrics(
+                    include_global=self.config.logging.log_global_metrics,
+                    include_per_loader=self.config.logging.log_per_loader_metrics,
+                ),
+                **self.metrics_manager.get_val_metrics(
+                    include_global=self.config.logging.log_global_metrics,
+                    include_per_loader=self.config.logging.log_per_loader_metrics,
+                ),
+            }
+
+            # Log loader proportions if using WEIGHTED strategy
+            if (
+                self.config.logging.log_loader_proportions
+                and self.config.multi.sampling_strategy == SamplingStrategy.WEIGHTED
+            ):
+                proportions, counts = self.metrics_manager.get_loader_proportions()
+                if self.logger and ddp_is_primary(self.fabric):
+                    self.logger.log_loader_proportions(epoch, proportions, counts)
+
+            # Save epoch summary
+            epoch_summary = self.metrics_manager.save_epoch_summary(
+                epoch, {"global_step": self.global_step}
+            )
+
+            # Log epoch metrics through logger
+            if self.logger and ddp_is_primary(self.fabric):
+                self.logger.log_metrics(epoch_metrics, self.global_step)
+                self.logger.log_epoch_summary(epoch, epoch_summary)
+
+            # Call on_epoch_end hook
+            self.hook_manager.call_hook("on_epoch_end", self, epoch, epoch_metrics)
 
             # Scheduler step (epoch-based)
             for scheduler in self.schedulers:
@@ -360,9 +497,41 @@ class GenericTrainer:
                 # All ranks wait for checkpoint save to complete
                 ddp_barrier(self.fabric)
 
-            # Early stopping check
-            if self.early_stopping is not None and self.early_stopping(epoch_metrics):
-                logger.info("Early stopping triggered")
+            # Early stopping (legacy utility + hook), synchronized across ranks
+            local_should_stop = False
+            source = self.config.validation.early_stopping_source
+
+            # Check legacy early stopping based on source configuration
+            if (
+                source in ("both", "legacy")
+                and self.early_stopping is not None
+                and self.early_stopping(epoch_metrics)
+            ):
+                local_should_stop = True
+
+            # Check early stopping hook based on source configuration
+            if source in ("both", "hook"):
+                for hook in self.hook_manager.hooks:
+                    if isinstance(hook, EarlyStoppingHook) and getattr(
+                        hook, "should_stop", False
+                    ):
+                        local_should_stop = True
+                        break
+
+            global_should_stop = local_should_stop
+            if self.fabric is not None:
+                try:
+                    flag = torch.tensor(
+                        1.0 if local_should_stop else 0.0, dtype=torch.float32
+                    )
+                    reduced = ddp_all_reduce(self.fabric, flag, op="sum")
+                    global_should_stop = reduced.item() > 0.5
+                except Exception:
+                    # Fallback to local decision if reduction fails
+                    global_should_stop = local_should_stop
+
+            if global_should_stop:
+                logger.info("Early stopping condition met; terminating training")
                 break
 
             # Update resume state
@@ -396,10 +565,6 @@ class GenericTrainer:
         # Create epoch iterator
         iterator = self.dataloader_manager.create_epoch_iterator("train", epoch)
 
-        # Metrics tracking
-        per_loader_metrics: dict[int, dict[str, list[float]]] = {}
-        per_loader_samples: dict[int, int] = {}
-
         # Accumulation state
         accumulation_counter = 0
         accumulated_loss = 0.0
@@ -415,10 +580,18 @@ class GenericTrainer:
                     self._save_checkpoint(force=True)
                 # All ranks wait for checkpoint save
                 ddp_barrier(self.fabric)
-                return self._aggregate_metrics(per_loader_metrics, per_loader_samples)
+                return self.metrics_manager.get_train_metrics(
+                    include_global=self.config.logging.log_global_metrics,
+                    include_per_loader=self.config.logging.log_per_loader_metrics,
+                )
 
             # Get loader name
             loader_name = self.dataloader_manager.train_names[loader_idx]
+
+            # Call on_train_batch_start hook
+            self.hook_manager.call_hook(
+                "on_train_batch_start", self, batch, loader_idx, loader_name
+            )
 
             # Update resume state with multi-dataloader state
             loader_states = iterator.get_loader_states()
@@ -450,20 +623,16 @@ class GenericTrainer:
             # Accumulate loss
             accumulated_loss += loss
 
-            # Track per-loader metrics
-            if loader_idx not in per_loader_metrics:
-                per_loader_metrics[loader_idx] = {}
-                per_loader_samples[loader_idx] = 0
-
-            for key, value in step_metrics.items():
-                if isinstance(value, int | float | torch.Tensor):
-                    if key not in per_loader_metrics[loader_idx]:
-                        per_loader_metrics[loader_idx][key] = []
-                    per_loader_metrics[loader_idx][key].append(float(value))
-
-            # Count samples (assuming first dimension is batch size)
+            # Get batch size for metrics tracking
             batch_size = self._get_batch_size(batch)
-            per_loader_samples[loader_idx] += batch_size
+
+            # Add metrics to MetricsManager
+            self.metrics_manager.add_train_batch(loader_idx, step_metrics, batch_size)
+
+            # Call on_train_batch_end hook
+            self.hook_manager.call_hook(
+                "on_train_batch_end", self, batch, loader_idx, loader_name, step_metrics
+            )
 
             # Gradient accumulation boundary
             accumulation_counter += 1
@@ -488,18 +657,32 @@ class GenericTrainer:
                         self.steps_since_validation
                         >= self.config.validation.every_n_steps
                     ):
+                        # Call validation hooks
+                        self.hook_manager.call_hook("on_validation_start", self, epoch)
                         val_metrics = self._validation_epoch(epoch)
-                        self._log_epoch_metrics(epoch, val_metrics, prefix="step_val")
+                        self.hook_manager.call_hook(
+                            "on_validation_end", self, epoch, val_metrics
+                        )
+
+                        # Log validation metrics
+                        if self.logger and ddp_is_primary(self.fabric):
+                            self.logger.log_metrics(val_metrics, self.global_step)
                         self.steps_since_validation = 0
 
-            # Log step metrics
+            # Log step metrics through logger
             if (
                 self.config.log_loss_every_n_steps is not None
                 and self.global_step % self.config.log_loss_every_n_steps == 0
+                and self.logger
+                and ddp_is_primary(self.fabric)
             ):
-                self._log_step_metrics(
-                    step_metrics, self.global_step, f"train/{loader_name}"
-                )
+                # Format metrics with proper prefix
+                formatted_metrics = {
+                    f"train/dl_{loader_name}/{k}": v
+                    for k, v in step_metrics.items()
+                    if isinstance(v, int | float | torch.Tensor)
+                }
+                self.logger.log_metrics(formatted_metrics, self.global_step)
 
         # Final optimizer step if there's remaining gradients
         if (
@@ -520,12 +703,23 @@ class GenericTrainer:
             ):
                 self.steps_since_validation += 1
                 if self.steps_since_validation >= self.config.validation.every_n_steps:
+                    # Call validation hooks
+                    self.hook_manager.call_hook("on_validation_start", self, epoch)
                     val_metrics = self._validation_epoch(epoch)
-                    self._log_epoch_metrics(epoch, val_metrics, prefix="step_val")
+                    self.hook_manager.call_hook(
+                        "on_validation_end", self, epoch, val_metrics
+                    )
+
+                    # Log validation metrics
+                    if self.logger and ddp_is_primary(self.fabric):
+                        self.logger.log_metrics(val_metrics, self.global_step)
                     self.steps_since_validation = 0
 
-        # Aggregate metrics
-        return self._aggregate_metrics(per_loader_metrics, per_loader_samples)
+        # Return aggregated metrics from MetricsManager
+        return self.metrics_manager.get_train_metrics(
+            include_global=self.config.logging.log_global_metrics,
+            include_per_loader=self.config.logging.log_per_loader_metrics,
+        )
 
     def _validation_epoch(self, epoch: int) -> dict[str, Any]:
         """Execute one validation epoch with multi-dataloader support."""
@@ -540,14 +734,15 @@ class GenericTrainer:
         # Create epoch iterator
         iterator = self.dataloader_manager.create_epoch_iterator("val", epoch)
 
-        # Metrics tracking
-        per_loader_metrics: dict[int, dict[str, list[float]]] = {}
-        per_loader_samples: dict[int, int] = {}
-
         with torch.no_grad():
             for loader_idx, batch in iterator:
                 # Get loader name
                 loader_name = self.dataloader_manager.val_names[loader_idx]
+
+                # Call on_validation_batch_start hook
+                self.hook_manager.call_hook(
+                    "on_validation_batch_start", self, batch, loader_idx, loader_name
+                )
 
                 # Update resume state with multi-dataloader state
                 loader_states = iterator.get_loader_states()
@@ -568,24 +763,26 @@ class GenericTrainer:
                     self, batch, loader_idx, loader_name
                 )
 
-                # Track per-loader metrics
-                if loader_idx not in per_loader_metrics:
-                    per_loader_metrics[loader_idx] = {}
-                    per_loader_samples[loader_idx] = 0
-
-                for key, value in step_metrics.items():
-                    if isinstance(value, int | float | torch.Tensor):
-                        if key not in per_loader_metrics[loader_idx]:
-                            per_loader_metrics[loader_idx][key] = []
-                        per_loader_metrics[loader_idx][key].append(float(value))
-
-                # Count samples
+                # Get batch size for metrics tracking
                 batch_size = self._get_batch_size(batch)
-                per_loader_samples[loader_idx] += batch_size
 
-        # Aggregate validation metrics based on configuration
-        return self._aggregate_validation_metrics(
-            per_loader_metrics, per_loader_samples
+                # Add metrics to MetricsManager
+                self.metrics_manager.add_val_batch(loader_idx, step_metrics, batch_size)
+
+                # Call on_validation_batch_end hook
+                self.hook_manager.call_hook(
+                    "on_validation_batch_end",
+                    self,
+                    batch,
+                    loader_idx,
+                    loader_name,
+                    step_metrics,
+                )
+
+        # Return aggregated validation metrics from MetricsManager
+        return self.metrics_manager.get_val_metrics(
+            include_global=self.config.logging.log_global_metrics,
+            include_per_loader=self.config.logging.log_per_loader_metrics,
         )
 
     def _training_step(
@@ -629,6 +826,9 @@ class GenericTrainer:
         # Scale loss for gradient accumulation
         loss = loss / self.config.performance.gradient_accumulation_steps
 
+        # Call on_before_backward hook
+        self.hook_manager.call_hook("on_before_backward", self, loss)
+
         # Backward pass
         self.resume_state = update_resume_state(
             self.resume_state,
@@ -650,6 +850,9 @@ class GenericTrainer:
         else:
             loss.backward()
 
+        # Call on_after_backward hook
+        self.hook_manager.call_hook("on_after_backward", self)
+
         return step_metrics
 
     def _optimizer_step(self, loader_idx: int) -> None:
@@ -665,6 +868,9 @@ class GenericTrainer:
 
         optimizer = self.optimizers[optimizer_idx]
 
+        # Call on_before_optimizer_step hook
+        self.hook_manager.call_hook("on_before_optimizer_step", self, optimizer_idx)
+
         # Update resume state
         self.resume_state = update_resume_state(
             self.resume_state,
@@ -679,10 +885,12 @@ class GenericTrainer:
 
             # Gradient clipping
             if self.config.performance.clip_grad_norm is not None:
-                torch.nn.utils.clip_grad_norm_(
+                grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
                     self.config.performance.clip_grad_norm,
                 )
+                # Call on_gradient_clip hook
+                self.hook_manager.call_hook("on_gradient_clip", self, grad_norm)
 
             # Optimizer step with scaler
             self.scaler.step(optimizer)
@@ -690,16 +898,21 @@ class GenericTrainer:
         else:
             # Gradient clipping without scaler
             if self.config.performance.clip_grad_norm is not None:
-                torch.nn.utils.clip_grad_norm_(
+                grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
                     self.config.performance.clip_grad_norm,
                 )
+                # Call on_gradient_clip hook
+                self.hook_manager.call_hook("on_gradient_clip", self, grad_norm)
 
             # Regular optimizer step
             optimizer.step()
 
         optimizer.zero_grad()
         self.global_step += 1
+
+        # Call on_after_optimizer_step hook
+        self.hook_manager.call_hook("on_after_optimizer_step", self, optimizer_idx)
 
         # Scheduler step (step-based) if exists for this optimizer
         if optimizer_idx < len(self.schedulers):
@@ -736,41 +949,8 @@ class GenericTrainer:
         per_loader_metrics: dict[int, dict[str, list[float]]],
         per_loader_samples: dict[int, int],
     ) -> dict[str, Any]:
-        """Aggregate metrics across dataloaders."""
-        final_metrics = {}
-
-        # Aggregate per-loader metrics
-        if self.config.log_per_loader_metrics:
-            for loader_idx, metrics in per_loader_metrics.items():
-                loader_name = self.dataloader_manager.train_names[loader_idx]
-                for key, values in metrics.items():
-                    # Average within loader
-                    avg_value = sum(values) / len(values)
-                    final_metrics[f"train/{loader_name}/{key}"] = avg_value
-
-        # Aggregate global metrics (weighted by samples)
-        if self.config.log_global_metrics:
-            total_samples = sum(per_loader_samples.values())
-            global_metrics: dict[str, float] = {}
-
-            # Collect all metric keys
-            all_keys = set()
-            for metrics in per_loader_metrics.values():
-                all_keys.update(metrics.keys())
-
-            for key in all_keys:
-                weighted_sum = 0.0
-                for loader_idx, metrics in per_loader_metrics.items():
-                    if key in metrics:
-                        loader_avg = sum(metrics[key]) / len(metrics[key])
-                        weight = per_loader_samples[loader_idx] / total_samples
-                        weighted_sum += loader_avg * weight
-
-                global_metrics[f"train/{key}"] = weighted_sum
-
-            final_metrics.update(global_metrics)
-
-        return final_metrics
+        """Deprecated: superseded by MetricsManager; retained for compatibility."""
+        return {}
 
     def _aggregate_validation_metrics(
         self,
@@ -873,7 +1053,7 @@ class GenericTrainer:
                 )
 
             # Save checkpoint with all optimizers and schedulers
-            self.checkpoint_manager.save_checkpoint(
+            checkpoint_path = self.checkpoint_manager.save_checkpoint(
                 model=self.model,
                 optimizers=self.optimizers,  # Save all optimizers
                 schedulers=self.schedulers,  # Save all schedulers
@@ -886,6 +1066,12 @@ class GenericTrainer:
                 else None,
                 scaler=self.scaler,  # Save AMP scaler state
             )
+
+            # Call on_checkpoint_save hook
+            if checkpoint_path:
+                self.hook_manager.call_hook(
+                    "on_checkpoint_save", self, str(checkpoint_path)
+                )
         except Exception:
             logger.exception("Failed to save checkpoint: ")
             if force:
@@ -897,6 +1083,9 @@ class GenericTrainer:
         ddp_barrier(self.fabric)
 
         try:
+            # Call on_checkpoint_load hook (before loading)
+            self.hook_manager.call_hook("on_checkpoint_load", self, checkpoint_path)
+
             # Load checkpoint only on rank 0 and broadcast to other ranks
             if ddp_is_primary(self.fabric):
                 # Load checkpoint data on rank 0
@@ -1014,8 +1203,6 @@ class GenericTrainer:
                     and hasattr(self.dataloader_manager, "choice_rng")
                 ):
                     # Use the helper function for resume_state.choice_rng
-                    from .states import restore_choice_rng_state
-
                     restore_choice_rng_state(
                         self.resume_state.choice_rng, self.dataloader_manager.choice_rng
                     )
@@ -1034,45 +1221,14 @@ class GenericTrainer:
     def _log_step_metrics(
         self, metrics: dict[str, Any], step: int, prefix: str = ""
     ) -> None:
-        """Log step-level metrics."""
-        log_dict = {}
-        for key, value in metrics.items():
-            if isinstance(value, int | float | torch.Tensor):
-                log_key = f"{prefix}/{key}" if prefix else key
-                log_dict[log_key] = float(value)
-
-        # Only log on primary rank to avoid duplication
-        if ddp_is_primary(self.fabric):
-            if self.wandb_run is not None:
-                self.wandb_run.log(log_dict, step=step)
-
-            # Console logging
-            # Log a compact loss line if present
-            loss_key = f"{prefix}/loss" if prefix else "loss"
-            if loss_key in log_dict:
-                logger.info(f"Step {step}: loss={log_dict[loss_key]:.4f}")
-            else:
-                logger.info(f"Step {step}")
+        """Deprecated: legacy helper removed in LoggerProtocol refactor."""
+        return
 
     def _log_epoch_metrics(
         self, epoch: int, metrics: dict[str, Any], prefix: str = ""
     ) -> None:
-        """Log epoch-level metrics."""
-        log_dict = {}
-        for key, value in metrics.items():
-            if isinstance(value, int | float | torch.Tensor):
-                log_key = f"{prefix}/{key}" if prefix else key
-                log_dict[log_key] = float(value)
-
-        # Only log on primary rank to avoid duplication
-        if ddp_is_primary(self.fabric):
-            if self.wandb_run is not None:
-                self.wandb_run.log(log_dict, step=self.global_step)
-
-            # Console logging
-            if log_dict:
-                metrics_str = ", ".join([f"{k}={v:.4f}" for k, v in log_dict.items()])
-                logger.info(f"Epoch {epoch}: {metrics_str}")
+        """Deprecated: legacy helper removed in LoggerProtocol refactor."""
+        return
 
     def get_training_state(self) -> dict[str, Any]:
         """Get current training state."""

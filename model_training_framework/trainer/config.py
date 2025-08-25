@@ -14,7 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import signal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+import warnings
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -169,6 +170,16 @@ class ValidationConfig:
     aggregation: ValAggregation = ValAggregation.MICRO_AVG_WEIGHTED_BY_SAMPLES
     per_loader_metrics: bool = True  # Log per-loader metrics
     global_metrics: bool = True  # Log aggregated metrics
+    early_stopping_source: str = "both"  # Options: "both", "hook", "legacy"
+
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        valid_sources = {"both", "hook", "legacy"}
+        if self.early_stopping_source not in valid_sources:
+            raise ValueError(
+                f"early_stopping_source must be one of {valid_sources}, "
+                f"got '{self.early_stopping_source}'"
+            )
 
 
 @dataclass
@@ -225,23 +236,23 @@ class LoggingConfig:
     TensorBoard, CSV files, and console output.
     """
 
+    # Logger type selection
+    logger_type: str = (
+        "wandb"  # Options: "wandb", "tensorboard", "console", "composite"
+    )
+
+    # Legacy W&B configuration (kept for backward compatibility)
     use_wandb: bool = True  # Whether to use Weights & Biases for experiment tracking
     wandb_project: str | None = None  # W&B project name (uses experiment name if None)
     wandb_entity: str | None = None  # W&B entity/team name
     wandb_tags: list[str] = field(default_factory=list)  # Tags for W&B experiment
     wandb_notes: str | None = None  # Notes for W&B experiment
 
-    log_scalars_every_n_steps: int | None = (
-        50  # How often to log scalar metrics (None = every step)
-    )
-    log_images_every_n_steps: int | None = 500  # How often to log images (None = never)
-    log_gradients: bool = False  # Whether to log gradient statistics
-    log_model_parameters: bool = False  # Whether to log model parameter statistics
-    log_system_metrics: bool = True  # Whether to log system metrics (GPU, memory, etc.)
-
-    # Additional logging backends
+    # TensorBoard configuration
     use_tensorboard: bool = False  # Whether to use TensorBoard logging
     tensorboard_dir: str | None = None  # TensorBoard log directory
+
+    # CSV logging
     use_csv: bool = True  # Whether to log metrics to CSV files
     csv_log_dir: str | None = None  # CSV log directory (uses checkpoint dir if None)
 
@@ -250,6 +261,77 @@ class LoggingConfig:
     console_log_format: str = (
         "[%(asctime)s] %(levelname)s: %(message)s"  # Console log format
     )
+
+    # Composite logger configuration
+    composite_loggers: list[str] | None = (
+        None  # Explicit logger list for composite logger
+    )
+
+    # Metrics configuration
+    log_per_loader_metrics: bool = True  # Log metrics per dataloader
+    log_global_metrics: bool = True  # Log globally aggregated metrics
+    log_loader_proportions: bool = True  # Log loader usage proportions (for WEIGHTED)
+    all_reduce_metrics: bool = (
+        False  # Aggregate metrics across ranks before logging (DDP)
+    )
+
+    # Logging frequencies
+    log_scalars_every_n_steps: int | None = (
+        50  # How often to log scalar metrics (None = every step)
+    )
+    log_images_every_n_steps: int | None = 500  # How often to log images (None = never)
+    log_gradients: bool = False  # Whether to log gradient statistics
+    log_model_parameters: bool = False  # Whether to log model parameter statistics
+    log_system_metrics: bool = True  # Whether to log system metrics (GPU, memory, etc.)
+
+
+@dataclass
+class HooksConfig:
+    """
+    Configuration for training hooks system.
+
+    Allows injection of custom behavior at various training lifecycle points.
+    """
+
+    # Hook class paths to load (e.g., ["mypackage.hooks.CustomHook"])
+    hook_classes: list[str] = field(default_factory=list)
+
+    # Hook-specific configuration passed to hook constructors
+    hook_configs: dict[str, Any] = field(default_factory=dict)
+
+    # Built-in hooks
+    enable_logging_hook: bool = False  # Enable detailed logging hook
+    enable_gradient_monitor: bool = False  # Enable gradient monitoring hook
+    enable_model_checkpoint_hook: bool = False  # Enable model checkpoint tracking
+    enable_early_stopping_hook: bool = False  # Enable early stopping hook
+
+    # Built-in hook configurations
+    early_stopping_config: dict[str, Any] = field(
+        default_factory=lambda: {
+            "monitor": "val/loss",
+            "patience": 10,
+            "mode": "min",
+            "min_delta": 0.0001,
+        }
+    )
+
+    gradient_monitor_config: dict[str, Any] = field(
+        default_factory=lambda: {
+            "log_frequency": 100,
+            "param_filter": None,  # Optional list of param names to monitor
+        }
+    )
+
+    model_checkpoint_config: dict[str, Any] = field(
+        default_factory=lambda: {
+            "save_top_k": 3,
+            "monitor": "val/loss",
+        }
+    )
+
+    # Hook execution settings
+    continue_on_hook_error: bool = True  # Continue training if hook raises error
+    log_hook_errors: bool = True  # Log hook errors to console
 
 
 @dataclass
@@ -265,6 +347,7 @@ class GenericTrainerConfig:
     preemption: PreemptionConfig = field(default_factory=PreemptionConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    hooks: HooksConfig = field(default_factory=HooksConfig)  # Hooks configuration
 
     # Multi-dataloader configuration
     multi: MultiDataLoaderConfig = field(default_factory=MultiDataLoaderConfig)
@@ -275,8 +358,6 @@ class GenericTrainerConfig:
     # Per-loader configuration
     loss_weights_per_loader: list[float] | None = None  # Loss weights per dataloader
     per_loader_optimizer_id: list[int] | None = None  # Optimizer ID per dataloader
-    log_per_loader_metrics: bool = True  # Log metrics per dataloader
-    log_global_metrics: bool = True  # Log aggregated metrics
 
     # Training loop behavior
     log_loss_every_n_steps: int | None = 100  # How often to log training loss
@@ -327,7 +408,7 @@ class GenericTrainerConfig:
         # Validate multi-dataloader configuration
         validate_trainer_config(self)
 
-    def get_summary(self) -> dict[str, any]:
+    def get_summary(self) -> dict[str, Any]:
         """Get a summary of the configuration."""
         return {
             "checkpoint": {
@@ -389,8 +470,6 @@ def validate_infinite_loader_constraints(
             EpochLengthPolicy.MIN_OF_LENGTHS,
         }
         if epoch_length_policy in incompatible_policies:
-            import warnings
-
             warnings.warn(
                 f"EpochLengthPolicy.{epoch_length_policy.name} cannot handle infinite "
                 f"dataloaders. Runtime validation will enforce finite loader requirement.",
@@ -501,8 +580,6 @@ def validate_trainer_config(
     if config.multi.dataloader_names:
         unique_names = set(config.multi.dataloader_names)
         if len(unique_names) != len(config.multi.dataloader_names):
-            import warnings
-
             warnings.warn(
                 "dataloader_names contains duplicates, which may affect logging clarity",
                 UserWarning,
