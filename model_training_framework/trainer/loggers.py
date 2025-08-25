@@ -18,6 +18,23 @@ import torch
 
 logger = logging.getLogger(__name__)
 
+# Optional imports with graceful fallback
+try:
+    import wandb
+
+    WANDB_AVAILABLE = True
+except ImportError:
+    wandb = None
+    WANDB_AVAILABLE = False
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+
+    TENSORBOARD_AVAILABLE = True
+except ImportError:
+    SummaryWriter = None
+    TENSORBOARD_AVAILABLE = False
+
 
 class LoggerProtocol(Protocol):
     """Protocol defining the interface for all training loggers."""
@@ -92,15 +109,10 @@ class WandBLogger:
             config: Configuration to log
             **kwargs: Additional arguments for wandb.init()
         """
-        try:
-            import wandb
+        if not WANDB_AVAILABLE:
+            raise ImportError("WandB not installed. Install with: pip install wandb")
 
-            self.wandb = wandb
-        except ImportError as e:
-            raise ImportError(
-                "WandB not installed. Install with: pip install wandb"
-            ) from e
-
+        self.wandb = wandb
         self.run = self.wandb.init(
             project=project,
             entity=entity,
@@ -165,12 +177,10 @@ class TensorBoardLogger:
             log_dir: Directory for TensorBoard logs
             comment: Comment suffix for the run
         """
-        try:
-            from torch.utils.tensorboard import SummaryWriter
-        except ImportError as e:
+        if not TENSORBOARD_AVAILABLE:
             raise ImportError(
                 "TensorBoard not available. Install with: pip install tensorboard"
-            ) from e
+            )
 
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)

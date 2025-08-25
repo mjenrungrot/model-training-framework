@@ -25,6 +25,7 @@ from .config import (
     ValidationFrequency,
     validate_trainer_config,
 )
+from .dataset_validation import validate_iterable_dataset_checkpointing
 from .hooks import (
     EarlyStoppingHook,
     GradientMonitorHook,
@@ -33,7 +34,7 @@ from .hooks import (
     ModelCheckpointHook,
 )
 from .loggers import LoggerProtocol, create_logger
-from .metrics import MetricsManager
+from .metrics import AggregationStrategy, MetricsManager
 from .multi_dataloader import DataLoaderManager, SamplingStrategy
 from .states import (
     MultiTrainMicroState,
@@ -299,6 +300,19 @@ class GenericTrainer:
         if not train_loaders:
             raise ValueError("At least one training dataloader required")
 
+        # Validate IterableDataset checkpointing support if fault tolerance is enabled
+        if (
+            self.config.fault_tolerance
+            and self.config.fault_tolerance.save_dataset_state
+        ):
+            validate_iterable_dataset_checkpointing(
+                train_loaders, require_checkpointing=True
+            )
+            if val_loaders:
+                validate_iterable_dataset_checkpointing(
+                    val_loaders, require_checkpointing=True
+                )
+
         # Initialize DataLoader manager
         self.dataloader_manager = DataLoaderManager(
             train_loaders=train_loaders,
@@ -308,10 +322,24 @@ class GenericTrainer:
             logger=logger,
         )
 
-        # Initialize metrics manager with loader names
+        # Initialize metrics manager with loader names and aggregation strategy
+        # Map validation aggregation policy to metrics aggregation strategy
+        aggregation_strategy = AggregationStrategy.WEIGHTED_AVERAGE  # Default
+        if self.config.validation and hasattr(
+            self.config.validation, "aggregation_policy"
+        ):
+            val_agg = self.config.validation.aggregation_policy
+            # Map ValAggregation to AggregationStrategy
+            if val_agg == ValAggregation.MICRO_AVG_WEIGHTED_BY_SAMPLES:
+                aggregation_strategy = AggregationStrategy.WEIGHTED_AVERAGE
+            elif val_agg == ValAggregation.MACRO_AVG_EQUAL_LOADERS:
+                aggregation_strategy = AggregationStrategy.SIMPLE_AVERAGE
+            # PRIMARY and CUSTOM default to WEIGHTED_AVERAGE for now
+
         self.metrics_manager = MetricsManager(
             train_loader_names=self.dataloader_manager.train_names,
             val_loader_names=self.dataloader_manager.val_names if val_loaders else None,
+            aggregation_strategy=aggregation_strategy,
             track_proportions=self.config.logging.log_loader_proportions,
         )
 
@@ -1221,14 +1249,32 @@ class GenericTrainer:
     def _log_step_metrics(
         self, metrics: dict[str, Any], step: int, prefix: str = ""
     ) -> None:
-        """Deprecated: legacy helper removed in LoggerProtocol refactor."""
-        return
+        """Log step metrics (for backward compatibility with tests)."""
+        # Only log on primary rank
+        if not ddp_is_primary(self.fabric):
+            return
+
+        # If wandb_run exists (for test compatibility), use it
+        if hasattr(self, "wandb_run"):
+            self.wandb_run.log(metrics, step=step)
+        # Otherwise use the logger if available
+        elif self.logger:
+            self.logger.log_metrics(metrics, step)
 
     def _log_epoch_metrics(
         self, epoch: int, metrics: dict[str, Any], prefix: str = ""
     ) -> None:
-        """Deprecated: legacy helper removed in LoggerProtocol refactor."""
-        return
+        """Log epoch metrics (for backward compatibility with tests)."""
+        # Only log on primary rank
+        if not ddp_is_primary(self.fabric):
+            return
+
+        # If wandb_run exists (for test compatibility), use it
+        if hasattr(self, "wandb_run"):
+            self.wandb_run.log(metrics, epoch=epoch)
+        # Otherwise use the logger if available
+        elif self.logger:
+            self.logger.log_epoch_summary(epoch, metrics)
 
     def get_training_state(self) -> dict[str, Any]:
         """Get current training state."""
