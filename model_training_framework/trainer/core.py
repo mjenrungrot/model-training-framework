@@ -38,6 +38,9 @@ from .utils import (
     EarlyStopping,
     PerformanceMonitor,
     SignalHandler,
+    ddp_barrier,
+    ddp_broadcast_object,
+    ddp_is_primary,
     seed_all,
 )
 
@@ -134,11 +137,26 @@ class GenericTrainer:
             wandb_run: Optional Weights & Biases run for logging
         """
         self.config = config
-        self.model = model
-        self.optimizers = optimizers
-        self.schedulers = schedulers or []
         self.fabric = fabric
         self.wandb_run = wandb_run
+
+        # Setup model and optimizers with Fabric if available
+        if fabric is not None:
+            # Fabric setup for model and optimizers
+            # Note: Fabric.setup() handles both model and optimizers
+            setup_result = fabric.setup(model, *optimizers)
+            if isinstance(setup_result, tuple):
+                self.model = setup_result[0]
+                self.optimizers = list(setup_result[1:])
+            else:
+                # Single model case
+                self.model = setup_result
+                self.optimizers = optimizers
+        else:
+            self.model = model
+            self.optimizers = optimizers
+
+        self.schedulers = schedulers or []
 
         # Validate configuration
         validate_trainer_config(config)
@@ -280,6 +298,9 @@ class GenericTrainer:
             # Note: epoch is the 0-based epoch index
             # current_epoch will be updated to epoch+1 after successful completion
 
+            # Synchronize at epoch start for DDP
+            ddp_barrier(self.fabric)
+
             # Update resume state
             self.resume_state = update_resume_state(
                 self.resume_state,
@@ -332,9 +353,12 @@ class GenericTrainer:
                 )
                 scheduler.step()
 
-            # Save checkpoint if needed
+            # Save checkpoint if needed (only on primary rank)
             if self.checkpoint_manager.should_save_checkpoint(epoch, self.global_step):
-                self._save_checkpoint(epoch_metrics)
+                if ddp_is_primary(self.fabric):
+                    self._save_checkpoint(epoch_metrics)
+                # All ranks wait for checkpoint save to complete
+                ddp_barrier(self.fabric)
 
             # Early stopping check
             if self.early_stopping is not None and self.early_stopping(epoch_metrics):
@@ -348,16 +372,22 @@ class GenericTrainer:
                 save_rng=self.config.checkpoint.save_rng,
             )
 
+            # Synchronize at epoch end for DDP
+            ddp_barrier(self.fabric)
+
             # Update current_epoch to reflect completed epochs
             self.current_epoch = epoch + 1
 
-        # Final checkpoint
+        # Final checkpoint (only on primary rank)
         self.resume_state = update_resume_state(
             self.resume_state,
             TrainerPhase.TRAINING_COMPLETE,
             save_rng=self.config.checkpoint.save_rng,
         )
-        self._save_checkpoint(force=True)
+        if ddp_is_primary(self.fabric):
+            self._save_checkpoint(force=True)
+        # All ranks wait for final checkpoint
+        ddp_barrier(self.fabric)
 
     def _train_epoch(self, epoch: int) -> dict[str, Any]:
         """Execute one training epoch with multi-dataloader support."""
@@ -381,7 +411,10 @@ class GenericTrainer:
             # Check for preemption
             if self.signal_handler.is_preemption_requested():
                 logger.info("Preemption requested during training")
-                self._save_checkpoint(force=True)
+                if ddp_is_primary(self.fabric):
+                    self._save_checkpoint(force=True)
+                # All ranks wait for checkpoint save
+                ddp_barrier(self.fabric)
                 return self._aggregate_metrics(per_loader_metrics, per_loader_samples)
 
             # Get loader name
@@ -683,12 +716,15 @@ class GenericTrainer:
         self.performance_monitor.record_step_time()
         self.performance_monitor.record_memory_usage()
 
-        # Optional step-based checkpoint save
+        # Optional step-based checkpoint save (only on primary rank)
         try:
             if self.checkpoint_manager.should_save_checkpoint(
                 self.current_epoch, self.global_step
             ):
-                self._save_checkpoint()
+                if ddp_is_primary(self.fabric):
+                    self._save_checkpoint()
+                # All ranks wait for checkpoint save
+                ddp_barrier(self.fabric)
         except Exception:
             # Don't interrupt training if periodic save fails; it will retry on next opportunity
             logger.debug(
@@ -857,45 +893,139 @@ class GenericTrainer:
 
     def _resume_from_checkpoint(self, checkpoint_path: str) -> None:
         """Resume training from checkpoint."""
+        # Synchronize before loading checkpoint
+        ddp_barrier(self.fabric)
+
         try:
-            # Restore checkpoint with all optimizers and schedulers
-            epoch, global_step, resume_state = (
-                self.checkpoint_manager.restore_from_checkpoint(
-                    model=self.model,
-                    optimizers=self.optimizers,  # Restore all optimizers
-                    schedulers=self.schedulers,  # Restore all schedulers
-                    checkpoint_path=checkpoint_path,
-                    scaler=self.scaler,  # Restore AMP scaler state
+            # Load checkpoint only on rank 0 and broadcast to other ranks
+            if ddp_is_primary(self.fabric):
+                # Load checkpoint data on rank 0
+                # Map to CPU to avoid device-coupled payloads and reduce GPU memory spikes
+                checkpoint_data = self.checkpoint_manager.load_checkpoint(
+                    checkpoint_path, map_location="cpu"
                 )
-            )
 
-            self.current_epoch = epoch
-            self.global_step = global_step
+                # Extract necessary data for broadcast
+                # Handle backward compatibility for legacy checkpoints
+                optimizer_states = checkpoint_data.get("optimizer_state_dicts")
+                if (
+                    optimizer_states is None
+                    and "optimizer_state_dict" in checkpoint_data
+                ):
+                    # Legacy single optimizer format
+                    optimizer_states = [checkpoint_data["optimizer_state_dict"]]
+                elif optimizer_states is None:
+                    optimizer_states = []
 
-            if resume_state is not None:
-                self.resume_state = resume_state
+                scheduler_states = checkpoint_data.get("scheduler_state_dicts")
+                if (
+                    scheduler_states is None
+                    and "scheduler_state_dict" in checkpoint_data
+                ):
+                    # Legacy single scheduler format
+                    scheduler_states = [checkpoint_data["scheduler_state_dict"]]
+                elif scheduler_states is None:
+                    scheduler_states = []
 
-                # Restore RNG state if available
-                if resume_state.rng is not None:
-                    restore_rng_state(resume_state.rng)
+                broadcast_data = {
+                    "epoch": checkpoint_data.get("epoch"),
+                    "global_step": checkpoint_data.get("global_step"),
+                    "resume_state": checkpoint_data.get("resume_state"),
+                    "model_state_dict": checkpoint_data.get("model_state_dict"),
+                    "optimizer_state_dicts": optimizer_states,
+                    "scheduler_state_dicts": scheduler_states,
+                    "amp_scaler_state": checkpoint_data.get("amp_scaler_state"),
+                    "dataloader_manager_state": checkpoint_data.get(
+                        "dataloader_manager_state"
+                    ),
+                    "choice_rng_state": checkpoint_data.get("choice_rng_state"),
+                }
+            else:
+                broadcast_data = None
+
+            # Broadcast checkpoint data from rank 0 to all ranks
+            broadcast_data = ddp_broadcast_object(self.fabric, broadcast_data, src=0)
+
+            # All ranks apply the checkpoint state
+            if broadcast_data:
+                # Restore basic training state
+                self.current_epoch = broadcast_data["epoch"]
+                self.global_step = broadcast_data["global_step"]
+
+                # Restore model state
+                self.model.load_state_dict(broadcast_data["model_state_dict"])
+
+                # Restore optimizer states
+                for i, opt_state in enumerate(broadcast_data["optimizer_state_dicts"]):
+                    if i < len(self.optimizers):
+                        self.optimizers[i].load_state_dict(opt_state)
+
+                # Restore scheduler states
+                for i, sched_state in enumerate(
+                    broadcast_data["scheduler_state_dicts"]
+                ):
+                    if i < len(self.schedulers):
+                        self.schedulers[i].load_state_dict(sched_state)
+
+                # Restore AMP scaler state
+                if broadcast_data["amp_scaler_state"] and self.scaler:
+                    self.scaler.load_state_dict(broadcast_data["amp_scaler_state"])
+
+                # Restore resume state
+                if broadcast_data["resume_state"] is not None:
+                    self.resume_state = broadcast_data["resume_state"]
+
+                    # Restore RNG state if available
+                    if self.resume_state.rng is not None:
+                        restore_rng_state(self.resume_state.rng)
 
                 # Restore DataLoaderManager state if available
-                if resume_state.dataloader_manager_state and self.dataloader_manager:
+                # Check both top-level (free save function) and resume_state (CheckpointManager)
+                # Pass skip_broadcast=True since we already broadcast the entire checkpoint
+                if (
+                    broadcast_data["dataloader_manager_state"]
+                    and self.dataloader_manager
+                ):
+                    # Top-level state (from free save function)
                     self.dataloader_manager.load_state(
-                        resume_state.dataloader_manager_state
+                        broadcast_data["dataloader_manager_state"], skip_broadcast=True
+                    )
+                elif (
+                    self.resume_state
+                    and self.resume_state.dataloader_manager_state
+                    and self.dataloader_manager
+                ):
+                    # State inside resume_state (from CheckpointManager)
+                    self.dataloader_manager.load_state(
+                        self.resume_state.dataloader_manager_state, skip_broadcast=True
                     )
 
                 # Restore choice RNG if available
-                if resume_state.choice_rng and hasattr(
+                # Check both top-level and resume_state locations
+                if broadcast_data["choice_rng_state"] and hasattr(
                     self.dataloader_manager, "choice_rng"
                 ):
+                    self.dataloader_manager.choice_rng.set_state(
+                        broadcast_data["choice_rng_state"]
+                    )
+                elif (
+                    self.resume_state
+                    and self.resume_state.choice_rng
+                    and hasattr(self.dataloader_manager, "choice_rng")
+                ):
+                    # Use the helper function for resume_state.choice_rng
                     from .states import restore_choice_rng_state
 
                     restore_choice_rng_state(
-                        resume_state.choice_rng, self.dataloader_manager.choice_rng
+                        self.resume_state.choice_rng, self.dataloader_manager.choice_rng
                     )
 
-            logger.info(f"Resumed from checkpoint: epoch={epoch}, step={global_step}")
+                logger.info(
+                    f"Resumed from checkpoint: epoch={self.current_epoch}, step={self.global_step}"
+                )
+
+            # Synchronize after loading checkpoint
+            ddp_barrier(self.fabric)
 
         except Exception:
             logger.exception("Failed to resume from checkpoint: ")
@@ -911,16 +1041,18 @@ class GenericTrainer:
                 log_key = f"{prefix}/{key}" if prefix else key
                 log_dict[log_key] = float(value)
 
-        if self.wandb_run is not None:
-            self.wandb_run.log(log_dict, step=step)
+        # Only log on primary rank to avoid duplication
+        if ddp_is_primary(self.fabric):
+            if self.wandb_run is not None:
+                self.wandb_run.log(log_dict, step=step)
 
-        # Console logging
-        # Log a compact loss line if present
-        loss_key = f"{prefix}/loss" if prefix else "loss"
-        if loss_key in log_dict:
-            logger.info(f"Step {step}: loss={log_dict[loss_key]:.4f}")
-        else:
-            logger.info(f"Step {step}")
+            # Console logging
+            # Log a compact loss line if present
+            loss_key = f"{prefix}/loss" if prefix else "loss"
+            if loss_key in log_dict:
+                logger.info(f"Step {step}: loss={log_dict[loss_key]:.4f}")
+            else:
+                logger.info(f"Step {step}")
 
     def _log_epoch_metrics(
         self, epoch: int, metrics: dict[str, Any], prefix: str = ""
@@ -932,13 +1064,15 @@ class GenericTrainer:
                 log_key = f"{prefix}/{key}" if prefix else key
                 log_dict[log_key] = float(value)
 
-        if self.wandb_run is not None:
-            self.wandb_run.log(log_dict, step=self.global_step)
+        # Only log on primary rank to avoid duplication
+        if ddp_is_primary(self.fabric):
+            if self.wandb_run is not None:
+                self.wandb_run.log(log_dict, step=self.global_step)
 
-        # Console logging
-        if log_dict:
-            metrics_str = ", ".join([f"{k}={v:.4f}" for k, v in log_dict.items()])
-            logger.info(f"Epoch {epoch}: {metrics_str}")
+            # Console logging
+            if log_dict:
+                metrics_str = ", ".join([f"{k}={v:.4f}" for k, v in log_dict.items()])
+                logger.info(f"Epoch {epoch}: {metrics_str}")
 
     def get_training_state(self) -> dict[str, Any]:
         """Get current training state."""

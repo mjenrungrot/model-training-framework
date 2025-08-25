@@ -621,12 +621,118 @@ def ddp_broadcast_object(fabric: Any, obj: Any, src: int = 0) -> Any:
     if hasattr(fabric, "broadcast"):
         try:
             return fabric.broadcast(obj, src=src)
-        except Exception:
-            # Return unchanged in single-process mode
+        except Exception as e:
+            # Log the issue but return unchanged to not break single-process mode
+            logger.debug(f"Broadcast failed (likely single-process mode): {e}")
             return obj
 
     # No broadcast available, return unchanged
     return obj
+
+
+def ddp_all_gather(
+    fabric: Any, tensor: torch.Tensor
+) -> torch.Tensor | list[torch.Tensor]:
+    """
+    Gather tensors from all ranks.
+
+    In single-process mode, returns the tensor unchanged.
+
+    Args:
+        fabric: Lightning Fabric instance
+        tensor: Tensor to gather from all ranks
+
+    Returns:
+        List of tensors from all ranks, or single tensor in single-process mode
+    """
+    if fabric is None:
+        return tensor
+
+    # Try fabric all_gather method
+    if hasattr(fabric, "all_gather"):
+        try:
+            return fabric.all_gather(tensor)
+        except Exception:
+            # Return unchanged in single-process mode
+            return tensor
+
+    # No all_gather available, return unchanged
+    return tensor
+
+
+def ddp_all_reduce(fabric: Any, tensor: torch.Tensor, op: str = "mean") -> torch.Tensor:
+    """
+    Reduce tensor across all ranks.
+
+    In single-process mode, returns the tensor unchanged.
+
+    Args:
+        fabric: Lightning Fabric instance
+        tensor: Tensor to reduce
+        op: Reduction operation ("mean", "sum", "min", "max")
+
+    Returns:
+        Reduced tensor
+    """
+    if fabric is None:
+        return tensor
+
+    # Try fabric all_reduce method
+    if hasattr(fabric, "all_reduce"):
+        try:
+            return fabric.all_reduce(tensor, op=op)
+        except Exception:
+            # Return unchanged in single-process mode
+            return tensor
+
+    # No all_reduce available, return unchanged
+    return tensor
+
+
+def ddp_world_size(fabric: Any) -> int:
+    """
+    Get the world size (number of processes).
+
+    Args:
+        fabric: Lightning Fabric instance
+
+    Returns:
+        World size (1 if not distributed)
+    """
+    if fabric is None:
+        return 1
+
+    # Check for world_size attribute
+    if hasattr(fabric, "world_size"):
+        return fabric.world_size
+
+    # Default to 1
+    return 1
+
+
+def ddp_rank(fabric: Any) -> int:
+    """
+    Get the rank of current process.
+
+    Args:
+        fabric: Lightning Fabric instance
+
+    Returns:
+        Process rank (0 if not distributed)
+    """
+    if fabric is None:
+        return 0
+
+    # Check for global_rank attribute
+    if hasattr(fabric, "global_rank"):
+        return fabric.global_rank
+
+    # Check for rank attribute
+    if hasattr(fabric, "rank"):
+        return fabric.rank
+
+    # Default to 0
+    return 0
 
 
 class Stopwatch:

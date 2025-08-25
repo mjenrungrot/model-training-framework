@@ -24,7 +24,12 @@ from .config import (
     SamplingStrategy,
 )
 from .states import ChoiceRNGState, DataLoaderState
-from .utils import balanced_interleave, ddp_broadcast_object
+from .utils import (
+    balanced_interleave,
+    ddp_barrier,
+    ddp_broadcast_object,
+    ddp_is_primary,
+)
 
 if TYPE_CHECKING:
     # Imported only for type checking to avoid runtime dependency per TC002
@@ -670,16 +675,34 @@ class DataLoaderManager:
             raise ValueError(f"No {phase} loaders available")
 
         # Set epoch for distributed samplers (duck-typed to support mocks)
-        for loader in loaders:
+        for idx, loader in enumerate(loaders):
             sampler = getattr(loader, "sampler", None)
-            if sampler is not None and hasattr(sampler, "set_epoch"):
-                sampler.set_epoch(epoch)
-            elif hasattr(loader, "batch_sampler"):
-                inner_sampler = getattr(
-                    getattr(loader, "batch_sampler", None), "sampler", None
-                )
+            batch_sampler = getattr(loader, "batch_sampler", None)
+
+            # Check for DistributedSampler
+            sampler_set = False
+            if sampler is not None:
+                if hasattr(sampler, "set_epoch"):
+                    sampler.set_epoch(epoch)
+                    sampler_set = True
+                    self.logger.debug(
+                        f"Set epoch {epoch} for DistributedSampler on loader {idx} ({names[idx]})"
+                    )
+                elif "DistributedSampler" in str(type(sampler)):
+                    self.logger.warning(
+                        f"Loader {idx} ({names[idx]}) appears to use DistributedSampler "
+                        f"but doesn't have set_epoch method. This may cause issues in DDP."
+                    )
+
+            # Check batch sampler's inner sampler
+            if not sampler_set and batch_sampler is not None:
+                inner_sampler = getattr(batch_sampler, "sampler", None)
                 if inner_sampler is not None and hasattr(inner_sampler, "set_epoch"):
                     inner_sampler.set_epoch(epoch)
+                    self.logger.debug(
+                        f"Set epoch {epoch} for DistributedSampler (via batch_sampler) "
+                        f"on loader {idx} ({names[idx]})"
+                    )
 
         # Get loader lengths
         lengths = []
@@ -767,9 +790,35 @@ class DataLoaderManager:
         else:
             raise ValueError(f"Unknown strategy: {self.config.sampling_strategy}")
 
-        # Broadcast schedule from rank 0 for DDP consistency
+        # Build schedule deterministically or broadcast from rank 0
         if self.fabric is not None:
+            # For DDP: Build on rank 0 and broadcast to ensure consistency
+            if ddp_is_primary(self.fabric):
+                self.logger.debug(
+                    f"Rank 0 broadcasting schedule of length {len(schedule)} for {phase} epoch {epoch}"
+                )
+
+            # Broadcast the schedule and ensure all ranks get the same one
             schedule = ddp_broadcast_object(self.fabric, schedule, src=0)
+
+            # Also broadcast the choice RNG state for weighted sampling consistency
+            if self.config.sampling_strategy == SamplingStrategy.WEIGHTED:
+                if ddp_is_primary(self.fabric):
+                    choice_rng_state = self.choice_rng.get_state()
+                else:
+                    choice_rng_state = None
+                choice_rng_state = ddp_broadcast_object(
+                    self.fabric, choice_rng_state, src=0
+                )
+                if choice_rng_state is not None:
+                    self.choice_rng.set_state(choice_rng_state)
+
+            # Synchronize all ranks after schedule broadcast
+            ddp_barrier(self.fabric)
+
+            self.logger.debug(
+                f"All ranks synchronized with schedule length {len(schedule)} for {phase} epoch {epoch}"
+            )
 
         # Create iterator
         iterator = MultiDataLoaderIterator(
@@ -820,8 +869,13 @@ class DataLoaderManager:
 
         return state
 
-    def load_state(self, state: dict[str, Any]) -> None:
-        """Load manager state from checkpoint."""
+    def load_state(self, state: dict[str, Any], skip_broadcast: bool = False) -> None:
+        """Load manager state from checkpoint.
+
+        Args:
+            state: State dictionary to load
+            skip_broadcast: If True, skip broadcasting state (already broadcast by caller)
+        """
         # Restore choice RNG state
         if "choice_rng_state" in state:
             self.choice_rng_state = ChoiceRNGState.from_dict(state["choice_rng_state"])
@@ -835,3 +889,30 @@ class DataLoaderManager:
         # Store iterator states for later restoration when iterators are created
         self._stored_train_state = state.get("train_iterator_state")
         self._stored_val_state = state.get("val_iterator_state")
+
+        # In DDP, broadcast the loaded state from rank 0 to ensure consistency
+        # Skip if already broadcast by caller (e.g., from core.py)
+        if self.fabric is not None and not skip_broadcast:
+            # Broadcast the entire state from rank 0
+            broadcasted_state = ddp_broadcast_object(self.fabric, state, src=0)
+
+            # If not rank 0, update with broadcasted state
+            if not ddp_is_primary(self.fabric):
+                # Re-apply the broadcasted state
+                if "choice_rng_state" in broadcasted_state:
+                    self.choice_rng_state = ChoiceRNGState.from_dict(
+                        broadcasted_state["choice_rng_state"]
+                    )
+
+                if broadcasted_state.get("choice_rng") is not None:
+                    if self.choice_rng is None:
+                        self.choice_rng = np.random.RandomState()
+                    self.choice_rng.set_state(broadcasted_state["choice_rng"])
+
+                self._stored_train_state = broadcasted_state.get("train_iterator_state")
+                self._stored_val_state = broadcasted_state.get("val_iterator_state")
+
+            # Synchronize all ranks
+            ddp_barrier(self.fabric)
+
+            self.logger.debug("DataLoader manager state synchronized across all ranks")

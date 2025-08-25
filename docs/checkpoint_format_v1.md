@@ -222,6 +222,77 @@ epoch, step, resume_state = manager.restore_from_checkpoint(
 - All ranks must use identical configuration
 - Checkpoint save/load typically on rank 0 only
 
+## DDP (Distributed Data Parallel) Requirements
+
+### Key Requirements for Distributed Training
+
+1. **DistributedSampler Usage**
+   - All DataLoaders must use `DistributedSampler` or compatible sampler
+   - Samplers must implement `set_epoch(epoch)` method for proper shuffling
+   - Each rank must see the same effective number of batches per epoch
+
+2. **Custom Sampler Requirements**
+   - Must implement `set_epoch(epoch)` for deterministic shuffling across epochs
+   - Should implement `state_dict()` and `load_state_dict()` for mid-epoch resume
+   - Must ensure consistent batch counts across all ranks
+
+3. **Rank Synchronization**
+   - Checkpoint loading occurs only on rank 0 and is broadcast to other ranks
+   - All logging (WandB, console) happens only on primary rank to avoid duplication
+   - Barriers ensure all ranks are synchronized at epoch boundaries
+
+4. **Schedule Consistency**
+   - Multi-dataloader schedules are built on rank 0 and broadcast
+   - Choice RNG state for weighted sampling is synchronized across ranks
+   - All ranks must see identical (dataloader_idx, batch) sequences
+
+### Example Custom Sampler for DDP
+
+```python
+class DDPCompatibleSampler(Sampler):
+    def __init__(self, dataset, num_replicas=None, rank=None):
+        self.dataset = dataset
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int):
+        """Required for deterministic shuffling in DDP."""
+        self.epoch = epoch
+
+    def state_dict(self) -> dict:
+        """For mid-epoch resume support."""
+        return {
+            'epoch': self.epoch,
+            'indices': self.indices,
+            'position': self.position
+        }
+
+    def load_state_dict(self, state: dict):
+        """Restore sampler state."""
+        self.epoch = state['epoch']
+        self.indices = state['indices']
+        self.position = state['position']
+```
+
+### Common DDP Issues and Solutions
+
+1. **Rank Divergence**
+   - **Issue**: Different ranks see different numbers of batches
+   - **Solution**: Use DistributedSampler with consistent `drop_last` setting
+
+2. **Non-deterministic Resume**
+   - **Issue**: Training doesn't resume at exact same point across ranks
+   - **Solution**: Implement state_dict/load_state_dict in custom samplers
+
+3. **Duplicate Logging**
+   - **Issue**: Metrics logged multiple times (once per rank)
+   - **Solution**: Framework automatically restricts logging to rank 0
+
+4. **Checkpoint Loading Overhead**
+   - **Issue**: All ranks loading checkpoint causes filesystem contention
+   - **Solution**: Framework loads on rank 0 and broadcasts to other ranks
+
 ## Migration from Legacy Formats
 
 The framework supports backward compatibility:
