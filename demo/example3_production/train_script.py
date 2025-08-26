@@ -9,6 +9,7 @@ from pathlib import Path
 import signal
 import sys
 import threading
+import time
 
 import torch
 
@@ -94,21 +95,37 @@ def _build_trainer_config(exp: ExperimentConfig) -> GenericTrainerConfig:
     )
 
 
-def _train_step(
-    trainer: GenericTrainer,
-    batch,
-    batch_idx: int,
-    dataloader_idx: int,
-    dataloader_name: str,
-):
-    x, y = batch
-    logits = trainer.model(x)
-    loss = torch.nn.functional.cross_entropy(logits, y)
-    with torch.no_grad():
-        pred = logits.argmax(dim=1)
-        acc = (pred == y).float().mean().item()
-    print(f"[TRAIN] {dataloader_name} batch={batch_idx}")
-    return {"loss": loss, f"{dataloader_name}/acc": acc}
+def make_train_step(start_time: float, preempt_timeout: float | None):
+    def _train_step(
+        trainer: GenericTrainer,
+        batch,
+        batch_idx: int,
+        dataloader_idx: int,
+        dataloader_name: str,
+    ):
+        x, y = batch
+        logits = trainer.model(x)
+        loss = torch.nn.functional.cross_entropy(logits, y)
+        with torch.no_grad():
+            pred = logits.argmax(dim=1)
+            acc = (pred == y).float().mean().item()
+
+        # Demo timing: show current elapsed and remaining time to preemption
+        now = time.time()
+        elapsed = int(now - start_time)
+        if preempt_timeout is not None:
+            remaining = max(0, int(preempt_timeout - (now - start_time)))
+            timing = f"t={elapsed}s, preempt in ~{remaining}s"
+        else:
+            timing = f"t={elapsed}s"
+
+        print(
+            f"[TRAIN][demo3] loader={dataloader_name} batch={batch_idx} | {timing} | "
+            f"freq checkpoints on; safe to Ctrl+C — resume will continue"
+        )
+        return {"loss": loss, f"{dataloader_name}/acc": acc}
+
+    return _train_step
 
 
 def _val_step(
@@ -164,7 +181,6 @@ def run_training_from_config(identifier: str) -> None:
 
     # Trainer
     trainer = GenericTrainer(config=trainer_cfg, model=model, optimizers=[optimizer])
-    trainer.set_training_step(_train_step)
     trainer.set_validation_step(_val_step)
 
     # Resume if latest checkpoint exists
@@ -178,10 +194,12 @@ def run_training_from_config(identifier: str) -> None:
     # Optional preemption timeout (sec) via EXAMPLE3_TIMEOUT_SEC
     timeout_env = os.environ.get("EXAMPLE3_TIMEOUT_SEC")
     timer: threading.Timer | None = None
+    preempt_timeout: float | None = None
     if timeout_env:
         try:
             timeout = float(timeout_env)
             if timeout > 0:
+                preempt_timeout = timeout
 
                 def _preempt() -> None:
                     print(f"[demo3] Simulating preemption after {timeout}s via SIGUSR1")
@@ -197,6 +215,8 @@ def run_training_from_config(identifier: str) -> None:
         f"▶️  Run: {exp.experiment_name} lr={exp.optimizer.lr} bs={exp.data.batch_size} loaders={num_loaders}"
     )
     try:
+        start_time = time.time()
+        trainer.set_training_step(make_train_step(start_time, preempt_timeout))
         trainer.fit(
             train_loaders=train_loaders,
             val_loaders=val_loaders,
