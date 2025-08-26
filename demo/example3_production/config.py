@@ -1,0 +1,52 @@
+"""
+Example 3 configuration: base ExperimentConfig and a tiny grid search.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict
+import json
+from typing import Any
+
+from model_training_framework.config import ParameterGrid, ParameterGridSearch
+
+DEFAULT_EXPERIMENT_NAME = "example3_production"
+
+
+def build_base_config() -> dict[str, Any]:
+    """Return the base ExperimentConfig dictionary for example3.
+
+    Keep it small and fast, but realistic enough to demonstrate resume & SLURM.
+    """
+    return {
+        "experiment_name": DEFAULT_EXPERIMENT_NAME,
+        "model": {"type": "mlp", "hidden_size": 128, "num_layers": 2},
+        "training": {"max_epochs": 2, "gradient_accumulation_steps": 1},
+        "data": {"dataset_name": "synthetic", "batch_size": 16, "num_workers": 0},
+        "optimizer": {"type": "adamw", "lr": 3e-4, "weight_decay": 0.01},
+        "logging": {"use_wandb": False},
+        # Demo multi-dataloader behavior via custom params
+        "custom_params": {
+            "multi_loader": {"num_loaders": 2, "sampling_strategy": "round_robin"}
+        },
+    }
+
+
+def build_parameter_grid_search(base_config: dict[str, Any]) -> ParameterGridSearch:
+    grid_search = ParameterGridSearch(base_config)
+    grid = ParameterGrid(name="prod_demo")
+    grid.add_parameter("optimizer.lr", [1e-4, 3e-4])
+    grid.add_parameter("data.batch_size", [16, 32])
+    grid_search.add_grid(grid)
+    return grid_search
+
+
+if __name__ == "__main__":
+    base = build_base_config()
+    grid = build_parameter_grid_search(base)
+    exps = list(grid.generate_experiments())
+    print(f"Generated {len(exps)} experiment configs\n")
+    for i, exp in enumerate(exps, 1):
+        print(f"--- Experiment {i}: {exp.experiment_name}")
+        print(json.dumps(asdict(exp), indent=2))
+        print()
