@@ -256,13 +256,13 @@ def main():
     train_loaders = [train_loader]  # Single loader in a list
     val_loaders = [val_loader]  # Single loader in a list
 
-    print("\n📚 Ready to train!")
-    print("   In a real scenario, you would call:")
-    print("   trainer.fit(")
-    print("       train_loaders=[train_loader],  # List with one loader")
-    print("       val_loaders=[val_loader],      # List with one loader")
-    print("       max_epochs=5")
-    print("   )")
+    print("\n📚 Ready to train! Running fit() for 5 epochs...")
+    trainer.fit(
+        train_loaders=train_loaders,  # List with one loader
+        val_loaders=val_loaders,  # List with one loader
+        max_epochs=5,
+    )
+    print("\n✅ Training run completed!")
 
     # Demonstrate what would happen in training
     print("\n" + "=" * 50)
