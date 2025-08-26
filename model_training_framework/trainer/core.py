@@ -72,9 +72,9 @@ class TrainingStep(Protocol):
         self,
         trainer: GenericTrainer,
         batch: Any,
+        batch_idx: int,
         dataloader_idx: int,
         dataloader_name: str,
-        batch_idx: int,
     ) -> dict[str, Any]:
         """
         Execute training step and return metrics.
@@ -82,9 +82,9 @@ class TrainingStep(Protocol):
         Args:
             trainer: The trainer instance
             batch: Input batch
+            batch_idx: 0-based batch index within this dataloader for the epoch
             dataloader_idx: Index of the current dataloader
             dataloader_name: Name of the current dataloader
-            batch_idx: 0-based batch index within this dataloader for the epoch
 
         Returns:
             Dictionary with at least 'loss' key
@@ -99,9 +99,9 @@ class ValidationStep(Protocol):
         self,
         trainer: GenericTrainer,
         batch: Any,
+        batch_idx: int,
         dataloader_idx: int,
         dataloader_name: str,
-        batch_idx: int,
     ) -> dict[str, Any]:
         """
         Execute validation step and return metrics.
@@ -109,9 +109,9 @@ class ValidationStep(Protocol):
         Args:
             trainer: The trainer instance
             batch: Input batch
+            batch_idx: 0-based batch index within this dataloader for the epoch
             dataloader_idx: Index of the current dataloader
             dataloader_name: Name of the current dataloader
-            batch_idx: 0-based batch index within this dataloader for the epoch
 
         Returns:
             Dictionary with metrics (typically including 'loss')
@@ -861,7 +861,7 @@ class GenericTrainer:
                     current_batch_idx = 0
 
                 step_metrics = self.validation_step_fn(
-                    self, batch, loader_idx, loader_name, current_batch_idx
+                    self, batch, current_batch_idx, loader_idx, loader_name
                 )
 
                 # Get batch size for metrics tracking

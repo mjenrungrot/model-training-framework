@@ -498,7 +498,7 @@ def create_dummy_data(num_samples: int = 1000, input_size: int = 10):
     return TensorDataset(X, y)
 
 
-def training_step(trainer, batch, micro_step):
+def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
     """Training step function."""
     x, y = batch
     pred = trainer.model(x)
@@ -506,7 +506,7 @@ def training_step(trainer, batch, micro_step):
     return {"loss": loss}
 
 
-def validation_step(trainer, batch, batch_idx):
+def validation_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
     """Validation step function."""
     x, y = batch
     pred = trainer.model(x)

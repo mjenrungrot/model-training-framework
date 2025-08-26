@@ -82,7 +82,7 @@ def create_dummy_mnist_data(num_samples=1000):
     return train_dataset, val_dataset
 
 
-def training_step(trainer, batch, dataloader_idx, dataloader_name, batch_idx):
+def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
     """
     Execute one training step.
 
@@ -118,7 +118,7 @@ def training_step(trainer, batch, dataloader_idx, dataloader_name, batch_idx):
     }
 
 
-def validation_step(trainer, batch, dataloader_idx, dataloader_name, batch_idx):
+def validation_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
     """
     Execute one validation step.
 
