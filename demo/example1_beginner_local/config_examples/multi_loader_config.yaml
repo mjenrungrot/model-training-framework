@@ -1,113 +1,35 @@
-# Multi-DataLoader Configuration Examples
-# This file demonstrates various multi-dataloader configurations
-# Note: The framework is multi-dataloader-only, even for single loader scenarios
+## Multi-DataLoader Configuration Examples (Beginner)
+# Updated to use train_loader_config/val_loader_config keys.
 
-# ============================================================================
-# EXAMPLE 1: Single DataLoader (wrapped in multi-loader API)
-# ============================================================================
-single_loader_config:
-  multi:
-    # For single loader, use SEQUENTIAL strategy
-    sampling_strategy: "sequential"
-    epoch_length_policy: "sum_of_lengths"
-    dataloader_names: ["main"]  # Single name in list
-    # No weights or patterns needed for single loader
-
-  validation:
-    frequency: "per_epoch"
-    aggregation: "micro_avg_weighted_by_samples"
-
-  checkpoint:
-    save_every_n_epochs: 1
-    max_checkpoints: 5
-
-
-# ============================================================================
-# EXAMPLE 2: Two DataLoaders with Round-Robin
-# ============================================================================
+# Example: Two DataLoaders with Round-Robin
 round_robin_config:
-  multi:
-    # Alternates between dataloaders: A, B, A, B, ...
+  train_loader_config:
     sampling_strategy: "round_robin"
-    epoch_length_policy: "sum_of_lengths"  # Use all data from both
+    epoch_length_policy: "sum_of_lengths"
     dataloader_names: ["dataset_a", "dataset_b"]
-    cycle_short_loaders: true  # If one runs out, cycle it
-
+    cycle_short_loaders: true
+  val_loader_config:
+    sampling_strategy: "round_robin"
+    dataloader_names: ["val_a", "val_b"]
   validation:
     frequency: "per_epoch"
-    aggregation: "macro_avg_equal_loaders"  # Equal weight to each loader
-    per_loader_metrics: true  # Track metrics per loader
-    global_metrics: true  # Also track aggregated metrics
+    aggregation: "macro_avg_equal_loaders"
 
-
-# ============================================================================
-# EXAMPLE 3: Weighted Sampling (Imbalanced Datasets)
-# ============================================================================
+# Example: Weighted Sampling (Imbalanced Datasets)
 weighted_sampling_config:
-  multi:
-    # Sample based on weights (probabilistic)
+  train_loader_config:
     sampling_strategy: "weighted"
-    dataloader_weights: [0.6, 0.3, 0.1]  # 60%, 30%, 10% sampling
+    dataloader_weights: [0.7, 0.3]
     epoch_length_policy: "fixed_num_steps"
-    steps_per_epoch: 1000  # Fixed 1000 steps per epoch
-    dataloader_names: ["large_dataset", "medium_dataset", "small_dataset"]
-    choice_rng_seed: 42  # For reproducible weighted sampling
-
+    steps_per_epoch: 200
+    dataloader_names: ["dataset_a", "dataset_b"]
+    choice_rng_seed: 42
   validation:
     frequency: "every_n_steps"
-    every_n_steps: 200
-    aggregation: "micro_avg_weighted_by_samples"  # Weight by dataset size
-
+    every_n_steps: 50
+    aggregation: "micro_avg_weighted_by_samples"
   logging:
-    log_loader_proportions: true  # Track actual sampling proportions
-
-
-# ============================================================================
-# EXAMPLE 4: Alternating Pattern (Custom Schedule)
-# ============================================================================
-alternating_pattern_config:
-  multi:
-    # Follow explicit pattern
-    sampling_strategy: "alternating"
-    # Pattern: 2x dataset_a, 1x dataset_b, 1x dataset_c, repeat
-    alternating_pattern: [0, 0, 1, 2]  # Indices into dataloader list
-    epoch_length_policy: "max_of_lengths"  # Continue until longest is done
-    dataloader_names: ["primary", "auxiliary", "validation_like"]
-    burst_size: 3  # Take 3 batches at a time from each loader
-
-  performance:
-    gradient_accumulation_steps: 4  # Accumulate over pattern
-
-
-# ============================================================================
-# EXAMPLE 5: Sequential Processing (Process One After Another)
-# ============================================================================
-sequential_config:
-  multi:
-    # Process loaders sequentially: All of A, then all of B, etc.
-    sampling_strategy: "sequential"
-    epoch_length_policy: "sum_of_lengths"
-    dataloader_names: ["pretraining", "finetuning", "adaptation"]
-    # Useful for curriculum learning or staged training
-
-  checkpoint:
-    save_every_n_steps: 500  # Save during long sequential processing
-
-
-# ============================================================================
-# EXAMPLE 6: Multi-Task Learning Configuration
-# ============================================================================
-multi_task_config:
-  multi:
-    sampling_strategy: "weighted"
-    # Different tasks with different importance
-    dataloader_weights: [0.4, 0.3, 0.2, 0.1]
-    dataloader_names: ["task_a", "task_b", "task_c", "auxiliary"]
-    epoch_length_policy: "fixed_num_steps"
-    steps_per_epoch: 2000
-
-  validation:
-    # Validate each task separately
+    log_loader_proportions: true
     aggregation: "primary_metric_per_loader"
     per_loader_metrics: true
 

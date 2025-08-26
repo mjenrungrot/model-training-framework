@@ -16,7 +16,7 @@ Single Dataloader Usage:
     # Even with one dataloader, use the multi-dataloader API
     manager = DataLoaderManager(
         train_loaders=[single_loader],  # Wrap in list
-        config=MultiDataLoaderConfig(
+        train_config=MultiDataLoaderConfig(
             sampling_strategy=SamplingStrategy.SEQUENTIAL,
             dataloader_names=["main"]
         )
@@ -26,7 +26,7 @@ Multi-Dataloader Usage:
     # With multiple dataloaders
     manager = DataLoaderManager(
         train_loaders=[loader_a, loader_b, loader_c],
-        config=MultiDataLoaderConfig(
+        train_config=MultiDataLoaderConfig(
             sampling_strategy=SamplingStrategy.WEIGHTED,
             dataloader_weights=[0.5, 0.3, 0.2],
             dataloader_names=["dataset_a", "dataset_b", "dataset_c"]
@@ -421,7 +421,8 @@ class DataLoaderManager:
         self,
         train_loaders: list[DataLoader] | None = None,
         val_loaders: list[DataLoader] | None = None,
-        config: MultiDataLoaderConfig | None = None,
+        train_config: MultiDataLoaderConfig | None = None,
+        val_config: MultiDataLoaderConfig | None = None,
         fabric: Any = None,
         logger: logging.Logger | None = None,
     ):
@@ -437,7 +438,8 @@ class DataLoaderManager:
         """
         self.train_loaders = train_loaders or []
         self.val_loaders = val_loaders or []
-        self.config = config or MultiDataLoaderConfig()
+        self.train_config = train_config or MultiDataLoaderConfig()
+        self.val_config = val_config or MultiDataLoaderConfig()
         self.fabric = fabric
         self.logger = logger or logging.getLogger(__name__)
 
@@ -445,7 +447,10 @@ class DataLoaderManager:
         self._validate_and_set_names()
 
         # Initialize choice RNG for weighted sampling
-        self.choice_rng_state = ChoiceRNGState(seed=self.config.choice_rng_seed)
+        seed = self.train_config.choice_rng_seed
+        if seed is None:
+            seed = self.val_config.choice_rng_seed
+        self.choice_rng_state = ChoiceRNGState(seed=seed)
         # Always initialize choice_rng for reproducible scheduling
         if self.choice_rng_state.seed is not None:
             self.choice_rng = np.random.RandomState(self.choice_rng_state.seed)
@@ -461,13 +466,13 @@ class DataLoaderManager:
     def _validate_and_set_names(self) -> None:
         """Validate loaders and set names if not provided."""
         # Set train loader names
-        if self.config.dataloader_names:
-            if len(self.config.dataloader_names) != len(self.train_loaders):
+        if self.train_config.dataloader_names:
+            if len(self.train_config.dataloader_names) != len(self.train_loaders):
                 raise ValueError(
-                    f"Number of dataloader names ({len(self.config.dataloader_names)}) "
+                    f"Number of train dataloader names ({len(self.train_config.dataloader_names)}) "
                     f"doesn't match number of train loaders ({len(self.train_loaders)})"
                 )
-            self.train_names = self.config.dataloader_names
+            self.train_names = self.train_config.dataloader_names
         else:
             # Auto-generate names
             self.train_names = [f"dl{i}" for i in range(len(self.train_loaders))]
@@ -477,9 +482,23 @@ class DataLoaderManager:
             raise ValueError(f"Dataloader names must be unique: {self.train_names}")
 
         # Set validation loader names
-        self.val_names = [
-            f"val_{name}" for name in self.train_names[: len(self.val_loaders)]
-        ]
+        if not self.val_loaders:
+            # No val loaders provided
+            self.val_names = []
+        elif self.val_config.dataloader_names:
+            if len(self.val_config.dataloader_names) != len(self.val_loaders):
+                raise ValueError(
+                    f"Number of val dataloader names ({len(self.val_config.dataloader_names)}) "
+                    f"doesn't match number of val loaders ({len(self.val_loaders)})"
+                )
+            self.val_names = self.val_config.dataloader_names
+        # Default: prefix train names if counts align; otherwise generate val_i
+        elif len(self.val_loaders) <= len(self.train_names):
+            self.val_names = [
+                f"val_{name}" for name in self.train_names[: len(self.val_loaders)]
+            ]
+        else:
+            self.val_names = [f"val_dl{i}" for i in range(len(self.val_loaders))]
 
     def build_round_robin_schedule(
         self,
@@ -701,11 +720,13 @@ class DataLoaderManager:
         if phase == "train":
             loaders = self.train_loaders
             names = self.train_names
+            cfg = self.train_config
             # Check for stored state to restore later
             stored_state = self._stored_train_state if resume_state is None else None
         elif phase == "val":
             loaders = self.val_loaders
             names = self.val_names
+            cfg = self.val_config
             # Check for stored state to restore later
             stored_state = self._stored_val_state if resume_state is None else None
         else:
@@ -754,10 +775,10 @@ class DataLoaderManager:
                 lengths.append(math.inf)
 
         # Build schedule based on strategy
-        if self.config.sampling_strategy == SamplingStrategy.ROUND_ROBIN:
+        if cfg.sampling_strategy == SamplingStrategy.ROUND_ROBIN:
             # Disallow infinite loaders unless a fixed number of steps is provided
             if any(math.isinf(L) for L in lengths) and (
-                self.config.epoch_length_policy != EpochLengthPolicy.FIXED_NUM_STEPS
+                cfg.epoch_length_policy != EpochLengthPolicy.FIXED_NUM_STEPS
             ):
                 raise ValueError(
                     "ROUND_ROBIN with infinite loaders requires FIXED_NUM_STEPS; set steps_per_epoch."
@@ -765,14 +786,14 @@ class DataLoaderManager:
             lengths_int = [int(L) for L in lengths]
             schedule = self.build_round_robin_schedule(
                 lengths_int,
-                self.config.epoch_length_policy,
-                self.config.burst_size,
-                self.config.steps_per_epoch,
+                cfg.epoch_length_policy,
+                cfg.burst_size,
+                cfg.steps_per_epoch,
             )
-        elif self.config.sampling_strategy == SamplingStrategy.SEQUENTIAL:
+        elif cfg.sampling_strategy == SamplingStrategy.SEQUENTIAL:
             # Disallow infinite loaders unless a fixed number of steps is provided
             if any(math.isinf(L) for L in lengths) and (
-                self.config.epoch_length_policy != EpochLengthPolicy.FIXED_NUM_STEPS
+                cfg.epoch_length_policy != EpochLengthPolicy.FIXED_NUM_STEPS
             ):
                 raise ValueError(
                     "SEQUENTIAL with infinite loaders requires FIXED_NUM_STEPS; set steps_per_epoch."
@@ -780,57 +801,57 @@ class DataLoaderManager:
             lengths_int = [int(L) for L in lengths]
             schedule = self.build_sequential_schedule(
                 lengths_int,
-                self.config.epoch_length_policy,
-                self.config.burst_size,
-                self.config.steps_per_epoch,
+                cfg.epoch_length_policy,
+                cfg.burst_size,
+                cfg.steps_per_epoch,
             )
-        elif self.config.sampling_strategy == SamplingStrategy.WEIGHTED:
-            if self.config.dataloader_weights is None:
+        elif cfg.sampling_strategy == SamplingStrategy.WEIGHTED:
+            if cfg.dataloader_weights is None:
                 raise ValueError("Weights required for WEIGHTED strategy")
-            if len(self.config.dataloader_weights) != len(loaders):
+            if len(cfg.dataloader_weights) != len(loaders):
                 raise ValueError(
                     "Number of dataloader_weights must match number of loaders: "
-                    f"got {len(self.config.dataloader_weights)} weights for {len(loaders)} loaders"
+                    f"got {len(cfg.dataloader_weights)} weights for {len(loaders)} loaders"
                 )
 
             # Determine total steps
-            if self.config.epoch_length_policy == EpochLengthPolicy.FIXED_NUM_STEPS:
-                if self.config.steps_per_epoch is None:
+            if cfg.epoch_length_policy == EpochLengthPolicy.FIXED_NUM_STEPS:
+                if cfg.steps_per_epoch is None:
                     raise ValueError("steps_per_epoch required for FIXED_NUM_STEPS")
-                total_steps = self.config.steps_per_epoch
-            elif self.config.epoch_length_policy == EpochLengthPolicy.SUM_OF_LENGTHS:
+                total_steps = cfg.steps_per_epoch
+            elif cfg.epoch_length_policy == EpochLengthPolicy.SUM_OF_LENGTHS:
                 if any(math.isinf(L) for L in lengths):
                     raise ValueError(
                         "SUM_OF_LENGTHS cannot be used with infinite loaders; use FIXED_NUM_STEPS."
                     )
                 total_steps = int(sum(lengths))
-            elif self.config.epoch_length_policy == EpochLengthPolicy.MAX_OF_LENGTHS:
+            elif cfg.epoch_length_policy == EpochLengthPolicy.MAX_OF_LENGTHS:
                 finite_lengths = [L for L in lengths if not math.isinf(L)]
                 total_steps = int(max(finite_lengths)) if finite_lengths else 0
-            elif self.config.epoch_length_policy == EpochLengthPolicy.MIN_OF_LENGTHS:
+            elif cfg.epoch_length_policy == EpochLengthPolicy.MIN_OF_LENGTHS:
                 if any(math.isinf(L) for L in lengths):
                     raise ValueError(
                         "MIN_OF_LENGTHS requires all loaders to be finite; use FIXED_NUM_STEPS."
                     )
                 total_steps = int(min(lengths))
             else:
-                raise ValueError(f"Unknown policy: {self.config.epoch_length_policy}")
+                raise ValueError(f"Unknown policy: {cfg.epoch_length_policy}")
 
             schedule = self.build_weighted_schedule(
                 total_steps,
-                self.config.dataloader_weights,
-                self.config.burst_size,
+                cfg.dataloader_weights,
+                cfg.burst_size,
             )
-        elif self.config.sampling_strategy == SamplingStrategy.ALTERNATING:
-            if self.config.alternating_pattern is None:
+        elif cfg.sampling_strategy == SamplingStrategy.ALTERNATING:
+            if cfg.alternating_pattern is None:
                 raise ValueError("Pattern required for ALTERNATING strategy")
 
             # Determine total steps
-            if self.config.epoch_length_policy == EpochLengthPolicy.FIXED_NUM_STEPS:
-                if self.config.steps_per_epoch is None:
+            if cfg.epoch_length_policy == EpochLengthPolicy.FIXED_NUM_STEPS:
+                if cfg.steps_per_epoch is None:
                     raise ValueError("steps_per_epoch required for FIXED_NUM_STEPS")
-                total_steps = self.config.steps_per_epoch
-            elif self.config.epoch_length_policy == EpochLengthPolicy.SUM_OF_LENGTHS:
+                total_steps = cfg.steps_per_epoch
+            elif cfg.epoch_length_policy == EpochLengthPolicy.SUM_OF_LENGTHS:
                 if any(math.isinf(L) for L in lengths):
                     raise ValueError(
                         "SUM_OF_LENGTHS cannot be used with infinite loaders; use FIXED_NUM_STEPS."
@@ -845,12 +866,12 @@ class DataLoaderManager:
                 total_steps = int(sum(lengths))
 
             schedule = self.build_alternating_schedule(
-                self.config.alternating_pattern,
+                cfg.alternating_pattern,
                 total_steps,
-                self.config.burst_size,
+                cfg.burst_size,
             )
         else:
-            raise ValueError(f"Unknown strategy: {self.config.sampling_strategy}")
+            raise ValueError(f"Unknown strategy: {cfg.sampling_strategy}")
 
         # Build schedule deterministically or broadcast from rank 0
         if self.fabric is not None:
@@ -864,7 +885,7 @@ class DataLoaderManager:
             schedule = ddp_broadcast_object(self.fabric, schedule, src=0)
 
             # Also broadcast the choice RNG state for weighted sampling consistency
-            if self.config.sampling_strategy == SamplingStrategy.WEIGHTED:
+            if cfg.sampling_strategy == SamplingStrategy.WEIGHTED:
                 if ddp_is_primary(self.fabric):
                     choice_rng_state = self.choice_rng.get_state()
                 else:
@@ -887,7 +908,7 @@ class DataLoaderManager:
             loaders=loaders,
             names=names,
             schedule=schedule,
-            config=self.config,
+            config=cfg,
             loader_states=resume_state,
             fabric=self.fabric,
             logger=self.logger,

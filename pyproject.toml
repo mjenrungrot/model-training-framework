@@ -306,3 +306,9 @@ exclude_lines = [
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod",
 ]
+
+[[tool.mypy.overrides]]
+module = [
+  "model_training_framework.tests.*",
+]
+ignore_errors = true

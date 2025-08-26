@@ -184,11 +184,15 @@ def main():
     # Create configuration
     # NOTE: Even for single loader, we must use MultiDataLoaderConfig
     config = GenericTrainerConfig(
-        # Multi-dataloader config (required even for single loader)
-        multi=MultiDataLoaderConfig(
+        # Multi-dataloader configs (split for train/val)
+        train_loader_config=MultiDataLoaderConfig(
             sampling_strategy=SamplingStrategy.SEQUENTIAL,  # For single loader
             epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,  # Use all data
             dataloader_names=["main"],  # Single name in a list
+        ),
+        val_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,
+            dataloader_names=["main_val"],
         ),
         # Validation configuration
         validation=ValidationConfig(
@@ -208,8 +212,9 @@ def main():
     )
 
     print("\n🔧 Configuration created:")
-    print(f"  - Sampling Strategy: {config.multi.sampling_strategy.value}")
-    print(f"  - DataLoader Names: {config.multi.dataloader_names}")
+    print(f"  - Train Sampling: {config.train_loader_config.sampling_strategy.value}")
+    print(f"  - Train Loader Names: {config.train_loader_config.dataloader_names}")
+    print(f"  - Val Loader Names: {config.val_loader_config.dataloader_names}")
     print(f"  - Checkpoint Dir: {config.checkpoint.root_dir}")
 
     # Create model
@@ -261,7 +266,6 @@ def main():
 
 if __name__ == "__main__":
     trainer, train_loaders, val_loaders = main()
-
     print("\n📚 Ready to train! Running fit() for 5 epochs...")
     trainer.fit(
         train_loaders=train_loaders,  # List with one loader

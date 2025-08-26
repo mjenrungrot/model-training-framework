@@ -101,6 +101,11 @@ def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
     """
     inputs, targets = batch
 
+    # Print which dataloader produced this batch (for demonstration)
+    print(
+        f"[TRAIN] dataloader={dataloader_name} (idx={dataloader_idx}) batch_idx={batch_idx}"
+    )
+
     # Forward pass
     outputs = trainer.model(inputs)
     loss = F.cross_entropy(outputs, targets)
@@ -131,6 +136,11 @@ def validation_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
         dict: Validation metrics
     """
     inputs, targets = batch
+
+    # Print which dataloader produced this batch (for demonstration)
+    print(
+        f"[VALID] dataloader={dataloader_name} (idx={dataloader_idx}) batch_idx={batch_idx}"
+    )
 
     with torch.no_grad():
         outputs = trainer.model(inputs)
@@ -164,10 +174,14 @@ def demonstrate_round_robin():
 
     # Configuration with ROUND_ROBIN
     config = GenericTrainerConfig(
-        multi=MultiDataLoaderConfig(
+        train_loader_config=MultiDataLoaderConfig(
             sampling_strategy=SamplingStrategy.ROUND_ROBIN,
             epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,
             dataloader_names=["dataset_a", "dataset_b"],
+        ),
+        val_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.ROUND_ROBIN,
+            dataloader_names=["val_a", "val_b"],
         ),
         validation=ValidationConfig(
             frequency=ValidationFrequency.PER_EPOCH,
@@ -205,9 +219,13 @@ def demonstrate_round_robin():
     print("Training with ROUND_ROBIN strategy...")
     print("This will alternate: dataset_a batch, dataset_b batch, repeat...")
 
-    # Note: In a real implementation, you would call trainer.fit()
-    # For this example, we're just demonstrating the setup
-    print("✓ Trainer configured successfully with ROUND_ROBIN strategy")
+    # Run a short training to demonstrate
+    trainer.fit(
+        train_loaders=[train_loader_a, train_loader_b],
+        val_loaders=[val_loader_a, val_loader_b],
+        max_epochs=1,
+    )
+    print("✓ Trainer ran with ROUND_ROBIN strategy")
 
     return trainer, [train_loader_a, train_loader_b], [val_loader_a, val_loader_b]
 
@@ -226,12 +244,16 @@ def demonstrate_weighted_sampling():
 
     # Configuration with WEIGHTED sampling
     config = GenericTrainerConfig(
-        multi=MultiDataLoaderConfig(
+        train_loader_config=MultiDataLoaderConfig(
             sampling_strategy=SamplingStrategy.WEIGHTED,
             dataloader_weights=[0.7, 0.3],  # 70% from dataset_a, 30% from dataset_b
             epoch_length_policy=EpochLengthPolicy.FIXED_NUM_STEPS,
             steps_per_epoch=100,  # Fixed 100 steps per epoch
             dataloader_names=["dataset_a", "dataset_b"],
+        ),
+        val_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.ROUND_ROBIN,
+            dataloader_names=["val_a", "val_b"],
         ),
         validation=ValidationConfig(
             frequency=ValidationFrequency.EVERY_N_STEPS,
@@ -263,7 +285,10 @@ def demonstrate_weighted_sampling():
     print("Training with WEIGHTED strategy...")
     print("Dataset A will be sampled ~70% of the time")
     print("Dataset B will be sampled ~30% of the time")
-    print("✓ Trainer configured successfully with WEIGHTED strategy")
+
+    # Run a short training to demonstrate
+    trainer.fit(train_loaders=[train_loader_a, train_loader_b], max_epochs=1)
+    print("✓ Trainer ran with WEIGHTED strategy")
 
     return trainer, [train_loader_a, train_loader_b]
 
@@ -282,7 +307,7 @@ def demonstrate_alternating_pattern():
 
     # Configuration with ALTERNATING pattern
     config = GenericTrainerConfig(
-        multi=MultiDataLoaderConfig(
+        train_loader_config=MultiDataLoaderConfig(
             sampling_strategy=SamplingStrategy.ALTERNATING,
             alternating_pattern=[0, 0, 1, 0, 0, 1],  # A, A, B, A, A, B, repeat...
             epoch_length_policy=EpochLengthPolicy.MAX_OF_LENGTHS,
@@ -310,7 +335,10 @@ def demonstrate_alternating_pattern():
     print("Training with ALTERNATING pattern...")
     print("Pattern: [A, A, B, A, A, B] with burst_size=2")
     print("This means: 2 batches from A, 2 batches from A, 2 batches from B, repeat...")
-    print("✓ Trainer configured successfully with ALTERNATING strategy")
+
+    # Run a short training to demonstrate
+    trainer.fit(train_loaders=[train_loader_a, train_loader_b], max_epochs=1)
+    print("✓ Trainer ran with ALTERNATING strategy")
 
     return trainer, [train_loader_a, train_loader_b]
 
@@ -332,9 +360,13 @@ def demonstrate_single_loader_as_multi():
 
     # Configuration for single loader (still uses multi-loader config)
     config = GenericTrainerConfig(
-        multi=MultiDataLoaderConfig(
+        train_loader_config=MultiDataLoaderConfig(
             sampling_strategy=SamplingStrategy.SEQUENTIAL,  # Only one loader anyway
             dataloader_names=["main"],  # Single name in list
+        ),
+        val_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,
+            dataloader_names=["main_val"],
         ),
         validation=ValidationConfig(
             aggregation=ValAggregation.MICRO_AVG_WEIGHTED_BY_SAMPLES,
@@ -359,7 +391,10 @@ def demonstrate_single_loader_as_multi():
     print("- train_loaders=[train_loader]  # Single loader in list")
     print("- val_loaders=[val_loader]      # Single loader in list")
     print("- dataloader_names=['main']     # Single name in list")
-    print("✓ Single loader works seamlessly with multi-loader architecture")
+
+    # Run a short training to demonstrate
+    trainer.fit(train_loaders=[train_loader], val_loaders=[val_loader], max_epochs=1)
+    print("✓ Single loader ran seamlessly with multi-loader architecture")
 
     return trainer, [train_loader], [val_loader]
 

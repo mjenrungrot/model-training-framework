@@ -25,8 +25,8 @@ example1_beginner_local/
 ├── README.md                    # This file
 ├── basic_model_training.py      # Main training script
 ├── config_examples/             # Configuration templates
-│   ├── simple_config.yaml       # Minimal configuration
-│   └── mnist_config.yaml        # Complete MNIST example
+│   ├── simple_config.yaml       # Minimal single-loader config (new API)
+│   └── multi_loader_config.yaml # A couple multi-loader presets (new API)
 └── data/
     └── sample_dataset.py        # Synthetic datasets for learning
 ```
@@ -73,32 +73,83 @@ example1_beginner_local/
 
 ### Step 1: Understanding the Training Script
 
-[`basic_model_training.py`](basic_model_training.py) demonstrates:
+[`basic_model_training.py`](basic_model_training.py) uses the multi-dataloader-only API. Even a single dataloader is passed as a list, and the configuration is split per phase.
 
 ```python
-# 1. Model Definition
-class SimpleModel(nn.Module):
-    def __init__(self, input_size=784, hidden_size=128, num_classes=10):
-        # Simple MLP architecture
+from model_training_framework.trainer import (
+    GenericTrainer, GenericTrainerConfig, MultiDataLoaderConfig,
+    CheckpointConfig, LoggingConfig, ValidationConfig
+)
+from model_training_framework.trainer.config import (
+    SamplingStrategy, EpochLengthPolicy, ValAggregation
+)
 
-# 2. Trainer Implementation
-class SimpleTrainer(GenericTrainer):
-    def training_step(self, batch, batch_idx):
-        # Custom training logic
+# 1) Create config (split per phase)
+config = GenericTrainerConfig(
+    train_loader_config=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,
+        dataloader_names=["main"],
+    ),
+    val_loader_config=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        dataloader_names=["main_val"],
+    ),
+    validation=ValidationConfig(
+        aggregation=ValAggregation.MICRO_AVG_WEIGHTED_BY_SAMPLES,
+    ),
+    checkpoint=CheckpointConfig(save_every_n_epochs=2),
+    logging=LoggingConfig(logger_type="console"),
+)
 
-# 3. Framework Integration
-framework = ModelTrainingFramework(project_root=project_root)
-trainer.fit(model, optimizer, train_loader, val_loader)
+# 2) Create model and optimizer
+model = SimpleModel(input_size=784, hidden_size=128, num_classes=10)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=0.01)
+
+# 3) Instantiate trainer (optimizers is always a list)
+trainer = GenericTrainer(config=config, model=model, optimizers=[optimizer])
+
+# 4) Define step functions (multi-loader signature)
+def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
+    x, y = batch
+    logits = trainer.model(x)
+    loss = F.cross_entropy(logits, y)
+    print(f"[TRAIN] {dataloader_name=} {dataloader_idx=} {batch_idx=}")
+    return {"loss": loss, f"{dataloader_name}/loss": loss.item()}
+
+def validation_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
+    x, y = batch
+    with torch.no_grad():
+        logits = trainer.model(x)
+        loss = F.cross_entropy(logits, y)
+    print(f"[VALID] {dataloader_name=} {dataloader_idx=} {batch_idx=}")
+    return {"val_loss": loss, f"val_{dataloader_name}/loss": loss.item()}
+
+trainer.set_training_step(training_step)
+trainer.set_validation_step(validation_step)
+
+# 5) Always pass loaders as lists
+train_loaders = [train_loader]
+val_loaders = [val_loader]
+
+trainer.fit(train_loaders=train_loaders, val_loaders=val_loaders, max_epochs=5)
 ```
 
 **Key Learning Points:**
 
-- How to extend `GenericTrainer` for custom logic
-- Framework initialization and configuration
-- Model, optimizer, and data loader setup
-- Training loop execution with monitoring
+- Multi-loader-only API: pass loaders as lists, even for one loader
+- Separate configs: `train_loader_config` and `val_loader_config`
+- Step signature: `(trainer, batch, batch_idx, dataloader_idx, dataloader_name)`
+- Default logging is console-only; no external services by default
 
 ### Step 2: Configuration Management
+
+This example uses inline (code) config by default so it works out-of-the-box with `python basic_model_training.py`.
+
+Included templates (new API, reference-only):
+
+- `config_examples/simple_config.yaml`: shows single-dataloader settings using `train_loader_config`/`val_loader_config`.
+- `config_examples/multi_loader_config.yaml`: a couple of multi-dataloader presets you can adapt.
 
 The framework uses YAML configuration files for reproducible experiments:
 
@@ -114,46 +165,24 @@ training:
   learning_rate: 0.001
 ```
 
-#### Complete Configuration ([`mnist_config.yaml`](config_examples/mnist_config.yaml))
+#### Multi-Loader Presets ([`multi_loader_config.yaml`](config_examples/multi_loader_config.yaml))
 
-```yaml
-experiment_name: "mnist_classification_example"
-model:
-  hidden_size: 256
-  dropout_rate: 0.1
-training:
-  epochs: 10
-  batch_size: 64
-  learning_rate: 0.001
-scheduler:
-  name: "cosine"
-  warmup_steps: 50
-early_stopping:
-  enabled: true
-  patience: 5
-```
+This file contains a couple of multi-loader presets that you can adapt. These use the new keys:
 
-**Key Learning Points:**
+- `train_loader_config`: multi-loader settings for training
+- `val_loader_config`: multi-loader settings for validation
 
-- Configuration hierarchy and organization
-- Parameter specification and validation
-- Environment-specific overrides
-- Best practices for reproducible experiments
+Copy a block into your own YAML file and pass it with `--config`.
 
 ### Step 3: Working with Data
 
 [`data/sample_dataset.py`](data/sample_dataset.py) provides utilities for:
 
 ```python
-# Synthetic datasets for learning
+# Synthetic datasets for learning (see data/sample_dataset.py)
 mnist_dataset = SyntheticMNIST(num_samples=1000)
-regression_dataset = SyntheticRegression(num_samples=500)
-
-# Data splitting and loading
-train_loader, val_loader = create_train_val_split(
-    dataset, val_ratio=0.2, batch_size=32
-)
-```python
+train_loader, val_loader = create_train_val_split(mnist_dataset, val_ratio=0.2, batch_size=32)
+```
 
 **Key Learning Points:**
 
@@ -214,27 +243,20 @@ When you run the training, you'll see output like:
 ```text
 🚀 Starting Basic Model Training Example
 ==================================================
-📋 Using default configuration
-🔧 Experiment: beginner_local_training
-📊 Training for 5 epochs
-✅ Framework initialized successfully
-🏗️  Setting up model and training components...
-📊 Created data loaders:
-   - Training: 50 batches
-   - Validation: 10 batches
-🎯 Starting training...
-------------------------------
+📊 Creating dummy MNIST-like dataset...
+✓ Created dataloaders:
+  - Training: 32 batches
+  - Validation: 4 batches
 
-📊 Epoch 1 completed:
-   Loss: 2.1234
-   Accuracy: 0.2345
-   Val Loss: 1.9876
-   Val Accuracy: 0.3456
+🔧 Configuration created:
+  - Train Sampling: sequential
+  - Train Loader Names: ['main']
+  - Val Loader Names: ['main_val']
 
-[... training continues ...]
-
+🎯 Trainer initialized; starting fit() for 5 epochs...
+...
 ✅ Training completed successfully!
-💾 Checkpoints saved to: ./checkpoints
+💾 Checkpoints saved (see ./checkpoints or tmp dir)
 ```
 
 **Key Metrics to Understand:**

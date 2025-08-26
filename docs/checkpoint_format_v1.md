@@ -12,7 +12,6 @@ The Model Training Framework uses checkpoint format v1 for fault-tolerant traini
 {
     # Format metadata
     "format_version": 1,
-    "is_multi_dataloader_only": True,
     "save_timestamp": float,  # Unix timestamp
 
     # Training state
@@ -39,18 +38,8 @@ The Model Training Framework uses checkpoint format v1 for fault-tolerant traini
         "torch_cuda": list[ByteTensor] | None,  # PyTorch CUDA RNG states
     },
 
-    # DataLoader manager state
-    "dataloader_manager_state": {
-        "choice_rng_state": dict,  # RNG for weighted sampling
-        "choice_rng": tuple,  # NumPy RandomState
-        "train_iterator_state": dict | None,  # Training iterator state
-        "val_iterator_state": dict | None,  # Validation iterator state
-    },
-
-    # Explicit choice RNG (for weighted sampling)
-    "choice_rng_state": tuple | None,
-
-    # Resume state for fault tolerance
+    # Resume state for fault tolerance (single source of truth)
+    # Contains multi-dataloader iteration state and choice RNG
     "resume_state": ResumeState,
 
     # Optional fields
@@ -59,7 +48,7 @@ The Model Training Framework uses checkpoint format v1 for fault-tolerant traini
 }
 ```
 
-### Iterator State Structure
+### Iterator State Structure (inside ResumeState)
 
 ```python
 {
@@ -71,7 +60,7 @@ The Model Training Framework uses checkpoint format v1 for fault-tolerant traini
 }
 ```
 
-### DataLoaderState Structure
+### DataLoaderState Structure (inside ResumeState)
 
 ```python
 {
@@ -178,8 +167,9 @@ save_checkpoint(path=Path("checkpoint.pt"), trainer=trainer)
 ```python
 from model_training_framework.trainer.checkpoints import load_checkpoint
 
-# Restore complete training state
-load_checkpoint(path=Path("checkpoint.pt"), trainer=trainer)
+# Restore complete training state and get the payload (format v1)
+payload = load_checkpoint(path=Path("checkpoint.pt"), trainer=trainer)
+print(payload["epoch"], payload["global_step"])  # e.g., 3, 1200
 ```
 
 ### With CheckpointManager

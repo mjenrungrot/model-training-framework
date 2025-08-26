@@ -10,6 +10,7 @@ This module handles all checkpoint-related operations:
 
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
 import logging
 from pathlib import Path
 import random
@@ -24,79 +25,191 @@ if TYPE_CHECKING:
     from .config import CheckpointConfig
     from .core import GenericTrainer
     from .states import ResumeState
-
+from .states import update_resume_state  # unify resume embedding
 from .utils import timeout
 
 logger = logging.getLogger(__name__)
 
 
-def save_checkpoint(path: Path, trainer: GenericTrainer) -> None:
+@dataclass
+class CheckpointPayload:
     """
-    Save checkpoint in format version 1.
+    Serializable checkpoint payload (format v1).
 
-    Args:
-        path: Path to save checkpoint
-        trainer: GenericTrainer instance to save state from
+    This dataclass defines exactly what we save in a checkpoint. The to_dict()
+    method produces the stable on-disk format used by both the free
+    save_checkpoint() helper and CheckpointManager.save_checkpoint().
     """
-    dmanager = getattr(trainer, "dataloader_manager", None)
-    checkpoint_data: dict[str, Any] = {
-        # Format metadata
-        "format_version": 1,
-        "is_multi_dataloader_only": True,
-        "save_timestamp": time.time(),
-        # Basic training state
-        "epoch": trainer.current_epoch,
-        "global_step": trainer.global_step,
-        # Model state
-        "model_state_dict": trainer.model.state_dict(),
-        # Multi-optimizer support
-        "optimizer_state_dicts": [opt.state_dict() for opt in trainer.optimizers],
-        # Multi-scheduler support
-        "scheduler_state_dicts": [sched.state_dict() for sched in trainer.schedulers]
-        if trainer.schedulers
-        else [],
-        # AMP scaler state
-        "amp_scaler_state": trainer.scaler.state_dict()
-        if hasattr(trainer, "scaler") and trainer.scaler
+
+    # Format metadata
+    format_version: int
+    save_timestamp: float
+
+    # Basic training state
+    epoch: int
+    global_step: int
+
+    # Model and optimizer/scheduler state
+    model_state_dict: dict[str, Any]
+    optimizer_state_dicts: list[dict[str, Any]] | None = None
+    scheduler_state_dicts: list[dict[str, Any]] | None = None
+
+    # AMP / RNG
+    amp_scaler_state: dict[str, Any] | None = None
+    rng_states: dict[str, Any] | None = None
+
+    # Multi-dataloader state and resume
+    dataloader_manager_state: dict[str, Any] | None = None
+    choice_rng_state: Any | None = None
+    resume_state: Any | None = None
+
+    # Optional extras
+    metrics: dict[str, float] | None = None
+    metrics_history: Any | None = None
+    config_snapshot: Any | None = None
+    # Manager-provided context
+    experiment_name: str | None = None
+    config: Any | None = None  # CheckpointConfig (kept as Any for serialization)
+
+    def to_dict(self) -> dict[str, Any]:
+        # Preserve None entries to keep stable keys in saved files
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CheckpointPayload:
+        """Reconstruct payload from a raw dict, handling legacy fields when present."""
+        # Legacy single optimizer/scheduler support
+        opt_states = data.get("optimizer_state_dicts")
+        if opt_states is None and "optimizer_state_dict" in data:
+            opt_states = [data["optimizer_state_dict"]]
+
+        sched_states = data.get("scheduler_state_dicts")
+        if sched_states is None and "scheduler_state_dict" in data:
+            sched_states = [data["scheduler_state_dict"]]
+
+        return cls(
+            format_version=int(data.get("format_version", 1)),
+            save_timestamp=float(data.get("save_timestamp", time.time())),
+            epoch=int(data.get("epoch", 0)),
+            global_step=int(data.get("global_step", 0)),
+            model_state_dict=data.get("model_state_dict", {}),
+            optimizer_state_dicts=opt_states,
+            scheduler_state_dicts=sched_states,
+            amp_scaler_state=data.get("amp_scaler_state"),
+            rng_states=data.get("rng_states"),
+            dataloader_manager_state=data.get("dataloader_manager_state"),
+            choice_rng_state=data.get("choice_rng_state"),
+            resume_state=data.get("resume_state"),
+            metrics=data.get("metrics"),
+            metrics_history=data.get("metrics_history"),
+            config_snapshot=data.get("config_snapshot"),
+            experiment_name=data.get("experiment_name"),
+            config=data.get("config"),
+        )
+
+
+def _capture_rng_states_dict() -> dict[str, Any]:
+    """Capture RNG states in a plain dict for serialization."""
+    return {
+        "python_random": random.getstate(),
+        "numpy_random": np.random.get_state(),  # noqa: NPY002
+        "torch_cpu": torch.get_rng_state(),
+        "torch_cuda": [
+            torch.cuda.get_rng_state(i) for i in range(torch.cuda.device_count())
+        ]
+        if torch.cuda.is_available()
         else None,
-        # RNG states
-        "rng_states": {
-            "python_random": random.getstate(),
-            "numpy_random": np.random.get_state(),  # noqa: NPY002
-            "torch_cpu": torch.get_rng_state(),
-            "torch_cuda": [
-                torch.cuda.get_rng_state(i) for i in range(torch.cuda.device_count())
-            ]
-            if torch.cuda.is_available()
-            else None,
-        },
-        # DataLoaderManager state
-        "dataloader_manager_state": (
-            dmanager.get_state() if dmanager is not None else None
-        ),
-        # Optional explicit choice RNG state (for weighted sampling reproducibility)
-        "choice_rng_state": (
-            dmanager.choice_rng.get_state()
-            if (
-                dmanager is not None
-                and getattr(dmanager, "choice_rng", None) is not None
-            )
-            else None
-        ),
-        # Resume state
-        "resume_state": trainer.resume_state,
-        # Optional: metrics history
-        "metrics_history": getattr(trainer, "metrics_history", None),
-        # Optional: config snapshot
-        "config_snapshot": trainer.config if hasattr(trainer, "config") else None,
     }
 
-    # Save checkpoint
-    torch.save(checkpoint_data, path)
+
+def build_checkpoint_payload(
+    *,
+    trainer: GenericTrainer,
+    include_optimizer: bool = True,
+    include_scheduler: bool = True,
+    include_rng: bool = True,
+    include_dataloader_state: bool = False,
+    include_choice_rng: bool = False,
+    include_metrics_history: bool = True,
+    include_config_snapshot: bool = False,
+    experiment_name: str | None = None,
+    config: CheckpointConfig | None = None,
+    metrics: dict[str, float] | None = None,
+    scaler: torch.cuda.amp.GradScaler | None = None,
+) -> CheckpointPayload:
+    return CheckpointPayload(
+        format_version=1,
+        save_timestamp=time.time(),
+        epoch=trainer.current_epoch,
+        global_step=trainer.global_step,
+        model_state_dict=trainer.model.state_dict(),
+        optimizer_state_dicts=[opt.state_dict() for opt in trainer.optimizers]
+        if include_optimizer
+        else None,
+        scheduler_state_dicts=(
+            [sched.state_dict() for sched in trainer.schedulers]
+            if trainer.schedulers
+            else []
+        )
+        if include_scheduler
+        else None,
+        amp_scaler_state=(scaler.state_dict() if scaler is not None else None),
+        rng_states=_capture_rng_states_dict() if include_rng else None,
+        dataloader_manager_state=None,  # Always use resume_state as the single source
+        choice_rng_state=None,  # Always use resume_state as the single source
+        resume_state=getattr(trainer, "resume_state", None),
+        metrics=metrics,
+        metrics_history=(
+            getattr(trainer, "metrics_history", None)
+            if include_metrics_history
+            else None
+        ),
+        config_snapshot=(
+            trainer.config
+            if include_config_snapshot and hasattr(trainer, "config")
+            else None
+        ),
+        experiment_name=experiment_name,
+        config=config,
+    )
+
+
+def save_checkpoint(path: Path, trainer: GenericTrainer) -> None:
+    """Compatibility helper that saves a checkpoint to an explicit path using the unified payload builder.
+
+    Ensures the trainer.resume_state embeds the latest dataloader manager state and choice RNG so that
+    only resume_state is needed to restore multi-loader iteration state.
+    """
+    # Refresh resume_state with latest dataloader manager/choice RNG
+    try:
+        dmanager = getattr(trainer, "dataloader_manager", None)
+        current = getattr(trainer, "resume_state", None)
+        if current is not None and dmanager is not None:
+            trainer.resume_state = update_resume_state(
+                current_state=current,
+                phase=current.phase,
+                dataloader_manager_state=dmanager.get_state(),
+                save_rng=True,
+                choice_rng=getattr(dmanager, "choice_rng", None),
+            )
+    except Exception:
+        logger.debug("Could not refresh resume_state before save", exc_info=True)
+
+    payload = build_checkpoint_payload(
+        trainer=trainer,
+        include_optimizer=True,
+        include_scheduler=True,
+        include_rng=True,
+        include_metrics_history=True,
+        include_config_snapshot=True,
+        metrics=None,
+        scaler=getattr(trainer, "scaler", None),
+    )
+    torch.save(payload.to_dict(), path)
     logger.info(f"Saved checkpoint format v1 to {path}")
 
 
-def load_checkpoint(path: Path, trainer: GenericTrainer) -> None:
+def load_checkpoint(path: Path, trainer: GenericTrainer) -> CheckpointPayload:
     """
     Load checkpoint in format version 1.
 
@@ -107,11 +220,8 @@ def load_checkpoint(path: Path, trainer: GenericTrainer) -> None:
     if not path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {path}")
 
-    checkpoint_data = torch.load(
-        path,
-        map_location=trainer.device if hasattr(trainer, "device") else None,
-        weights_only=False,
-    )
+    # Map to CPU to avoid device-coupled payloads and satisfy static typing
+    checkpoint_data = torch.load(path, map_location="cpu", weights_only=False)
 
     # Validate format version
     if checkpoint_data.get("format_version") != 1:
@@ -190,6 +300,9 @@ def load_checkpoint(path: Path, trainer: GenericTrainer) -> None:
     logger.info(
         f"Loaded checkpoint format v1 from {path} (epoch={trainer.current_epoch}, step={trainer.global_step})"
     )
+
+    # Return typed payload for compatibility with CheckpointManager.load_checkpoint
+    return CheckpointPayload.from_dict(checkpoint_data)
 
 
 class CheckpointManager:
@@ -306,59 +419,55 @@ class CheckpointManager:
         )
         checkpoint_path = self.checkpoint_dir / checkpoint_filename
 
-        # Prepare checkpoint data with format v1
-        checkpoint_data = {
-            "format_version": 1,
-            "is_multi_dataloader_only": True,
-            "model_state_dict": model.state_dict(),
-            "epoch": epoch,
-            "global_step": global_step,
-            "experiment_name": self.experiment_name,
-            "save_timestamp": time.time(),
-            "config": self.config,
-        }
+        # Build unified payload
+        include_optimizer = self.config.save_optimizer and bool(optimizers)
+        include_scheduler = self.config.save_scheduler and bool(schedulers)
+        include_rng = self.config.save_rng
 
-        # Add optimizer states if requested (multi-optimizer support)
-        if self.config.save_optimizer and optimizers:
-            checkpoint_data["optimizer_state_dicts"] = [
-                opt.state_dict() for opt in optimizers
-            ]
+        # Create a temporary trainer-like shim for the builder
+        class _Shim:
+            current_epoch: int
+            global_step: int
+            model: torch.nn.Module
+            optimizers: list[torch.optim.Optimizer]
+            schedulers: list[Any]
+            resume_state: ResumeState | None
+            dataloader_manager: Any | None
+            config: CheckpointConfig
+            scaler: torch.cuda.amp.GradScaler | None
 
-        # Add scheduler states if requested and available (multi-scheduler support)
-        if self.config.save_scheduler and schedulers:
-            checkpoint_data["scheduler_state_dicts"] = [
-                sched.state_dict() for sched in schedulers
-            ]
+        shim = _Shim()
+        shim.current_epoch = epoch
+        shim.global_step = global_step
+        shim.model = model
+        shim.optimizers = optimizers or []
+        shim.schedulers = schedulers or []
+        shim.resume_state = resume_state
+        # Best effort: capture dataloader manager via attribute if caller provided a real trainer later
+        # For manager-based saving, dataloader manager state is typically embedded via trainer._save_checkpoint
+        # so we leave it None here.
+        shim.dataloader_manager = None
+        shim.config = self.config
+        shim.scaler = scaler
 
-        # Add RNG states if requested
-        if self.config.save_rng:
-            checkpoint_data["rng_states"] = {
-                "python_random": random.getstate(),
-                "numpy_random": np.random.get_state(),  # noqa: NPY002
-                "torch_cpu": torch.get_rng_state(),
-                "torch_cuda": [
-                    torch.cuda.get_rng_state(i)
-                    for i in range(torch.cuda.device_count())
-                ]
-                if torch.cuda.is_available()
-                else None,
-            }
-
-        # Add AMP scaler state if provided
-        if scaler is not None:
-            checkpoint_data["amp_scaler_state"] = scaler.state_dict()
-
-        # Add resume state if provided
-        if resume_state is not None:
-            checkpoint_data["resume_state"] = resume_state
-
-        # Add metrics if provided
-        if metrics is not None:
-            checkpoint_data["metrics"] = metrics
+        payload = build_checkpoint_payload(
+            trainer=cast("GenericTrainer", shim),
+            include_optimizer=include_optimizer,
+            include_scheduler=include_scheduler,
+            include_rng=include_rng,
+            include_dataloader_state=False,
+            include_choice_rng=False,
+            include_metrics_history=False,
+            include_config_snapshot=False,
+            experiment_name=self.experiment_name,
+            config=self.config,
+            metrics=metrics,
+            scaler=scaler,
+        )
 
         # Save checkpoint with optional timeout
         def _save_checkpoint():
-            torch.save(checkpoint_data, checkpoint_path)
+            torch.save(payload.to_dict(), checkpoint_path)
             logger.info(f"Saved checkpoint to {checkpoint_path}")
 
         if timeout_seconds is not None:
@@ -387,7 +496,7 @@ class CheckpointManager:
         self,
         checkpoint_path: str | Path | None = None,
         map_location: str | torch.device | None = None,
-    ) -> dict[str, Any]:
+    ) -> CheckpointPayload:
         """
         Load checkpoint data from file.
 
@@ -396,7 +505,7 @@ class CheckpointManager:
             map_location: Device to map tensors to
 
         Returns:
-            Dictionary containing checkpoint data
+            CheckpointPayload containing checkpoint data
 
         Raises:
             FileNotFoundError: If checkpoint file doesn't exist
@@ -413,10 +522,11 @@ class CheckpointManager:
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
         logger.info(f"Loading checkpoint from {checkpoint_path}")
-        return cast(
+        raw = cast(
             dict[str, Any],
             torch.load(checkpoint_path, map_location=map_location, weights_only=False),
         )
+        return CheckpointPayload.from_dict(raw)
 
     def restore_from_checkpoint(
         self,
@@ -441,7 +551,7 @@ class CheckpointManager:
         Returns:
             Tuple of (epoch, global_step, resume_state)
         """
-        checkpoint_data = self.load_checkpoint(checkpoint_path)
+        payload = self.load_checkpoint(checkpoint_path)
 
         # Handle backward compatibility: convert single optimizer/scheduler to list
         if optimizers is not None and not isinstance(optimizers, list):
@@ -450,45 +560,23 @@ class CheckpointManager:
             schedulers = [schedulers] if schedulers else []
 
         # Restore model state
-        model.load_state_dict(checkpoint_data["model_state_dict"], strict=strict)
+        model.load_state_dict(payload.model_state_dict, strict=strict)
 
         # Restore optimizer states (multi-optimizer support)
-        if (
-            "optimizer_state_dicts" in checkpoint_data
-            and self.config.save_optimizer
-            and optimizers
-        ):
-            for i, opt_state in enumerate(checkpoint_data["optimizer_state_dicts"]):
+        if self.config.save_optimizer and optimizers and payload.optimizer_state_dicts:
+            for i, opt_state in enumerate(payload.optimizer_state_dicts):
                 if i < len(optimizers):
                     optimizers[i].load_state_dict(opt_state)
-        # Fallback for old format
-        elif (
-            "optimizer_state_dict" in checkpoint_data
-            and self.config.save_optimizer
-            and optimizers
-        ):
-            optimizers[0].load_state_dict(checkpoint_data["optimizer_state_dict"])
 
         # Restore scheduler states (multi-scheduler support)
-        if (
-            "scheduler_state_dicts" in checkpoint_data
-            and self.config.save_scheduler
-            and schedulers
-        ):
-            for i, sched_state in enumerate(checkpoint_data["scheduler_state_dicts"]):
+        if self.config.save_scheduler and schedulers and payload.scheduler_state_dicts:
+            for i, sched_state in enumerate(payload.scheduler_state_dicts):
                 if i < len(schedulers):
                     schedulers[i].load_state_dict(sched_state)
-        # Fallback for old format
-        elif (
-            "scheduler_state_dict" in checkpoint_data
-            and self.config.save_scheduler
-            and schedulers
-        ):
-            schedulers[0].load_state_dict(checkpoint_data["scheduler_state_dict"])
 
         # Restore RNG states if saved and requested
-        if "rng_states" in checkpoint_data and self.config.save_rng:
-            rng_states = checkpoint_data["rng_states"]
+        if payload.rng_states and self.config.save_rng:
+            rng_states = payload.rng_states
             if "python_random" in rng_states:
                 random.setstate(rng_states["python_random"])
             if "numpy_random" in rng_states:
@@ -501,13 +589,13 @@ class CheckpointManager:
                         torch.cuda.set_rng_state(cuda_state, i)
 
         # Restore AMP scaler state if available
-        if "amp_scaler_state" in checkpoint_data and scaler is not None:
-            scaler.load_state_dict(checkpoint_data["amp_scaler_state"])
+        if scaler is not None and payload.amp_scaler_state is not None:
+            scaler.load_state_dict(payload.amp_scaler_state)
 
         # Extract training state
-        epoch = checkpoint_data.get("epoch", 0)
-        global_step = checkpoint_data.get("global_step", 0)
-        resume_state = checkpoint_data.get("resume_state")
+        epoch = payload.epoch
+        global_step = payload.global_step
+        resume_state = payload.resume_state
 
         logger.info(f"Restored checkpoint from epoch {epoch}, step {global_step}")
 

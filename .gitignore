@@ -453,6 +453,10 @@ model_checkpoints/
 dist_*.tmp
 rank_*.log
 
+# Demo example2: generated artifacts
+demo/example2_intermediate_hpc/generated/
+demo/example2_intermediate_hpc/configs/*_config.json
+
 # ===== Overrides for important configs =====
 !.markdownlint.json
 !.vscode/settings.json

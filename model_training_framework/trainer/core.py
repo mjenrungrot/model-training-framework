@@ -177,10 +177,14 @@ class GenericTrainer:
 
         Example:
             config = GenericTrainerConfig(
-                multi=MultiDataLoaderConfig(
+                train_loader_config=MultiDataLoaderConfig(
                     sampling_strategy=SamplingStrategy.ROUND_ROBIN,
                     dataloader_names=["main"]  # Even for single loader
-                )
+                ),
+                val_loader_config=MultiDataLoaderConfig(
+                    sampling_strategy=SamplingStrategy.SEQUENTIAL,
+                    dataloader_names=["val_main"]
+                ),
             )
             trainer = GenericTrainer(
                 config=config,
@@ -366,7 +370,8 @@ class GenericTrainer:
         self.dataloader_manager = DataLoaderManager(
             train_loaders=train_loaders,
             val_loaders=val_loaders,
-            config=self.config.multi,
+            train_config=self.config.train_loader_config,
+            val_config=self.config.val_loader_config,
             fabric=self.fabric,
             logger=logger,
         )
@@ -391,12 +396,13 @@ class GenericTrainer:
 
         # Set expected proportions for WEIGHTED strategy
         if (
-            self.config.multi.sampling_strategy == SamplingStrategy.WEIGHTED
-            and self.config.multi.dataloader_weights
+            self.config.train_loader_config.sampling_strategy
+            == SamplingStrategy.WEIGHTED
+            and self.config.train_loader_config.dataloader_weights
         ):
             assert self.metrics_manager is not None
             self.metrics_manager.set_expected_proportions(
-                self.config.multi.dataloader_weights
+                self.config.train_loader_config.dataloader_weights
             )
 
         # Validate optimizer configuration
@@ -539,7 +545,8 @@ class GenericTrainer:
             # Log loader proportions if using WEIGHTED strategy
             if (
                 self.config.logging.log_loader_proportions
-                and self.config.multi.sampling_strategy == SamplingStrategy.WEIGHTED
+                and self.config.train_loader_config.sampling_strategy
+                == SamplingStrategy.WEIGHTED
             ):
                 proportions, counts = self.metrics_manager.get_loader_proportions()
                 if self.logger and ddp_is_primary(self.fabric):
@@ -910,12 +917,12 @@ class GenericTrainer:
             with autocast("cuda"):
                 assert self.training_step_fn is not None
                 step_metrics = self.training_step_fn(
-                    self, batch, loader_idx, loader_name, batch_idx
+                    self, batch, batch_idx, loader_idx, loader_name
                 )
         else:
             assert self.training_step_fn is not None
             step_metrics = self.training_step_fn(
-                self, batch, loader_idx, loader_name, batch_idx
+                self, batch, batch_idx, loader_idx, loader_name
             )
 
         loss = step_metrics["loss"]
@@ -1198,44 +1205,25 @@ class GenericTrainer:
             if ddp_is_primary(self.fabric):
                 # Load checkpoint data on rank 0
                 # Map to CPU to avoid device-coupled payloads and reduce GPU memory spikes
-                checkpoint_data = self.checkpoint_manager.load_checkpoint(
+                payload = self.checkpoint_manager.load_checkpoint(
                     checkpoint_path, map_location="cpu"
                 )
 
                 # Extract necessary data for broadcast
-                # Handle backward compatibility for legacy checkpoints
-                optimizer_states = checkpoint_data.get("optimizer_state_dicts")
-                if (
-                    optimizer_states is None
-                    and "optimizer_state_dict" in checkpoint_data
-                ):
-                    # Legacy single optimizer format
-                    optimizer_states = [checkpoint_data["optimizer_state_dict"]]
-                elif optimizer_states is None:
-                    optimizer_states = []
-
-                scheduler_states = checkpoint_data.get("scheduler_state_dicts")
-                if (
-                    scheduler_states is None
-                    and "scheduler_state_dict" in checkpoint_data
-                ):
-                    # Legacy single scheduler format
-                    scheduler_states = [checkpoint_data["scheduler_state_dict"]]
-                elif scheduler_states is None:
-                    scheduler_states = []
+                optimizer_states = payload.optimizer_state_dicts or []
+                scheduler_states = payload.scheduler_state_dicts or []
 
                 broadcast_data = {
-                    "epoch": checkpoint_data.get("epoch"),
-                    "global_step": checkpoint_data.get("global_step"),
-                    "resume_state": checkpoint_data.get("resume_state"),
-                    "model_state_dict": checkpoint_data.get("model_state_dict"),
+                    "epoch": payload.epoch,
+                    "global_step": payload.global_step,
+                    "resume_state": payload.resume_state,
+                    "model_state_dict": payload.model_state_dict,
                     "optimizer_state_dicts": optimizer_states,
                     "scheduler_state_dicts": scheduler_states,
-                    "amp_scaler_state": checkpoint_data.get("amp_scaler_state"),
-                    "dataloader_manager_state": checkpoint_data.get(
-                        "dataloader_manager_state"
-                    ),
-                    "choice_rng_state": checkpoint_data.get("choice_rng_state"),
+                    "amp_scaler_state": payload.amp_scaler_state,
+                    # For legacy compatibility; new payloads use resume_state only
+                    "dataloader_manager_state": payload.dataloader_manager_state,
+                    "choice_rng_state": payload.choice_rng_state,
                 }
             else:
                 broadcast_data = None

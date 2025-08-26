@@ -14,19 +14,27 @@ Key Classes:
 
 Example (Single Dataloader):
     config = GenericTrainerConfig(
-        multi=MultiDataLoaderConfig(
+        train_loader_config=MultiDataLoaderConfig(
             sampling_strategy=SamplingStrategy.SEQUENTIAL,
             dataloader_names=["main"]  # Single loader still needs config
-        )
+        ),
+        val_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,
+            dataloader_names=["main_val"]
+        ),
     )
 
 Example (Multiple Dataloaders):
     config = GenericTrainerConfig(
-        multi=MultiDataLoaderConfig(
+        train_loader_config=MultiDataLoaderConfig(
             sampling_strategy=SamplingStrategy.WEIGHTED,
             dataloader_weights=[0.6, 0.3, 0.1],
             dataloader_names=["large", "medium", "small"]
-        )
+        ),
+        val_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.ROUND_ROBIN,
+            dataloader_names=["val_a", "val_b"]
+        ),
     )
 """
 
@@ -371,7 +379,13 @@ class GenericTrainerConfig:
     hooks: HooksConfig = field(default_factory=HooksConfig)  # Hooks configuration
 
     # Multi-dataloader configuration
-    multi: MultiDataLoaderConfig = field(default_factory=MultiDataLoaderConfig)
+    # Split configuration for train and val phases
+    train_loader_config: MultiDataLoaderConfig = field(
+        default_factory=MultiDataLoaderConfig
+    )
+    val_loader_config: MultiDataLoaderConfig = field(
+        default_factory=MultiDataLoaderConfig
+    )
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     fault_tolerance: FaultToleranceConfig = field(default_factory=FaultToleranceConfig)
     ddp: DDPConfig | None = None  # Optional DDP configuration
@@ -426,7 +440,7 @@ class GenericTrainerConfig:
         ):
             raise ValueError("checkpoint monitor_mode must be 'min' or 'max'")
 
-        # Validate multi-dataloader configuration
+        # Validate multi-dataloader configuration (train/val)
         validate_trainer_config(self)
 
     def get_summary(self) -> dict[str, Any]:
@@ -460,10 +474,15 @@ class GenericTrainerConfig:
                 "validate_every_n_epochs": self.validate_every_n_epochs,
                 "early_stopping_patience": self.early_stopping_patience,
             },
-            "multi_dataloader": {
-                "sampling_strategy": self.multi.sampling_strategy.value,
-                "epoch_length_policy": self.multi.epoch_length_policy.value,
-                "dataloader_names": self.multi.dataloader_names,
+            "train_multi_dataloader": {
+                "sampling_strategy": self.train_loader_config.sampling_strategy.value,
+                "epoch_length_policy": self.train_loader_config.epoch_length_policy.value,
+                "dataloader_names": self.train_loader_config.dataloader_names,
+            },
+            "val_multi_dataloader": {
+                "sampling_strategy": self.val_loader_config.sampling_strategy.value,
+                "epoch_length_policy": self.val_loader_config.epoch_length_policy.value,
+                "dataloader_names": self.val_loader_config.dataloader_names,
             },
             "validation": {
                 "frequency": self.validation.frequency.value,
@@ -499,6 +518,84 @@ def validate_infinite_loader_constraints(
             )
 
 
+def _validate_multi_config(
+    multi: MultiDataLoaderConfig,
+    *,
+    assume_finite_loaders: bool = True,
+    context: str = "train",
+) -> None:
+    """Validate a single MultiDataLoaderConfig for internal consistency."""
+    # Validate dataloader weights
+    if multi.sampling_strategy == SamplingStrategy.WEIGHTED:
+        if multi.dataloader_weights is None:
+            raise ValueError(
+                f"dataloader_weights must be provided for WEIGHTED sampling strategy ({context})"
+            )
+        if any(w <= 0 for w in multi.dataloader_weights):
+            raise ValueError("All dataloader weights must be positive")
+        # Validate weight count matches dataloader count
+        if multi.dataloader_names and len(multi.dataloader_weights) != len(
+            multi.dataloader_names
+        ):
+            raise ValueError(
+                f"Number of dataloader_weights ({len(multi.dataloader_weights)}) must match "
+                f"number of dataloaders ({len(multi.dataloader_names)}) for {context}"
+            )
+
+    # Validate alternating pattern
+    if multi.sampling_strategy == SamplingStrategy.ALTERNATING:
+        if multi.alternating_pattern is None:
+            raise ValueError(
+                f"alternating_pattern must be provided for ALTERNATING sampling strategy ({context})"
+            )
+        if not multi.alternating_pattern:
+            raise ValueError("alternating_pattern cannot be empty")
+        # Validate indices are non-negative
+        if any(idx < 0 for idx in multi.alternating_pattern):
+            raise ValueError("alternating_pattern indices must be non-negative")
+        # If dataloader names provided, validate indices are in range
+        if multi.dataloader_names:
+            max_idx = len(multi.dataloader_names) - 1
+            if any(idx > max_idx for idx in multi.alternating_pattern):
+                raise ValueError(
+                    f"alternating_pattern indices must be in range [0, {max_idx}] for {context}"
+                )
+
+    # Validate fixed steps policy
+    if multi.epoch_length_policy == EpochLengthPolicy.FIXED_NUM_STEPS:
+        if multi.steps_per_epoch is None:
+            raise ValueError(
+                f"steps_per_epoch must be provided for FIXED_NUM_STEPS epoch length policy ({context})"
+            )
+        if multi.steps_per_epoch <= 0:
+            raise ValueError("steps_per_epoch must be positive")
+
+    # Validate burst size
+    if multi.burst_size <= 0:
+        raise ValueError("burst_size must be positive")
+
+    # Validate prefetch cap
+    if multi.prefetch_cap_total_batches is not None and (
+        multi.prefetch_cap_total_batches <= 0
+    ):
+        raise ValueError("prefetch_cap_total_batches must be positive")
+
+    # Validate dataloader names uniqueness (warning only)
+    if multi.dataloader_names:
+        unique_names = set(multi.dataloader_names)
+        if len(unique_names) != len(multi.dataloader_names):
+            warnings.warn(
+                f"dataloader_names contains duplicates in {context} config; this may affect logging clarity",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    # Validate infinite loader constraints (warning for incompatible policies)
+    validate_infinite_loader_constraints(
+        multi.epoch_length_policy, assume_finite_loaders
+    )
+
+
 def validate_trainer_config(
     config: GenericTrainerConfig, assume_finite_loaders: bool = True
 ) -> None:
@@ -514,50 +611,17 @@ def validate_trainer_config(
     Raises:
         ValueError: If configuration is invalid
     """
-    # Validate dataloader weights
-    if config.multi.sampling_strategy == SamplingStrategy.WEIGHTED:
-        if config.multi.dataloader_weights is None:
-            raise ValueError(
-                "dataloader_weights must be provided for WEIGHTED sampling strategy"
-            )
-        if any(w <= 0 for w in config.multi.dataloader_weights):
-            raise ValueError("All dataloader weights must be positive")
-        # Validate weight count matches dataloader count
-        if config.multi.dataloader_names and len(
-            config.multi.dataloader_weights
-        ) != len(config.multi.dataloader_names):
-            raise ValueError(
-                f"Number of dataloader_weights ({len(config.multi.dataloader_weights)}) "
-                f"must match number of dataloaders ({len(config.multi.dataloader_names)})"
-            )
-
-    # Validate alternating pattern
-    if config.multi.sampling_strategy == SamplingStrategy.ALTERNATING:
-        if config.multi.alternating_pattern is None:
-            raise ValueError(
-                "alternating_pattern must be provided for ALTERNATING sampling strategy"
-            )
-        if not config.multi.alternating_pattern:
-            raise ValueError("alternating_pattern cannot be empty")
-        # Validate indices are non-negative
-        if any(idx < 0 for idx in config.multi.alternating_pattern):
-            raise ValueError("alternating_pattern indices must be non-negative")
-        # If dataloader names provided, validate indices are in range
-        if config.multi.dataloader_names:
-            max_idx = len(config.multi.dataloader_names) - 1
-            if any(idx > max_idx for idx in config.multi.alternating_pattern):
-                raise ValueError(
-                    f"alternating_pattern indices must be in range [0, {max_idx}]"
-                )
-
-    # Validate fixed steps policy
-    if config.multi.epoch_length_policy == EpochLengthPolicy.FIXED_NUM_STEPS:
-        if config.multi.steps_per_epoch is None:
-            raise ValueError(
-                "steps_per_epoch must be provided for FIXED_NUM_STEPS epoch length policy"
-            )
-        if config.multi.steps_per_epoch <= 0:
-            raise ValueError("steps_per_epoch must be positive")
+    # Validate the train and val multi configs separately
+    _validate_multi_config(
+        config.train_loader_config,
+        assume_finite_loaders=assume_finite_loaders,
+        context="train",
+    )
+    _validate_multi_config(
+        config.val_loader_config,
+        assume_finite_loaders=assume_finite_loaders,
+        context="val",
+    )
 
     # Validate validation frequency
     if config.validation.frequency == ValidationFrequency.EVERY_N_STEPS:
@@ -572,46 +636,19 @@ def validate_trainer_config(
     if config.loss_weights_per_loader is not None:
         if any(w <= 0 for w in config.loss_weights_per_loader):
             raise ValueError("All loss weights must be positive")
-        if config.multi.dataloader_names and len(config.loss_weights_per_loader) != len(
-            config.multi.dataloader_names
-        ):
+        if config.train_loader_config.dataloader_names and len(
+            config.loss_weights_per_loader
+        ) != len(config.train_loader_config.dataloader_names):
             raise ValueError("Number of loss weights must match number of dataloaders")
 
     # Validate per-loader optimizer IDs
     if config.per_loader_optimizer_id is not None:
-        if config.multi.dataloader_names and len(config.per_loader_optimizer_id) != len(
-            config.multi.dataloader_names
-        ):
+        if config.train_loader_config.dataloader_names and len(
+            config.per_loader_optimizer_id
+        ) != len(config.train_loader_config.dataloader_names):
             raise ValueError("Number of optimizer IDs must match number of dataloaders")
         if any(idx < 0 for idx in config.per_loader_optimizer_id):
             raise ValueError("Optimizer IDs must be non-negative")
-
-    # Validate burst size
-    if config.multi.burst_size <= 0:
-        raise ValueError("burst_size must be positive")
-
-    # Validate prefetch cap
-    if (
-        config.multi.prefetch_cap_total_batches is not None
-        and config.multi.prefetch_cap_total_batches <= 0
-    ):
-        raise ValueError("prefetch_cap_total_batches must be positive")
-
-    # Validate dataloader names uniqueness (warning only)
-    if config.multi.dataloader_names:
-        unique_names = set(config.multi.dataloader_names)
-        if len(unique_names) != len(config.multi.dataloader_names):
-            warnings.warn(
-                "dataloader_names contains duplicates, which may affect logging clarity",
-                UserWarning,
-                stacklevel=2,
-            )
-
-    # Validate infinite loader constraints
-    validate_infinite_loader_constraints(
-        config.multi.epoch_length_policy, assume_finite_loaders
-    )
-
     # Note: Full infinite loader validation happens at runtime when actual
     # dataloaders are provided. For policies that cannot handle infinite loaders
     # (SUM_OF_LENGTHS, MIN_OF_LENGTHS), runtime validation will enforce finite length

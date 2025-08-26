@@ -317,9 +317,11 @@ class ProductionTrainer(GenericTrainer):
 
         self.logger = logging.getLogger("ProductionTrainer")
         self.logger.info("Production trainer with multi-loader support initialized")
-        self.logger.info(f"DataLoaders: {self.config.multi.dataloader_names}")
         self.logger.info(
-            f"Sampling Strategy: {self.config.multi.sampling_strategy.value}"
+            f"DataLoaders: {self.config.train_loader_config.dataloader_names}"
+        )
+        self.logger.info(
+            f"Sampling Strategy: {self.config.train_loader_config.sampling_strategy.value}"
         )
 
     def setup_signal_handlers(self) -> None:
@@ -342,7 +344,12 @@ class ProductionTrainer(GenericTrainer):
         signal.signal(signal.SIGUSR1, signal_handler)
 
     def training_step(
-        self, trainer, batch, dataloader_idx: int, dataloader_name: str
+        self,
+        trainer,
+        batch,
+        batch_idx: int,
+        dataloader_idx: int,
+        dataloader_name: str,
     ) -> dict[str, Any]:
         """
         Enhanced training step with comprehensive error handling for multi-loader.
@@ -604,10 +611,10 @@ class ProductionTrainer(GenericTrainer):
             f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}"
         )
         self.logger.info(
-            f"Number of dataloaders: {len(self.config.multi.dataloader_names)}"
+            f"Number of dataloaders: {len(self.config.train_loader_config.dataloader_names)}"
         )
         self.logger.info(
-            f"Sampling strategy: {self.config.multi.sampling_strategy.value}"
+            f"Sampling strategy: {self.config.train_loader_config.sampling_strategy.value}"
         )
 
         if torch.cuda.is_available():
@@ -642,7 +649,7 @@ class ProductionTrainer(GenericTrainer):
 
         # Calculate per-dataloader statistics
         dataloader_stats = {}
-        for loader_name in self.config.multi.dataloader_names:
+        for loader_name in self.config.train_loader_config.dataloader_names:
             if loader_name in self.performance_history:
                 perf_data = self.performance_history[loader_name]
                 dataloader_stats[loader_name] = {
@@ -662,8 +669,8 @@ class ProductionTrainer(GenericTrainer):
                 "total_steps": getattr(self, "global_step", 0),
                 "failures": len(self.failure_history),
                 "recovery_attempts": self.recovery_attempts,
-                "dataloaders": self.config.multi.dataloader_names,
-                "sampling_strategy": self.config.multi.sampling_strategy.value,
+                "dataloaders": self.config.train_loader_config.dataloader_names,
+                "sampling_strategy": self.config.train_loader_config.sampling_strategy.value,
             },
             "dataloader_statistics": dataloader_stats,
             "failure_summary": [asdict(f) for f in self.failure_history],
@@ -817,12 +824,16 @@ def main():
     print("\n📋 Creating multi-loader configuration...")
     trainer_config = GenericTrainerConfig(
         # Multi-loader configuration (required)
-        multi=MultiDataLoaderConfig(
+        train_loader_config=MultiDataLoaderConfig(
             sampling_strategy=SamplingStrategy.WEIGHTED,
             dataloader_weights=[0.5, 0.3, 0.2],  # Primary gets 50%, aux 30%, aug 20%
             epoch_length_policy=EpochLengthPolicy.FIXED_NUM_STEPS,
             steps_per_epoch=500,  # Fixed steps for consistent epochs
             dataloader_names=["primary", "auxiliary", "augmented"],
+        ),
+        val_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.ROUND_ROBIN,
+            dataloader_names=["val_primary", "val_auxiliary", "val_augmented"],
         ),
         # Checkpoint configuration
         checkpoint=CheckpointConfig(
@@ -866,9 +877,13 @@ def main():
         ),
     )
 
-    print(f"   Sampling Strategy: {trainer_config.multi.sampling_strategy.value}")
-    print(f"   DataLoaders: {trainer_config.multi.dataloader_names}")
-    print(f"   Weights: {trainer_config.multi.dataloader_weights}")
+    print(
+        f"   Sampling Strategy: {trainer_config.train_loader_config.sampling_strategy.value}"
+    )
+    print(
+        f"   Train DataLoaders: {trainer_config.train_loader_config.dataloader_names}"
+    )
+    print(f"   Weights: {trainer_config.train_loader_config.dataloader_weights}")
 
     # Create alert callback
     alert_callback = create_alert_callback()
@@ -889,7 +904,7 @@ def main():
 
     print(f"   Created {len(train_loaders)} training dataloaders")
     print(f"   Created {len(val_loaders)} validation dataloaders")
-    for i, name in enumerate(trainer_config.multi.dataloader_names):
+    for i, name in enumerate(trainer_config.train_loader_config.dataloader_names):
         print(
             f"     - {name}: {len(train_loaders[i])} train batches, "
             f"{len(val_loaders[i])} val batches"
@@ -933,14 +948,16 @@ def main():
             for batch_idx in range(5):  # Simulate 5 batches
                 # Simulate sampling from different dataloaders
                 dataloader_idx = batch_idx % num_dataloaders
-                dataloader_name = trainer_config.multi.dataloader_names[dataloader_idx]
+                dataloader_name = trainer_config.train_loader_config.dataloader_names[
+                    dataloader_idx
+                ]
 
                 # Get a batch from the selected dataloader
                 batch = next(iter(train_loaders[dataloader_idx]))
 
                 # Simulate training step
                 metrics = trainer.training_step(
-                    trainer, batch, dataloader_idx, dataloader_name
+                    trainer, batch, batch_idx, dataloader_idx, dataloader_name
                 )
 
                 print(
