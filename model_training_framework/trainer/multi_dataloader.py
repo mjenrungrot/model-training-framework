@@ -762,8 +762,9 @@ class DataLoaderManager:
                 raise ValueError(
                     "ROUND_ROBIN with infinite loaders requires FIXED_NUM_STEPS; set steps_per_epoch."
                 )
+            lengths_int = [int(L) for L in lengths]
             schedule = self.build_round_robin_schedule(
-                lengths,
+                lengths_int,
                 self.config.epoch_length_policy,
                 self.config.burst_size,
                 self.config.steps_per_epoch,
@@ -776,8 +777,9 @@ class DataLoaderManager:
                 raise ValueError(
                     "SEQUENTIAL with infinite loaders requires FIXED_NUM_STEPS; set steps_per_epoch."
                 )
+            lengths_int = [int(L) for L in lengths]
             schedule = self.build_sequential_schedule(
-                lengths,
+                lengths_int,
                 self.config.epoch_length_policy,
                 self.config.burst_size,
                 self.config.steps_per_epoch,

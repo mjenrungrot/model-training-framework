@@ -83,7 +83,7 @@ def create_synthetic_datasets():
     return dataset_a, dataset_b
 
 
-def training_step(trainer, batch, dataloader_idx, dataloader_name):
+def training_step(trainer, batch, dataloader_idx, dataloader_name, batch_idx):
     """
     Training step function for multi-dataloader training.
 
@@ -117,7 +117,7 @@ def training_step(trainer, batch, dataloader_idx, dataloader_name):
     }
 
 
-def validation_step(trainer, batch, dataloader_idx, dataloader_name):
+def validation_step(trainer, batch, dataloader_idx, dataloader_name, batch_idx):
     """
     Validation step function for multi-dataloader validation.
 

@@ -74,6 +74,7 @@ class TrainingStep(Protocol):
         batch: Any,
         dataloader_idx: int,
         dataloader_name: str,
+        batch_idx: int,
     ) -> dict[str, Any]:
         """
         Execute training step and return metrics.
@@ -83,6 +84,7 @@ class TrainingStep(Protocol):
             batch: Input batch
             dataloader_idx: Index of the current dataloader
             dataloader_name: Name of the current dataloader
+            batch_idx: 0-based batch index within this dataloader for the epoch
 
         Returns:
             Dictionary with at least 'loss' key
@@ -99,6 +101,7 @@ class ValidationStep(Protocol):
         batch: Any,
         dataloader_idx: int,
         dataloader_name: str,
+        batch_idx: int,
     ) -> dict[str, Any]:
         """
         Execute validation step and return metrics.
@@ -108,6 +111,7 @@ class ValidationStep(Protocol):
             batch: Input batch
             dataloader_idx: Index of the current dataloader
             dataloader_name: Name of the current dataloader
+            batch_idx: 0-based batch index within this dataloader for the epoch
 
         Returns:
             Dictionary with metrics (typically including 'loss')
@@ -687,9 +691,16 @@ class GenericTrainer:
                 save_rng=self.config.checkpoint.save_rng,
             )
 
+            # Determine 0-based batch index for this loader
+            try:
+                state_for_loader = loader_states[loader_idx]
+                current_batch_idx = max(0, state_for_loader.batch_idx - 1)
+            except Exception:
+                current_batch_idx = 0
+
             # Training step with AMP
             step_metrics = self._training_step(
-                batch, loader_idx, loader_name, accumulation_counter
+                batch, loader_idx, loader_name, accumulation_counter, current_batch_idx
             )
 
             # Apply per-loader loss weight if configured
@@ -843,8 +854,14 @@ class GenericTrainer:
 
                 # Validation step
                 assert self.validation_step_fn is not None
+                try:
+                    state_for_loader = loader_states[loader_idx]
+                    current_batch_idx = max(0, state_for_loader.batch_idx - 1)
+                except Exception:
+                    current_batch_idx = 0
+
                 step_metrics = self.validation_step_fn(
-                    self, batch, loader_idx, loader_name
+                    self, batch, loader_idx, loader_name, current_batch_idx
                 )
 
                 # Get batch size for metrics tracking
@@ -877,6 +894,7 @@ class GenericTrainer:
         loader_idx: int,
         loader_name: str,
         accumulation_step: int,
+        batch_idx: int,
     ) -> dict[str, Any]:
         """Execute single training step with gradient accumulation and AMP."""
 
@@ -892,11 +910,13 @@ class GenericTrainer:
             with autocast("cuda"):
                 assert self.training_step_fn is not None
                 step_metrics = self.training_step_fn(
-                    self, batch, loader_idx, loader_name
+                    self, batch, loader_idx, loader_name, batch_idx
                 )
         else:
             assert self.training_step_fn is not None
-            step_metrics = self.training_step_fn(self, batch, loader_idx, loader_name)
+            step_metrics = self.training_step_fn(
+                self, batch, loader_idx, loader_name, batch_idx
+            )
 
         loss = step_metrics["loss"]
         # Coerce numeric losses to tensors and ensure requires_grad for backward

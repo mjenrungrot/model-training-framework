@@ -276,7 +276,9 @@ def create_distributed_experiment_configs() -> list[GenericTrainerConfig]:
     return configs
 
 
-def distributed_training_step(trainer, batch, dataloader_idx, dataloader_name):
+def distributed_training_step(
+    trainer, batch, dataloader_idx, dataloader_name, batch_idx
+):
     """
     Training step for distributed multi-loader training.
 
@@ -318,7 +320,9 @@ def distributed_training_step(trainer, batch, dataloader_idx, dataloader_name):
     }
 
 
-def distributed_validation_step(trainer, batch, dataloader_idx, dataloader_name):
+def distributed_validation_step(
+    trainer, batch, dataloader_idx, dataloader_name, batch_idx
+):
     """Validation step for distributed multi-loader training."""
     inputs, targets = batch
 

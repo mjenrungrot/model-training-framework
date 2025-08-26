@@ -82,7 +82,7 @@ def create_dummy_mnist_data(num_samples=1000):
     return train_dataset, val_dataset
 
 
-def training_step(trainer, batch, dataloader_idx, dataloader_name):
+def training_step(trainer, batch, dataloader_idx, dataloader_name, batch_idx):
     """
     Execute one training step.
 
@@ -118,7 +118,7 @@ def training_step(trainer, batch, dataloader_idx, dataloader_name):
     }
 
 
-def validation_step(trainer, batch, dataloader_idx, dataloader_name):
+def validation_step(trainer, batch, dataloader_idx, dataloader_name, batch_idx):
     """
     Execute one validation step.
 
@@ -256,6 +256,12 @@ def main():
     train_loaders = [train_loader]  # Single loader in a list
     val_loaders = [val_loader]  # Single loader in a list
 
+    return trainer, train_loaders, val_loaders
+
+
+if __name__ == "__main__":
+    trainer, train_loaders, val_loaders = main()
+
     print("\n📚 Ready to train! Running fit() for 5 epochs...")
     trainer.fit(
         train_loaders=train_loaders,  # List with one loader
@@ -263,33 +269,3 @@ def main():
         max_epochs=5,
     )
     print("\n✅ Training run completed!")
-
-    # Demonstrate what would happen in training
-    print("\n" + "=" * 50)
-    print("🎓 Key Takeaways:")
-    print("=" * 50)
-    print()
-    print("1. The framework is multi-dataloader-only by design")
-    print("2. Single dataloaders MUST be wrapped in lists:")
-    print("   • train_loaders=[single_loader]")
-    print("   • val_loaders=[single_loader]")
-    print("3. Always use MultiDataLoaderConfig, even for one loader")
-    print("4. Training/validation steps receive dataloader info:")
-    print("   • dataloader_idx (0 for single loader)")
-    print("   • dataloader_name ('main' or your chosen name)")
-    print("5. Optimizers must be a list: optimizers=[optimizer]")
-    print()
-    print("This design enables seamless scaling from single to")
-    print("multiple dataloaders without changing the core API!")
-
-    print("\n✅ Example completed successfully!")
-    print("\n📖 Next steps:")
-    print("   1. Run multi_loader_training.py for multiple dataloaders")
-    print("   2. Explore different sampling strategies")
-    print("   3. Try the intermediate HPC example for distributed training")
-
-    return trainer, train_loaders, val_loaders
-
-
-if __name__ == "__main__":
-    trainer, train_loaders, val_loaders = main()
