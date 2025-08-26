@@ -80,7 +80,9 @@ class CheckpointPayload:
             if isinstance(self.resume_state, _ResumeState):
                 data["resume_state"] = self.resume_state.to_dict()
         except Exception:
-            pass
+            logger.debug(
+                "Failed to serialize resume_state in checkpoint payload", exc_info=True
+            )
         return data
 
     @classmethod

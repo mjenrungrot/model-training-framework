@@ -366,7 +366,10 @@ class GenericTrainer:
             if isinstance(self.resume_state, dict):
                 self.resume_state = _ResumeState.from_dict(self.resume_state)
         except Exception:
-            pass
+            logger.debug(
+                "resume_state conversion failed; continuing without conversion",
+                exc_info=True,
+            )
 
         # Validate IterableDataset checkpointing support if fault tolerance is enabled
         if (
@@ -1268,7 +1271,10 @@ class GenericTrainer:
                 if isinstance(self.resume_state, dict):
                     self.resume_state = _ResumeState.from_dict(self.resume_state)  # type: ignore[assignment]
             except Exception:
-                pass
+                logger.debug(
+                    "resume_state conversion prior to checkpoint save failed",
+                    exc_info=True,
+                )
 
             # Update resume state with dataloader manager state
             if self.dataloader_manager:
@@ -1396,7 +1402,7 @@ class GenericTrainer:
                         if rs_typed.rng is not None:
                             restore_rng_state(rs_typed.rng)
                     except Exception:
-                        pass
+                        logger.debug("restore_rng_state failed", exc_info=True)
 
                 # Restore DataLoaderManager state if available
                 # Check both top-level (free save function) and resume_state (CheckpointManager)
@@ -1427,7 +1433,10 @@ class GenericTrainer:
                                 state, skip_broadcast=True
                             )
                     except Exception:
-                        pass
+                        logger.debug(
+                            "Failed to load dataloader_manager state from resume_state",
+                            exc_info=True,
+                        )
 
                 # Restore choice RNG if available
                 # Check both top-level and resume_state locations
@@ -1454,7 +1463,10 @@ class GenericTrainer:
                             rs_typed.choice_rng, self.dataloader_manager.choice_rng
                         )
                     except Exception:
-                        pass
+                        logger.debug(
+                            "Failed to restore choice RNG from resume_state",
+                            exc_info=True,
+                        )
 
                 logger.info(
                     f"Resumed from checkpoint: epoch={self.current_epoch}, step={self.global_step}"

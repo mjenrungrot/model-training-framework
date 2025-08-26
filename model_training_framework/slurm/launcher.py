@@ -507,11 +507,20 @@ class SLURMLauncher:
                     # Get newest mtime within the directory tree; fall back to dir mtime
                     newest_mtime = child.stat().st_mtime
                     for p in child.rglob("*"):
+                        st_mtime: float | None = None
                         try:
-                            newest_mtime = max(newest_mtime, p.stat().st_mtime)
-                        except Exception:
-                            # Ignore files that might disappear during traversal
-                            continue
+                            st = p.stat()
+                            st_mtime = st.st_mtime
+                        except FileNotFoundError:
+                            logger.debug("Path disappeared during cleanup scan: %s", p)
+                            st_mtime = None
+                        except (PermissionError, OSError) as e:
+                            logger.debug(
+                                "Skipping path due to access/OS error: %s (%s)", p, e
+                            )
+                            st_mtime = None
+                        if st_mtime is not None:
+                            newest_mtime = max(newest_mtime, st_mtime)
 
                     if newest_mtime < cutoff:
                         cleaned_items.append(f"dir:{child}")
