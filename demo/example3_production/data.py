@@ -17,8 +17,9 @@ def create_loaders(
     seq_len = 64
     for i in range(num_loaders):
         torch.manual_seed(100 + i)
-        train_size = 64 * (i + 1)
-        val_size = 32 * (i + 1)
+        # Larger sizes to target ~2-3 minutes on CPU with periodic pre-emption
+        train_size = 512 * (i + 1)
+        val_size = 128 * (i + 1)
 
         x_train = torch.randn(train_size, seq_len)
         y_train = (x_train.mean(dim=1) > 0).long()
@@ -44,7 +45,7 @@ def create_loaders(
         )
         val_loader = DataLoader(
             dval,
-            batch_size=batch_size * 2,
+            batch_size=max(1, batch_size * 2),
             sampler=val_sampler,
             num_workers=0,
             pin_memory=False,

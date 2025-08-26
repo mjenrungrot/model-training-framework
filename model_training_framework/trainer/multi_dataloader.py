@@ -150,9 +150,8 @@ class MultiDataLoaderIterator:
         # Restore dataset/sampler state prior to iterator creation where possible
         # to avoid consuming elements during skip.
         dataset_restored = False
-        if (
-            hasattr(loader.dataset, "load_state_dict")
-            and state.dataset_state is not None
+        if state.dataset_state is not None and isinstance(
+            loader.dataset, CheckpointableIterable
         ):
             try:
                 loader.dataset.load_state_dict(state.dataset_state)

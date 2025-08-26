@@ -10,6 +10,7 @@ This module provides sophisticated parameter grid search capabilities:
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 import itertools
 import json
@@ -20,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from .naming import ExperimentNaming
 from .schemas import (
+    CheckpointConfig,
     DataConfig,
     ExecutionMode,
     ExperimentConfig,
@@ -28,7 +30,10 @@ from .schemas import (
     ModelConfig,
     NamingStrategy,
     OptimizerConfig,
+    PerformanceConfig,
+    PreemptionConfig,
     SchedulerConfig,
+    SLURMConfig,
     TrainingConfig,
 )
 
@@ -151,7 +156,8 @@ class ParameterGridSearch:
 
     def __init__(self, base_config: dict[str, Any]):
         """Initialize with base configuration."""
-        self.base_config = base_config.copy()
+        # Deep copy to avoid shared nested structures across experiments
+        self.base_config = deepcopy(base_config)
         self.parameter_grids: list[ParameterGrid] = []
         self.naming_strategy = NamingStrategy.HASH_BASED
 
@@ -211,7 +217,8 @@ class ParameterGridSearch:
         self, config: dict[str, Any], parameters: dict[str, Any]
     ) -> dict[str, Any]:
         """Apply parameter overrides to config using nested key paths."""
-        result = config.copy()
+        # Deep copy to isolate nested structures for each experiment
+        result = deepcopy(config)
 
         for key_path, value in parameters.items():
             self._set_nested_value(result, key_path, value)
@@ -269,25 +276,51 @@ class ParameterGridSearch:
                     )
                     continue
 
+    def generate_experiment_dicts(self) -> Iterator[dict[str, Any]]:
+        """Generate experiment dictionaries with overrides applied.
+
+        Useful when callers want to handle ExperimentConfig conversion
+        themselves (e.g., via ConfigurationManager) or serialize raw dicts.
+        """
+        for grid in self.parameter_grids:
+            for parameters in grid.generate_permutations():
+                # Apply parameters to base config
+                cfg = self._apply_parameters_to_config(self.base_config, parameters)
+                # Name using configured strategy
+                cfg["experiment_name"] = ExperimentNaming.generate_name(
+                    base_name=cfg.get("experiment_name", "experiment"),
+                    parameters=parameters,
+                    naming_strategy=self.naming_strategy,
+                )
+                yield cfg
+
     def _dict_to_experiment_config(
         self, config_dict: dict[str, Any]
     ) -> ExperimentConfig:
-        """Convert dictionary to ExperimentConfig."""
-        # This is a simplified implementation
-        # In practice, you'd want to use a more robust configuration parsing library
-        # like Hydra or implement proper schema validation
+        """Convert dictionary to ExperimentConfig (full fidelity).
 
-        # Extract nested configs
+        Mirrors ConfigurationManager's conversion so all sections are preserved
+        (checkpoint, preemption, performance, slurm, custom_params, etc.).
+        """
+        # Nested configs (safe defaults when missing)
         model_config = ModelConfig(**config_dict.get("model", {}))
         training_config = TrainingConfig(**config_dict.get("training", {}))
         data_config = DataConfig(**config_dict.get("data", {}))
         optimizer_config = OptimizerConfig(**config_dict.get("optimizer", {}))
-
-        scheduler_config = None
-        if "scheduler" in config_dict:
-            scheduler_config = SchedulerConfig(**config_dict["scheduler"])
-
+        scheduler_config = (
+            SchedulerConfig(**config_dict["scheduler"])
+            if "scheduler" in config_dict and config_dict["scheduler"] is not None
+            else None
+        )
+        slurm_config = (
+            SLURMConfig(**config_dict["slurm"])
+            if "slurm" in config_dict and config_dict["slurm"] is not None
+            else None
+        )
         logging_config = LoggingConfig(**config_dict.get("logging", {}))
+        checkpoint_config = CheckpointConfig(**config_dict.get("checkpoint", {}))
+        preemption_config = PreemptionConfig(**config_dict.get("preemption", {}))
+        performance_config = PerformanceConfig(**config_dict.get("performance", {}))
 
         return ExperimentConfig(
             experiment_name=config_dict["experiment_name"],
@@ -296,7 +329,20 @@ class ParameterGridSearch:
             data=data_config,
             optimizer=optimizer_config,
             scheduler=scheduler_config,
+            slurm=slurm_config,
             logging=logging_config,
+            checkpoint=checkpoint_config,
+            preemption=preemption_config,
+            performance=performance_config,
+            description=config_dict.get("description"),
+            tags=config_dict.get("tags", []),
+            created_by=config_dict.get("created_by"),
+            created_at=config_dict.get("created_at"),
+            version=config_dict.get("version", "1.0"),
+            seed=config_dict.get("seed"),
+            deterministic=config_dict.get("deterministic", True),
+            benchmark=config_dict.get("benchmark", False),
+            custom_params=config_dict.get("custom_params", {}),
         )
 
     def save_grid_config(self, output_path: Path) -> None:

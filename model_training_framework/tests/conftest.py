@@ -8,6 +8,7 @@ from collections.abc import Generator
 from pathlib import Path
 import subprocess
 import tempfile
+from typing import Any, cast
 
 import pytest
 
@@ -185,10 +186,7 @@ def mock_optimizer():
     return MockOptimizer()
 
 
-# Test markers for different types of tests
-pytest.mark.unit = pytest.mark.unit
-pytest.mark.integration = pytest.mark.integration
-pytest.mark.slow = pytest.mark.slow
+# Test markers are declared in pytest.ini; no reassignment needed here.
 
 
 # Skip tests if external dependencies are not available
@@ -201,6 +199,8 @@ def skip_if_no_slurm():
         return True
 
 
-pytest.mark.skipif_no_slurm = pytest.mark.skipif(
+# Provide a custom marker alias with a typing-safe cast for static checkers
+_mark = cast(Any, pytest.mark)
+_mark.skipif_no_slurm = pytest.mark.skipif(
     skip_if_no_slurm(), reason="SLURM not available"
 )

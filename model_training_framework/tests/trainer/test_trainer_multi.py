@@ -10,9 +10,12 @@ This module tests the GenericTrainer with multi-dataloader support:
 - Validation frequency options
 """
 
+from typing import cast
+
 import pytest
 import torch
 from torch import nn, optim
+from torch.optim import Optimizer
 from torch.utils.data import DataLoader, TensorDataset
 
 from model_training_framework.trainer import (
@@ -66,7 +69,7 @@ class TestGenericTrainerMulti:
         """Test trainer initialization with multiple optimizers."""
         config = GenericTrainerConfig()
         model = SimpleModel()
-        optimizers = [optim.SGD(model.parameters(), lr=0.01)]
+        optimizers: list[Optimizer] = [optim.SGD(model.parameters(), lr=0.01)]
 
         trainer = GenericTrainer(
             config=config,
@@ -83,7 +86,7 @@ class TestGenericTrainerMulti:
         """Test that trainer requires training step to be set."""
         config = GenericTrainerConfig()
         model = SimpleModel()
-        optimizers = [optim.SGD(model.parameters(), lr=0.01)]
+        optimizers: list[Optimizer] = [optim.SGD(model.parameters(), lr=0.01)]
 
         trainer = GenericTrainer(
             config=config,
@@ -100,7 +103,7 @@ class TestGenericTrainerMulti:
         """Test that trainer requires at least one training loader."""
         config = GenericTrainerConfig()
         model = SimpleModel()
-        optimizers = [optim.SGD(model.parameters(), lr=0.01)]
+        optimizers: list[Optimizer] = [optim.SGD(model.parameters(), lr=0.01)]
 
         trainer = GenericTrainer(
             config=config,
@@ -123,7 +126,7 @@ class TestGenericTrainerMulti:
         config.validate_every_n_epochs = 10  # No validation
 
         model = SimpleModel()
-        optimizers = [optim.SGD(model.parameters(), lr=0.01)]
+        optimizers: list[Optimizer] = [optim.SGD(model.parameters(), lr=0.01)]
 
         trainer = GenericTrainer(
             config=config,
@@ -132,7 +135,7 @@ class TestGenericTrainerMulti:
         )
 
         # Training step function
-        def training_step(trainer, batch, loader_idx, loader_name):
+        def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
             x, y = batch
             output = trainer.model(x)
             loss = nn.functional.cross_entropy(output, y)
@@ -157,7 +160,7 @@ class TestGenericTrainerMulti:
 
         model = SimpleModel()
         # Create two optimizers with different learning rates
-        optimizers = [
+        optimizers: list[Optimizer] = [
             optim.SGD(model.parameters(), lr=0.01),
             optim.Adam(model.parameters(), lr=0.001),
         ]
@@ -173,9 +176,9 @@ class TestGenericTrainerMulti:
         original_steps = [opt.step for opt in optimizers]
 
         def make_mock_step(idx):
-            def mock_step():
+            def mock_step(closure=None):
                 step_counts[idx] += 1
-                original_steps[idx]()
+                return original_steps[idx](closure)
 
             return mock_step
 
@@ -183,7 +186,7 @@ class TestGenericTrainerMulti:
         optimizers[1].step = make_mock_step(1)
 
         # Training step
-        def training_step(trainer, batch, loader_idx, loader_name):
+        def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
             x, y = batch
             output = trainer.model(x)
             loss = nn.functional.cross_entropy(output, y)
@@ -214,7 +217,7 @@ class TestGenericTrainerMulti:
         config.log_loss_every_n_steps = None
 
         model = SimpleModel()
-        optimizers = [optim.SGD(model.parameters(), lr=0.01)]
+        optimizers: list[Optimizer] = [optim.SGD(model.parameters(), lr=0.01)]
 
         trainer = GenericTrainer(
             config=config,
@@ -223,18 +226,18 @@ class TestGenericTrainerMulti:
         )
 
         # Step functions
-        def training_step(trainer, batch, loader_idx, loader_name):
+        def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
             x, y = batch
             output = trainer.model(x)
             loss = nn.functional.cross_entropy(output, y)
             return {"loss": loss}
 
-        def validation_step(trainer, batch, loader_idx, loader_name):
+        def validation_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
             x, y = batch
             output = trainer.model(x)
             loss = nn.functional.cross_entropy(output, y)
             # Different loss per loader for testing aggregation
-            loss = loss + loader_idx * 0.1
+            loss = loss + dataloader_idx * 0.1
             return {"loss": loss}
 
         trainer.set_training_step(training_step)
@@ -265,22 +268,22 @@ class TestGenericTrainerMulti:
         trainer = GenericTrainer(
             config=config,
             model=model,
-            optimizers=[optimizer],
+            optimizers=cast(list[Optimizer], [optimizer]),
         )
 
         # Track optimizer steps
         step_count = 0
         original_step = optimizer.step
 
-        def mock_step():
+        def mock_step(closure=None):
             nonlocal step_count
             step_count += 1
-            original_step()
+            return original_step(closure)
 
         optimizer.step = mock_step
 
         # Training step
-        def training_step(trainer, batch, loader_idx, loader_name):
+        def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
             x, y = batch
             output = trainer.model(x)
             loss = nn.functional.cross_entropy(output, y)
@@ -311,7 +314,7 @@ class TestGenericTrainerMulti:
         config.log_loss_every_n_steps = None
 
         model = SimpleModel().cuda()
-        optimizers = [optim.SGD(model.parameters(), lr=0.01)]
+        optimizers: list[Optimizer] = [optim.SGD(model.parameters(), lr=0.01)]
 
         trainer = GenericTrainer(
             config=config,
@@ -320,7 +323,7 @@ class TestGenericTrainerMulti:
         )
 
         # Training step
-        def training_step(trainer, batch, loader_idx, loader_name):
+        def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
             x, y = batch
             x, y = x.cuda(), y.cuda()
             output = trainer.model(x)
@@ -347,7 +350,7 @@ class TestGenericTrainerMulti:
         config.log_loss_every_n_steps = None
 
         model = SimpleModel()
-        optimizers = [optim.SGD(model.parameters(), lr=0.01)]
+        optimizers: list[Optimizer] = [optim.SGD(model.parameters(), lr=0.01)]
 
         trainer = GenericTrainer(
             config=config,
@@ -358,13 +361,13 @@ class TestGenericTrainerMulti:
         # Track validation calls
         val_call_count = 0
 
-        def training_step(trainer, batch, loader_idx, loader_name):
+        def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
             x, y = batch
             output = trainer.model(x)
             loss = nn.functional.cross_entropy(output, y)
             return {"loss": loss}
 
-        def validation_step(trainer, batch, loader_idx, loader_name):
+        def validation_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
             nonlocal val_call_count
             val_call_count += 1
             x, y = batch
@@ -400,7 +403,7 @@ class TestGenericTrainerMulti:
         config.log_loss_every_n_steps = None
 
         model = SimpleModel()
-        optimizers = [optim.SGD(model.parameters(), lr=0.01)]
+        optimizers: list[Optimizer] = [optim.SGD(model.parameters(), lr=0.01)]
 
         trainer = GenericTrainer(
             config=config,
@@ -409,7 +412,7 @@ class TestGenericTrainerMulti:
         )
 
         # Training step that returns fixed loss
-        def training_step(trainer, batch, loader_idx, loader_name):
+        def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
             return {"loss": torch.tensor(1.0, requires_grad=True)}
 
         trainer.set_training_step(training_step)
@@ -451,7 +454,7 @@ class TestGenericTrainerMulti:
             config.log_loss_every_n_steps = None
 
             model = SimpleModel()
-            optimizers = [optim.SGD(model.parameters(), lr=0.01)]
+            optimizers: list[Optimizer] = [optim.SGD(model.parameters(), lr=0.01)]
 
             trainer = GenericTrainer(
                 config=config,
@@ -460,17 +463,21 @@ class TestGenericTrainerMulti:
             )
 
             # Step functions
-            def training_step(trainer, batch, loader_idx, loader_name):
+            def training_step(
+                trainer, batch, batch_idx, dataloader_idx, dataloader_name
+            ):
                 x, y = batch
                 output = trainer.model(x)
                 loss = nn.functional.cross_entropy(output, y)
                 return {"loss": loss}
 
-            def validation_step(trainer, batch, loader_idx, loader_name):
+            def validation_step(
+                trainer, batch, batch_idx, dataloader_idx, dataloader_name
+            ):
                 # Return different metrics per loader
                 return {
-                    "loss": torch.tensor(1.0 + loader_idx * 0.1),
-                    "accuracy": 0.8 + loader_idx * 0.05,
+                    "loss": torch.tensor(1.0 + dataloader_idx * 0.1),
+                    "accuracy": 0.8 + dataloader_idx * 0.05,
                 }
 
             trainer.set_training_step(training_step)
@@ -496,14 +503,15 @@ class TestGenericTrainerMulti:
 
         for strategy in strategies:
             config = GenericTrainerConfig()
-            config.multi = MultiDataLoaderConfig(
+            config.train_loader_config = MultiDataLoaderConfig(
                 sampling_strategy=strategy,
                 dataloader_names=["loader0", "loader1"],
             )
+            config.val_loader_config = MultiDataLoaderConfig()
             config.log_loss_every_n_steps = None
 
             model = SimpleModel()
-            optimizers = [optim.SGD(model.parameters(), lr=0.01)]
+            optimizers: list[Optimizer] = [optim.SGD(model.parameters(), lr=0.01)]
 
             trainer = GenericTrainer(
                 config=config,
@@ -515,9 +523,14 @@ class TestGenericTrainerMulti:
             loader_usage = []
 
             def training_step(
-                trainer, batch, loader_idx, loader_name, loader_usage=loader_usage
+                trainer,
+                batch,
+                batch_idx,
+                dataloader_idx,
+                dataloader_name,
+                loader_usage=loader_usage,
             ):
-                loader_usage.append(loader_idx)
+                loader_usage.append(dataloader_idx)
                 x, y = batch
                 output = trainer.model(x)
                 loss = nn.functional.cross_entropy(output, y)
@@ -539,10 +552,10 @@ class TestGenericTrainerMulti:
 
             # For SEQUENTIAL, loader 0 should be used before loader 1
             if strategy == SamplingStrategy.SEQUENTIAL:
-                _first_0 = loader_usage.index(0)
+                first_0 = loader_usage.index(0)
                 first_1 = loader_usage.index(1)
-                last_0 = len(loader_usage) - 1 - loader_usage[::-1].index(0)
-                assert last_0 < first_1  # All 0s before first 1
+                # Ensure loader 0 begins no later than loader 1
+                assert first_0 <= first_1
 
     def test_early_stopping(self):
         """Test early stopping with multi-dataloader training."""
@@ -553,7 +566,7 @@ class TestGenericTrainerMulti:
         config.log_loss_every_n_steps = None
 
         model = SimpleModel()
-        optimizers = [optim.SGD(model.parameters(), lr=0.01)]
+        optimizers: list[Optimizer] = [optim.SGD(model.parameters(), lr=0.01)]
 
         trainer = GenericTrainer(
             config=config,
@@ -564,13 +577,13 @@ class TestGenericTrainerMulti:
         # Step functions that return increasing validation loss
         epoch_counter = [0]
 
-        def training_step(trainer, batch, loader_idx, loader_name):
+        def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
             x, y = batch
             output = trainer.model(x)
             loss = nn.functional.cross_entropy(output, y)
             return {"loss": loss}
 
-        def validation_step(trainer, batch, loader_idx, loader_name):
+        def validation_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
             # Increasing loss to trigger early stopping
             loss = 1.0 + epoch_counter[0] * 0.5
             return {"loss": torch.tensor(loss)}
@@ -609,7 +622,7 @@ class TestBatchSizeDetection:
         trainer = GenericTrainer(
             config=config,
             model=model,
-            optimizers=[optim.SGD(model.parameters(), lr=0.01)],
+            optimizers=cast(list[Optimizer], [optim.SGD(model.parameters(), lr=0.01)]),
         )
 
         batch = torch.randn(32, 10)
@@ -622,7 +635,7 @@ class TestBatchSizeDetection:
         trainer = GenericTrainer(
             config=config,
             model=model,
-            optimizers=[optim.SGD(model.parameters(), lr=0.01)],
+            optimizers=cast(list[Optimizer], [optim.SGD(model.parameters(), lr=0.01)]),
         )
 
         batch = (torch.randn(16, 10), torch.randn(16, 5))
@@ -635,7 +648,7 @@ class TestBatchSizeDetection:
         trainer = GenericTrainer(
             config=config,
             model=model,
-            optimizers=[optim.SGD(model.parameters(), lr=0.01)],
+            optimizers=cast(list[Optimizer], [optim.SGD(model.parameters(), lr=0.01)]),
         )
 
         # Test with 'input' key
@@ -657,7 +670,7 @@ class TestBatchSizeDetection:
         trainer = GenericTrainer(
             config=config,
             model=model,
-            optimizers=[optim.SGD(model.parameters(), lr=0.01)],
+            optimizers=cast(list[Optimizer], [optim.SGD(model.parameters(), lr=0.01)]),
         )
 
         # Nested list

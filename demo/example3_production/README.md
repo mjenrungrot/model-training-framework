@@ -29,19 +29,20 @@ after interruptions (Ctrl+C, SIGTERM, SIGUSR1).
 - Checkpoints are saved frequently (every N steps) to `experiments/<name>/checkpoints/`.
 - On start, the trainer automatically resumes from `latest.ckpt` if present.
 - Ctrl+C, SIGTERM, or SIGUSR1 causes a checkpoint to be written before exit; the next run continues seamlessly.
+- Uses 2 dataloaders and gradient accumulation by default for realism; adjust in `config.py` if desired.
 
 ### Simulate Pre-emption Locally
 
-- Use an environment variable to set a timeout in seconds. The training script will send SIGUSR1 to itself after the timeout, forcing a checkpoint and clean exit.
-- Example:
-  - `EXAMPLE3_TIMEOUT_SEC=5 python demo/example3_production/orchestrate.py local`
-  - Re-run the same command again; it will resume from the latest checkpoint and continue.
+- No flags needed. The demo pre-empts automatically every ~30 seconds and saves a checkpoint.
+- Just run:
+  - `python demo/example3_production/orchestrate.py local`
+- Re-run the same command; the run resumes from the latest checkpoint and continues.
 
 ### Simulate Pre-emption on SLURM
 
-- You can also embed the same env var in your submission environment. For actual SLURM submission, use:
-  - `EXAMPLE3_TIMEOUT_SEC=60 python demo/example3_production/orchestrate.py slurm submit`
-  - Jobs will receive SIGUSR1 after 60s, save a checkpoint, and exit; re-submitting resumes.
+- For actual SLURM submission:
+  - `python demo/example3_production/orchestrate.py slurm submit`
+  - Jobs will pre-empt every ~30s, save a checkpoint, and exit; re-submitting resumes.
 
 ## Notes
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import contextlib
+import importlib
 import logging
 import random
 import signal
@@ -21,11 +22,12 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 
-try:
-    import psutil as _psutil
-except Exception:  # pragma: no cover - optional dependency not required
-    _psutil = None
-psutil: Any | None = _psutil
+_psutil_mod: Any | None = None
+try:  # pragma: no cover - optional dependency not required
+    _psutil_mod = importlib.import_module("psutil")
+except Exception:
+    _psutil_mod = None
+psutil: Any | None = _psutil_mod
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

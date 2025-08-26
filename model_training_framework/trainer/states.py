@@ -440,7 +440,7 @@ def create_initial_resume_state(
 
 
 def update_resume_state(
-    current_state: ResumeState,
+    current_state: ResumeState | dict[str, Any],
     phase: TrainerPhase,
     epoch: int | None = None,
     global_step: int | None = None,
@@ -467,6 +467,18 @@ def update_resume_state(
     Returns:
         Updated ResumeState
     """
+    # Convert from dict if needed for robustness
+    if isinstance(current_state, dict):
+        try:
+            current_state = ResumeState.from_dict(current_state)
+        except Exception:
+            # Fallback to a minimal initial state
+            current_state = ResumeState(
+                phase=TrainerPhase.INIT,
+                epoch=epoch or 0,
+                global_step=global_step or 0,
+            )
+
     return ResumeState(
         phase=phase,
         epoch=epoch if epoch is not None else current_state.epoch,

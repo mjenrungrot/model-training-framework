@@ -13,10 +13,11 @@ This module provides the GenericTrainer class - the main training engine with:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Protocol
+import time
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import torch
-from torch.amp import autocast
+from torch.amp.autocast_mode import autocast
 
 from .checkpoints import CheckpointManager
 from .config import (
@@ -276,6 +277,11 @@ class GenericTrainer:
                 loggers_list=config.logging.composite_loggers,
             )
 
+        # Run outcome flags to distinguish "current run finished" vs "training fully complete"
+        self._was_preempted: bool = False
+        self._was_interrupted: bool = False
+        self._was_failed: bool = False
+
         # Initialize metrics manager
         self.metrics_manager: MetricsManager | None = None
 
@@ -353,6 +359,15 @@ class GenericTrainer:
         if not train_loaders:
             raise ValueError("At least one training dataloader required")
 
+        # Ensure resume_state is of correct type (convert dicts from external loaders)
+        try:
+            from .states import ResumeState as _ResumeState
+
+            if isinstance(self.resume_state, dict):
+                self.resume_state = _ResumeState.from_dict(self.resume_state)
+        except Exception:
+            pass
+
         # Validate IterableDataset checkpointing support if fault tolerance is enabled
         if (
             self.config.fault_tolerance
@@ -421,12 +436,10 @@ class GenericTrainer:
             resumed = True
 
         # Setup reproducibility if configured and not resuming
-        if (
-            not resumed
-            and hasattr(self.config, "seed")
-            and self.config.seed is not None
-        ):
-            seed_all(self.config.seed)
+        if not resumed:
+            seed_value = getattr(self.config, "seed", None)
+            if seed_value is not None:
+                seed_all(seed_value)
 
         logger.info(
             f"Starting training for {max_epochs} epochs with "
@@ -438,9 +451,11 @@ class GenericTrainer:
         except KeyboardInterrupt:
             logger.info("Training interrupted by user")
             self._save_checkpoint(force=True)
+            self._was_interrupted = True
         except Exception:
             logger.exception("Training failed with error: ")
             self._save_checkpoint(force=True)
+            self._was_failed = True
             raise
         finally:
             # Fire training end hooks and cleanup logger/resources
@@ -456,7 +471,19 @@ class GenericTrainer:
                 logger.debug("Logger close error", exc_info=True)
             self.signal_handler.restore_handlers()
 
-        logger.info("Training completed")
+        # Distinguish current run completion from full training completion
+        if self._was_preempted:
+            logger.info(
+                "Run completed (preempted). Checkpoint saved; resume to continue training."
+            )
+        elif self._was_interrupted:
+            logger.info(
+                "Run completed (user interrupt). Checkpoint saved; resume to continue training."
+            )
+        elif self._was_failed:
+            logger.info("Run completed (error). See logs above; checkpoint saved.")
+        else:
+            logger.info("Training fully completed")
 
     def _training_loop(
         self,
@@ -495,7 +522,11 @@ class GenericTrainer:
             # Check for preemption
             if self.signal_handler.is_preemption_requested():
                 logger.info("Preemption requested, saving checkpoint and exiting")
+                t0 = time.time()
                 self._save_checkpoint(force=True)
+                dt = time.time() - t0
+                logger.info(f"Preemption checkpoint saved in {dt:.2f}s")
+                self._was_preempted = True
                 return
 
             # Training epoch
@@ -650,6 +681,21 @@ class GenericTrainer:
         assert self.dataloader_manager is not None
         iterator = self.dataloader_manager.create_epoch_iterator("train", epoch)
 
+        # Log a short schedule preview for demo/debugging
+        try:
+            names = self.dataloader_manager.train_names
+            preview_len = min(20, len(getattr(iterator, "schedule", [])))
+            if preview_len > 0 and self.logger and ddp_is_primary(self.fabric):
+                schedule = getattr(iterator, "schedule", [])[:preview_len]
+                preview_names = ", ".join(names[i] for i in schedule)
+                self.logger.log_text(
+                    "schedule_preview",
+                    f"epoch={epoch} next loaders: {preview_names}",
+                    step=self.global_step,
+                )
+        except Exception:
+            logger.debug("Failed to log schedule preview", exc_info=True)
+
         # Accumulation state
         accumulation_counter = 0
         accumulated_loss = 0.0
@@ -658,14 +704,20 @@ class GenericTrainer:
         assert self.dataloader_manager is not None
         val_loaders = self.dataloader_manager.val_loaders
 
+        last_loader_idx: int | None = None
         for loader_idx, batch in iterator:
+            last_loader_idx = loader_idx
             # Check for preemption
             if self.signal_handler.is_preemption_requested():
                 logger.info("Preemption requested during training")
                 if ddp_is_primary(self.fabric):
+                    t0 = time.time()
                     self._save_checkpoint(force=True)
+                    dt = time.time() - t0
+                    logger.info(f"Preemption checkpoint saved in {dt:.2f}s")
                 # All ranks wait for checkpoint save
                 ddp_barrier(self.fabric)
+                self._was_preempted = True
                 assert self.metrics_manager is not None
                 return self.metrics_manager.get_train_metrics(
                     include_global=self.config.logging.log_global_metrics,
@@ -753,6 +805,22 @@ class GenericTrainer:
                         self.steps_since_validation
                         >= self.config.validation.every_n_steps
                     ):
+                        # Log validation start with aggregator info
+                        try:
+                            if self.logger and ddp_is_primary(self.fabric):
+                                agg = self.config.validation.aggregation.value
+                                nload = (
+                                    len(self.dataloader_manager.val_loaders)
+                                    if self.dataloader_manager.val_loaders
+                                    else 0
+                                )
+                                self.logger.log_text(
+                                    "validation_start",
+                                    f"step-based validation start (agg={agg}, loaders={nload})",
+                                    step=self.global_step,
+                                )
+                        except Exception:
+                            logger.debug("validation_start log failed", exc_info=True)
                         # Call validation hooks
                         self.hook_manager.call_hook("on_validation_start", self, epoch)
                         val_metrics = self._validation_epoch(epoch)
@@ -763,6 +831,18 @@ class GenericTrainer:
                         # Log validation metrics
                         if self.logger and ddp_is_primary(self.fabric):
                             self.logger.log_metrics(val_metrics, self.global_step)
+                            # Log validation done with aggregator info
+                            try:
+                                agg = self.config.validation.aggregation.value
+                                self.logger.log_text(
+                                    "validation_done",
+                                    f"validation done (agg={agg})",
+                                    step=self.global_step,
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "validation_done log failed", exc_info=True
+                                )
                         self.steps_since_validation = 0
 
             # Log step metrics through logger
@@ -784,10 +864,10 @@ class GenericTrainer:
         if (
             accumulation_counter % self.config.performance.gradient_accumulation_steps
             != 0
-        ):
+        ) and (last_loader_idx is not None):
             # Need to step optimizer for remaining accumulated gradients
             # Use the last loader's optimizer
-            last_loader_idx = loader_idx  # From the last iteration
+            # Use the last observed loader index for selecting optimizer
             self._optimizer_step(last_loader_idx)
 
             # Check for step-based validation after final optimizer step
@@ -799,6 +879,21 @@ class GenericTrainer:
             ):
                 self.steps_since_validation += 1
                 if self.steps_since_validation >= self.config.validation.every_n_steps:
+                    try:
+                        if self.logger and ddp_is_primary(self.fabric):
+                            agg = self.config.validation.aggregation.value
+                            nload = (
+                                len(self.dataloader_manager.val_loaders)
+                                if self.dataloader_manager.val_loaders
+                                else 0
+                            )
+                            self.logger.log_text(
+                                "validation_start",
+                                f"step-based validation start (agg={agg}, loaders={nload})",
+                                step=self.global_step,
+                            )
+                    except Exception:
+                        logger.debug("validation_start log failed", exc_info=True)
                     # Call validation hooks
                     self.hook_manager.call_hook("on_validation_start", self, epoch)
                     val_metrics = self._validation_epoch(epoch)
@@ -809,6 +904,15 @@ class GenericTrainer:
                     # Log validation metrics
                     if self.logger and ddp_is_primary(self.fabric):
                         self.logger.log_metrics(val_metrics, self.global_step)
+                        try:
+                            agg = self.config.validation.aggregation.value
+                            self.logger.log_text(
+                                "validation_done",
+                                f"validation done (agg={agg})",
+                                step=self.global_step,
+                            )
+                        except Exception:
+                            logger.debug("validation_done log failed", exc_info=True)
                     self.steps_since_validation = 0
 
         # Return aggregated metrics from MetricsManager
@@ -1157,22 +1261,37 @@ class GenericTrainer:
     ) -> None:
         """Save checkpoint with timeout handling."""
         try:
+            # Ensure resume_state is a proper ResumeState object (not a raw dict)
+            try:
+                from .states import ResumeState as _ResumeState
+
+                if isinstance(self.resume_state, dict):
+                    self.resume_state = _ResumeState.from_dict(self.resume_state)  # type: ignore[assignment]
+            except Exception:
+                pass
+
             # Update resume state with dataloader manager state
             if self.dataloader_manager:
+                from .states import ResumeState as _ResumeState
+
+                rs_typed = cast(_ResumeState, self.resume_state)
                 self.resume_state = update_resume_state(
-                    self.resume_state,
-                    self.resume_state.phase,
+                    rs_typed,
+                    rs_typed.phase,
                     dataloader_manager_state=self.dataloader_manager.get_state(),
                     save_rng=self.config.checkpoint.save_rng,
                     choice_rng=getattr(self.dataloader_manager, "choice_rng", None),
                 )
 
             # Save checkpoint with all optimizers and schedulers
+            from .states import ResumeState as _ResumeState
+
+            rs_typed = cast(_ResumeState, self.resume_state)
             checkpoint_path = self.checkpoint_manager.save_checkpoint(
                 model=self.model,
                 optimizers=self.optimizers,  # Save all optimizers
                 schedulers=self.schedulers,  # Save all schedulers
-                resume_state=self.resume_state,
+                resume_state=rs_typed,
                 epoch=self.current_epoch,
                 global_step=self.global_step,
                 metrics=metrics,
@@ -1258,11 +1377,26 @@ class GenericTrainer:
 
                 # Restore resume state
                 if broadcast_data["resume_state"] is not None:
-                    self.resume_state = broadcast_data["resume_state"]
+                    rs = broadcast_data["resume_state"]
+                    try:
+                        from .states import ResumeState as _ResumeState
+
+                        if isinstance(rs, dict):
+                            self.resume_state = _ResumeState.from_dict(rs)
+                        else:
+                            self.resume_state = rs
+                    except Exception:
+                        self.resume_state = rs
 
                     # Restore RNG state if available
-                    if self.resume_state.rng is not None:
-                        restore_rng_state(self.resume_state.rng)
+                    try:
+                        from .states import ResumeState as _ResumeState
+
+                        rs_typed = cast(_ResumeState, self.resume_state)
+                        if rs_typed.rng is not None:
+                            restore_rng_state(rs_typed.rng)
+                    except Exception:
+                        pass
 
                 # Restore DataLoaderManager state if available
                 # Check both top-level (free save function) and resume_state (CheckpointManager)
@@ -1278,14 +1412,22 @@ class GenericTrainer:
                     )
                 elif (
                     self.resume_state
-                    and self.resume_state.dataloader_manager_state
+                    and cast("Any", self.resume_state).dataloader_manager_state
                     and self.dataloader_manager
                 ):
                     # State inside resume_state (from CheckpointManager)
                     assert self.dataloader_manager is not None
-                    self.dataloader_manager.load_state(
-                        self.resume_state.dataloader_manager_state, skip_broadcast=True
-                    )
+                    try:
+                        from .states import ResumeState as _ResumeState
+
+                        rs_typed = cast(_ResumeState, self.resume_state)
+                        state = rs_typed.dataloader_manager_state
+                        if state is not None:
+                            self.dataloader_manager.load_state(
+                                state, skip_broadcast=True
+                            )
+                    except Exception:
+                        pass
 
                 # Restore choice RNG if available
                 # Check both top-level and resume_state locations
@@ -1298,15 +1440,21 @@ class GenericTrainer:
                     )
                 elif (
                     self.resume_state
-                    and self.resume_state.choice_rng
+                    and cast("Any", self.resume_state).choice_rng
                     and hasattr(self.dataloader_manager, "choice_rng")
                 ):
                     # Use the helper function for resume_state.choice_rng
                     assert self.dataloader_manager is not None
                     assert hasattr(self.dataloader_manager, "choice_rng")
-                    restore_choice_rng_state(
-                        self.resume_state.choice_rng, self.dataloader_manager.choice_rng
-                    )
+                    try:
+                        from .states import ResumeState as _ResumeState
+
+                        rs_typed = cast(_ResumeState, self.resume_state)
+                        restore_choice_rng_state(
+                            rs_typed.choice_rng, self.dataloader_manager.choice_rng
+                        )
+                    except Exception:
+                        pass
 
                 logger.info(
                     f"Resumed from checkpoint: epoch={self.current_epoch}, step={self.global_step}"
@@ -1328,8 +1476,9 @@ class GenericTrainer:
             return
 
         # If wandb_run exists (for test compatibility), use it
-        if hasattr(self, "wandb_run"):
-            self.wandb_run.log(metrics, step=step)
+        wandb_run = getattr(self, "wandb_run", None)
+        if wandb_run is not None:
+            wandb_run.log(metrics, step=step)
         # Otherwise use the logger if available
         elif self.logger:
             self.logger.log_metrics(metrics, step)
@@ -1343,8 +1492,9 @@ class GenericTrainer:
             return
 
         # If wandb_run exists (for test compatibility), use it
-        if hasattr(self, "wandb_run"):
-            self.wandb_run.log(metrics, epoch=epoch)
+        wandb_run = getattr(self, "wandb_run", None)
+        if wandb_run is not None:
+            wandb_run.log(metrics, epoch=epoch)
         # Otherwise use the logger if available
         elif self.logger:
             self.logger.log_epoch_summary(epoch, metrics)

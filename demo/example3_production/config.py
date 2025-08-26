@@ -8,7 +8,11 @@ from dataclasses import asdict
 import json
 from typing import Any
 
-from model_training_framework.config import ParameterGrid, ParameterGridSearch
+from model_training_framework.config import (
+    NamingStrategy,
+    ParameterGrid,
+    ParameterGridSearch,
+)
 
 DEFAULT_EXPERIMENT_NAME = "example3_production"
 
@@ -21,22 +25,33 @@ def build_base_config() -> dict[str, Any]:
     return {
         "experiment_name": DEFAULT_EXPERIMENT_NAME,
         "model": {"type": "mlp", "hidden_size": 128, "num_layers": 2},
-        "training": {"max_epochs": 2, "gradient_accumulation_steps": 1},
+        # Target ~2-3 minutes with periodic pre-emption locally
+        "training": {"max_epochs": 5, "gradient_accumulation_steps": 2},
         "data": {"dataset_name": "synthetic", "batch_size": 16, "num_workers": 0},
         "optimizer": {"type": "adamw", "lr": 3e-4, "weight_decay": 0.01},
         "logging": {"use_wandb": False},
         # Demo multi-dataloader behavior via custom params
         "custom_params": {
-            "multi_loader": {"num_loaders": 2, "sampling_strategy": "round_robin"}
+            "multi_loader": {
+                "num_loaders": 2,
+                "sampling_strategy": "round_robin",  # or "weighted"
+                "dataloader_weights": [0.6, 0.4],  # used if weighted
+            }
         },
     }
 
 
 def build_parameter_grid_search(base_config: dict[str, Any]) -> ParameterGridSearch:
     grid_search = ParameterGridSearch(base_config)
+    # Use human-readable parameter-based naming for demonstration
+    grid_search.set_naming_strategy(NamingStrategy.PARAMETER_BASED)
     grid = ParameterGrid(name="prod_demo")
     grid.add_parameter("optimizer.lr", [1e-4, 3e-4])
-    grid.add_parameter("data.batch_size", [16, 32])
+    grid.add_parameter("data.batch_size", [16])
+    grid.add_parameter("training.gradient_accumulation_steps", [1, 2])
+    grid.add_parameter(
+        "custom_params.multi_loader.sampling_strategy", ["round_robin", "weighted"]
+    )
     grid_search.add_grid(grid)
     return grid_search
 

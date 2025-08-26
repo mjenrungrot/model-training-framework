@@ -4,14 +4,16 @@ Example 3 orchestrator: build configs, run locally or submit to SLURM.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 import sys
 
+# Local imports when run as a script
+from config import build_base_config, build_parameter_grid_search
+from train_script import run_training_from_config
+
 from model_training_framework.config import ConfigurationManager
 from model_training_framework.slurm import SLURMLauncher
-
-from .config import build_base_config, build_parameter_grid_search
-from .train_script import run_training_from_config
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
@@ -50,6 +52,40 @@ def _find_repo_root(start: Path) -> Path:
     return start
 
 
+def _setup_logger(log_path: Path) -> logging.Logger:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger("demo3")
+    logger.setLevel(logging.INFO)
+    # Remove existing handlers to avoid duplicates across runs
+    for h in list(logger.handlers):
+        logger.removeHandler(h)
+    formatter = logging.Formatter(
+        fmt="[%(asctime)s] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    fh = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    fh.setFormatter(formatter)
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setFormatter(formatter)
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+    # Also configure root logger so framework logs (e.g., checkpoint saves) are captured
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    # Clear root handlers to prevent duplicates
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    root_fh = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    root_fh.setFormatter(formatter)
+    root_ch = logging.StreamHandler(sys.stdout)
+    root_ch.setFormatter(formatter)
+    root.addHandler(root_fh)
+    root.addHandler(root_ch)
+    # Ensure demo logger doesn't double-propagate
+    logger.propagate = False
+    return logger
+
+
 def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] not in {"local", "slurm"}:
         print("Usage: python orchestrate.py <local|slurm> [submit]")
@@ -62,22 +98,26 @@ def main() -> None:
 
     # Build configs
     base = build_base_config()
-    grid = build_parameter_grid_search(base)
-    experiments = list(grid.generate_experiments())
+    grid_search = build_parameter_grid_search(base)
+    experiments = list(grid_search.generate_experiments())
+    cm = ConfigurationManager(project_root=PROJECT_ROOT)
     print(f"Generated {len(experiments)} experiment configs")
 
-    cm = ConfigurationManager(project_root=PROJECT_ROOT)
     for exp in experiments:
         exp_dir = experiments_dir / exp.experiment_name
         exp_dir.mkdir(parents=True, exist_ok=True)
-        cm.save_config(exp, exp_dir / "config.yaml", format="yaml")
+        cm.save_config(exp, exp_dir / "config.json", format="json")
 
     if mode == "local":
         for i, exp in enumerate(experiments, 1):
-            print(f"[{i}/{len(experiments)}] Starting {exp.experiment_name}")
+            log_path = experiments_dir / exp.experiment_name / "local_run.log"
+            logger = _setup_logger(log_path)
+            logger.info("[%d/%d] Starting %s", i, len(experiments), exp.experiment_name)
             run_training_from_config(exp.experiment_name)
-            print(f"[{i}/{len(experiments)}] Finished {exp.experiment_name}\n")
-        print("All local runs completed.")
+            logger.info(
+                "[%d/%d] Finished %s\n", i, len(experiments), exp.experiment_name
+            )
+        logging.getLogger("demo3").info("All local runs completed.")
         return
 
     # SLURM

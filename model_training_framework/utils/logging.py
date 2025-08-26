@@ -15,13 +15,16 @@ import logging
 import logging.handlers
 from pathlib import Path
 import sys
-from typing import ClassVar
+from typing import Any, ClassVar
 
+colorlog: Any | None
 try:
-    import colorlog
+    import colorlog as _colorlog
 
+    colorlog = _colorlog
     HAS_COLORLOG = True
 except ImportError:
+    colorlog = None
     HAS_COLORLOG = False
 
 
@@ -122,6 +125,7 @@ def setup_logging(
 
     # Use colorlog if available and colors requested
     if HAS_COLORLOG and use_colors:
+        assert colorlog is not None
         console_formatter: logging.Formatter = colorlog.ColoredFormatter(
             format_string
             or "%(log_color)s[%(asctime)s] %(levelname)-8s%(reset)s %(name)s: %(message)s",
@@ -190,9 +194,12 @@ def get_logger(name: str, level: str | int | None = None) -> logging.Logger:
     logger = logging.getLogger(name)
 
     if level is not None:
+        resolved_level: int | str
         if isinstance(level, str):
-            level = getattr(logging, level.upper())
-        logger.setLevel(level)
+            resolved_level = getattr(logging, level.upper())
+        else:
+            resolved_level = level
+        logger.setLevel(resolved_level)
 
     return logger
 

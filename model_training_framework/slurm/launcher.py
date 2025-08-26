@@ -13,10 +13,12 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import logging
 from pathlib import Path
+import shutil
 import subprocess
 import time
 from typing import TYPE_CHECKING, Any
 
+from ..config.manager import ConfigurationManager
 from .git_ops import BranchManager, GitManager
 from .templates import (
     SBATCHTemplateEngine,
@@ -147,9 +149,16 @@ class SLURMLauncher:
             )
             result.sbatch_script_path = sbatch_path
 
-            # Save configuration for reproducibility
-            exp_dir / "config.yaml"
-            # TODO: Implement config serialization
+            # Save configuration for reproducibility (both YAML and JSON)
+            try:
+                cm = ConfigurationManager(project_root=self.project_root)
+                cm.save_config(config, exp_dir / "config.yaml", format="yaml")
+                cm.save_config(config, exp_dir / "config.json", format="json")
+            except Exception:
+                logger.exception(
+                    "Failed to serialize experiment config for %s",
+                    config.experiment_name,
+                )
 
             if dry_run:
                 logger.info(f"Dry run: Would submit job for {config.experiment_name}")
@@ -488,7 +497,36 @@ class SLURMLauncher:
             )
             cleaned_items.extend([f"branch:{branch}" for branch in old_branches])
 
-            # TODO: Add experiment directory cleanup logic
+            # Remove experiment directories older than the cutoff
+            cutoff = time.time() - (days * 24 * 3600)
+            try:
+                for child in self.experiments_dir.iterdir():
+                    if not child.is_dir():
+                        continue
+
+                    # Get newest mtime within the directory tree; fall back to dir mtime
+                    newest_mtime = child.stat().st_mtime
+                    for p in child.rglob("*"):
+                        try:
+                            newest_mtime = max(newest_mtime, p.stat().st_mtime)
+                        except Exception:
+                            # Ignore files that might disappear during traversal
+                            continue
+
+                    if newest_mtime < cutoff:
+                        cleaned_items.append(f"dir:{child}")
+                        if not dry_run:
+                            try:
+                                shutil.rmtree(child)
+                                logger.info(
+                                    "Deleted old experiment directory: %s", child
+                                )
+                            except Exception as e:
+                                logger.warning("Failed to delete %s: %s", child, e)
+            except Exception:
+                logger.exception(
+                    "Failed while scanning experiment directories for cleanup"
+                )
 
             if dry_run:
                 logger.info(f"Dry run: Would clean up {len(cleaned_items)} items")

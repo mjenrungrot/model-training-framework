@@ -73,7 +73,15 @@ class CheckpointPayload:
 
     def to_dict(self) -> dict[str, Any]:
         # Preserve None entries to keep stable keys in saved files
-        return asdict(self)
+        data = asdict(self)
+        try:
+            from .states import ResumeState as _ResumeState
+
+            if isinstance(self.resume_state, _ResumeState):
+                data["resume_state"] = self.resume_state.to_dict()
+        except Exception:
+            pass
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CheckpointPayload:
@@ -286,9 +294,18 @@ def load_checkpoint(path: Path, trainer: GenericTrainer) -> CheckpointPayload:
                     "Failed to restore explicit choice RNG state", exc_info=True
                 )
 
-    # Restore resume state
+    # Restore resume state (convert dict to dataclass if needed)
     if "resume_state" in checkpoint_data:
-        trainer.resume_state = checkpoint_data["resume_state"]
+        rs = checkpoint_data["resume_state"]
+        try:
+            from .states import ResumeState as _ResumeState
+
+            if isinstance(rs, dict):
+                trainer.resume_state = _ResumeState.from_dict(rs)
+            else:
+                trainer.resume_state = rs
+        except Exception:
+            trainer.resume_state = rs
 
     # Restore optional fields
     if "metrics_history" in checkpoint_data:

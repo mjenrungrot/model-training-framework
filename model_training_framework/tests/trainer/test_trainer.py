@@ -186,13 +186,13 @@ class TestCheckpointManager:
             )
             manager = CheckpointManager(config, "test_experiment")
 
-            # Should save on epoch boundaries
-            assert manager.should_save_checkpoint(epoch=2, global_step=50)
-            assert not manager.should_save_checkpoint(epoch=1, global_step=50)
+            # Should save on epoch boundaries (0-based epoch indexing)
+            assert manager.should_save_checkpoint(epoch=1, global_step=50)
+            assert not manager.should_save_checkpoint(epoch=0, global_step=50)
 
             # Should save on step boundaries
-            assert manager.should_save_checkpoint(epoch=1, global_step=100)
-            assert not manager.should_save_checkpoint(epoch=1, global_step=99)
+            assert manager.should_save_checkpoint(epoch=0, global_step=100)
+            assert not manager.should_save_checkpoint(epoch=0, global_step=99)
 
             # Should save when forced
             assert manager.should_save_checkpoint(epoch=1, global_step=50, force=True)
@@ -469,7 +469,15 @@ class TestGenericTrainer:
             config, mock_model, [mock_optimizer], fabric=mock_fabric
         )
 
-        def dummy_training_step(trainer, batch, dataloader_idx, dataloader_name):
+        from typing import Any
+
+        def dummy_training_step(
+            trainer: GenericTrainer,
+            batch: Any,
+            batch_idx: int,
+            dataloader_idx: int,
+            dataloader_name: str,
+        ) -> dict[str, Any]:
             return {"loss": 0.5}
 
         trainer.set_training_step(dummy_training_step)
@@ -482,7 +490,15 @@ class TestGenericTrainer:
             config, mock_model, [mock_optimizer], fabric=mock_fabric
         )
 
-        def dummy_validation_step(trainer, batch, dataloader_idx, dataloader_name):
+        from typing import Any
+
+        def dummy_validation_step(
+            trainer: GenericTrainer,
+            batch: Any,
+            batch_idx: int,
+            dataloader_idx: int,
+            dataloader_name: str,
+        ) -> dict[str, Any]:
             return {"loss": 0.3}
 
         trainer.set_validation_step(dummy_validation_step)
@@ -499,7 +515,9 @@ class TestGenericTrainer:
         )
 
         # Mock training step function
-        def mock_training_step(trainer, batch, dataloader_idx, dataloader_name):
+        def mock_training_step(
+            trainer, batch, batch_idx, dataloader_idx, dataloader_name
+        ):
             import torch
 
             return {"loss": torch.tensor(0.5, requires_grad=True)}
@@ -512,7 +530,7 @@ class TestGenericTrainer:
         batch = (torch.randn(2, 10), torch.randn(2, 1))
 
         # Execute training step
-        metrics = trainer._training_step(batch, 0, "default", 0)
+        metrics = trainer._training_step(batch, 0, "default", 0, 0)
 
         assert "loss" in metrics
         # global_step is not incremented in _training_step itself,
