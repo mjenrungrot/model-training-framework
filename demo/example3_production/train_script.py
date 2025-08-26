@@ -4,8 +4,11 @@ Example 3 training script: single-experiment run with auto-resume.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import signal
 import sys
+import threading
 
 import torch
 
@@ -172,15 +175,37 @@ def run_training_from_config(identifier: str) -> None:
     )
     resume_path = str(latest) if latest and latest.exists() else None
 
+    # Optional preemption timeout (sec) via EXAMPLE3_TIMEOUT_SEC
+    timeout_env = os.environ.get("EXAMPLE3_TIMEOUT_SEC")
+    timer: threading.Timer | None = None
+    if timeout_env:
+        try:
+            timeout = float(timeout_env)
+            if timeout > 0:
+
+                def _preempt() -> None:
+                    print(f"[demo3] Simulating preemption after {timeout}s via SIGUSR1")
+                    os.kill(os.getpid(), signal.SIGUSR1)
+
+                timer = threading.Timer(timeout, _preempt)
+                timer.daemon = True
+                timer.start()
+        except ValueError:
+            pass
+
     print(
         f"▶️  Run: {exp.experiment_name} lr={exp.optimizer.lr} bs={exp.data.batch_size} loaders={num_loaders}"
     )
-    trainer.fit(
-        train_loaders=train_loaders,
-        val_loaders=val_loaders,
-        max_epochs=exp.training.max_epochs,
-        resume_from_checkpoint=resume_path,
-    )
+    try:
+        trainer.fit(
+            train_loaders=train_loaders,
+            val_loaders=val_loaders,
+            max_epochs=exp.training.max_epochs,
+            resume_from_checkpoint=resume_path,
+        )
+    finally:
+        if timer is not None:
+            timer.cancel()
 
 
 if __name__ == "__main__":
