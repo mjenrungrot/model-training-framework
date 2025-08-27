@@ -44,8 +44,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+      # jq is preinstalled on ubuntu-latest; skip explicit install to save time
 
       - name: Install Codex CLI
         run: |
