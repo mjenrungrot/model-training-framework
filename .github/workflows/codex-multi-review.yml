@@ -219,7 +219,9 @@ jobs:
           open('_A.prompt','w',encoding='utf-8').write(tmpl)
           PY
           codex exec < _A.prompt > A.out || true
-          jq -cr 'try (fromjson) catch empty' A.out > A.json || echo '{}' > A.json
+          # Filter any banner/log lines before the first JSON brace
+          sed -n '/^{/,$p' A.out > A.clean || true
+          jq -cr 'try (fromjson) catch empty' A.clean > A.json || echo '{}' > A.json
 
       - name: Validate A.json / Retry JSON-only
         if: always()
@@ -227,7 +229,8 @@ jobs:
           if ! jq -e . A.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _A.prompt
             codex exec < _A.prompt > A.out || true
-            jq -cr 'try (fromjson) catch empty' A.out > A.json || echo '{}' > A.json
+            sed -n '/^{/,$p' A.out > A.clean || true
+            jq -cr 'try (fromjson) catch empty' A.clean > A.json || echo '{}' > A.json
           fi
 
       - name: Reviewer B — Documentation
@@ -252,7 +255,8 @@ jobs:
           open('_B.prompt','w',encoding='utf-8').write(tmpl)
           PY
           codex exec < _B.prompt > B.out || true
-          jq -cr 'try (fromjson) catch empty' B.out > B.json || echo '{}' > B.json
+          sed -n '/^{/,$p' B.out > B.clean || true
+          jq -cr 'try (fromjson) catch empty' B.clean > B.json || echo '{}' > B.json
 
       - name: Validate B.json / Retry JSON-only
         if: always()
@@ -260,7 +264,8 @@ jobs:
           if ! jq -e . B.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _B.prompt
             codex exec < _B.prompt > B.out || true
-            jq -cr 'try (fromjson) catch empty' B.out > B.json || echo '{}' > B.json
+            sed -n '/^{/,$p' B.out > B.clean || true
+            jq -cr 'try (fromjson) catch empty' B.clean > B.json || echo '{}' > B.json
           fi
 
       - name: Reviewer C — Performance
@@ -285,7 +290,8 @@ jobs:
           open('_C.prompt','w',encoding='utf-8').write(tmpl)
           PY
           codex exec < _C.prompt > C.out || true
-          jq -cr 'try (fromjson) catch empty' C.out > C.json || echo '{}' > C.json
+          sed -n '/^{/,$p' C.out > C.clean || true
+          jq -cr 'try (fromjson) catch empty' C.clean > C.json || echo '{}' > C.json
 
       - name: Validate C.json / Retry JSON-only
         if: always()
@@ -293,7 +299,8 @@ jobs:
           if ! jq -e . C.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _C.prompt
             codex exec < _C.prompt > C.out || true
-            jq -cr 'try (fromjson) catch empty' C.out > C.json || echo '{}' > C.json
+            sed -n '/^{/,$p' C.out > C.clean || true
+            jq -cr 'try (fromjson) catch empty' C.clean > C.json || echo '{}' > C.json
           fi
 
       - name: Unanimity check
@@ -323,7 +330,8 @@ jobs:
           open('_META.prompt','w',encoding='utf-8').write(tmpl)
           PY
           codex exec < _META.prompt > META.out || true
-          jq -cr 'try (fromjson) catch empty' META.out > META.json || echo '{}' > META.json
+          sed -n '/^{/,$p' META.out > META.clean || true
+          jq -cr 'try (fromjson) catch empty' META.clean > META.json || echo '{}' > META.json
 
       # -------- Find (or create) our comment; delete older Codex comments only ----------
       - name: List comments
