@@ -27,6 +27,7 @@ jobs:
     timeout-minutes: 30
     env:
       CODEX_REASONING_EFFORT: high
+      DEBUG_SNIPPET_CHARS: "4000"
 
     steps:
       - name: Detect context (PR vs comment)
@@ -300,11 +301,11 @@ jobs:
           open('_A.prompt','w',encoding='utf-8').write(tmpl)
           PY
           $CODEX_CMD exec < _A.prompt > A.out || true
-          echo '::group::Debug A.out (first 800 chars)'
-          head -c 800 A.out || true; echo; echo '::endgroup::'
+          echo '::group::Debug A.out (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} A.out || true; echo; echo '::endgroup::'
           python extract_json.py A.out A.clean || true
-          echo '::group::Debug A.clean (first 800 chars)'
-          head -c 800 A.clean || true; echo; echo '::endgroup::'
+          echo '::group::Debug A.clean (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} A.clean || true; echo; echo '::endgroup::'
           if [ -s A.clean ] && jq -e . A.clean >/dev/null 2>&1; then jq -c . A.clean > A.json; else echo '{}' > A.json; fi
 
       - name: Validate A.json / Retry JSON-only
@@ -313,11 +314,42 @@ jobs:
           if ! jq -e . A.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders like 'number (0.0-1.0)'; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _A.prompt
             $CODEX_CMD exec < _A.prompt > A.out || true
-            echo '::group::Retry Debug A.out (first 800 chars)'
-            head -c 800 A.out || true; echo; echo '::endgroup::'
+            echo '::group::Retry Debug A.out (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} A.out || true; echo; echo '::endgroup::'
             python extract_json.py A.out A.clean || true
-            echo '::group::Retry Debug A.clean (first 800 chars)'
-            head -c 800 A.clean || true; echo; echo '::endgroup::'
+            echo '::group::Retry Debug A.clean (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} A.clean || true; echo; echo '::endgroup::'
+            # Additional parse stats for A
+            echo '::group::A.parse stats'
+            python - <<'PY'
+            import json
+            s=open('A.out','rb').read().decode('utf-8','ignore')
+            ins=esc=False; depth=0; start=-1; spans=[]
+            for i,ch in enumerate(s):
+                if ins:
+                    if esc: esc=False
+                    elif ch=='\\': esc=True
+                    elif ch=='"': ins=False
+                    continue
+                if ch=='"': ins=True
+                elif ch=='{':
+                    if depth==0: start=i
+                    depth+=1
+                elif ch=='}' and depth>0:
+                    depth-=1
+                    if depth==0 and start!=-1:
+                        spans.append((start,i+1))
+            print(f"spans_found={len(spans)}")
+            if spans:
+                a,b=spans[-1]
+                print(f"selected_span=[{a},{b}) length={b-a}")
+            try:
+                obj=json.loads(open('A.clean','r',encoding='utf-8').read())
+                print("clean_json_valid=true")
+            except Exception as e:
+                print("clean_json_valid=false", str(e))
+            PY
+            echo '::endgroup::'
             if [ -s A.clean ] && jq -e . A.clean >/dev/null 2>&1; then jq -c . A.clean > A.json; else echo '{}' > A.json; fi
           fi
 
@@ -344,11 +376,11 @@ jobs:
           open('_B.prompt','w',encoding='utf-8').write(tmpl)
           PY
           $CODEX_CMD exec < _B.prompt > B.out || true
-          echo '::group::Debug B.out (first 800 chars)'
-          head -c 800 B.out || true; echo; echo '::endgroup::'
+          echo '::group::Debug B.out (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} B.out || true; echo; echo '::endgroup::'
           python extract_json.py B.out B.clean || true
-          echo '::group::Debug B.clean (first 800 chars)'
-          head -c 800 B.clean || true; echo; echo '::endgroup::'
+          echo '::group::Debug B.clean (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} B.clean || true; echo; echo '::endgroup::'
           if [ -s B.clean ] && jq -e . B.clean >/dev/null 2>&1; then jq -c . B.clean > B.json; else echo '{}' > B.json; fi
 
       - name: Validate B.json / Retry JSON-only
@@ -357,11 +389,11 @@ jobs:
           if ! jq -e . B.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _B.prompt
             $CODEX_CMD exec < _B.prompt > B.out || true
-            echo '::group::Retry Debug B.out (first 800 chars)'
-            head -c 800 B.out || true; echo; echo '::endgroup::'
+            echo '::group::Retry Debug B.out (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} B.out || true; echo; echo '::endgroup::'
             python extract_json.py B.out B.clean || true
-            echo '::group::Retry Debug B.clean (first 800 chars)'
-            head -c 800 B.clean || true; echo; echo '::endgroup::'
+            echo '::group::Retry Debug B.clean (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} B.clean || true; echo; echo '::endgroup::'
             if [ -s B.clean ] && jq -e . B.clean >/dev/null 2>&1; then jq -c . B.clean > B.json; else echo '{}' > B.json; fi
           fi
 
@@ -388,11 +420,11 @@ jobs:
           open('_C.prompt','w',encoding='utf-8').write(tmpl)
           PY
           $CODEX_CMD exec < _C.prompt > C.out || true
-          echo '::group::Debug C.out (first 800 chars)'
-          head -c 800 C.out || true; echo; echo '::endgroup::'
+          echo '::group::Debug C.out (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} C.out || true; echo; echo '::endgroup::'
           python extract_json.py C.out C.clean || true
-          echo '::group::Debug C.clean (first 800 chars)'
-          head -c 800 C.clean || true; echo; echo '::endgroup::'
+          echo '::group::Debug C.clean (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} C.clean || true; echo; echo '::endgroup::'
           if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else echo '{}' > C.json; fi
 
       - name: Validate C.json / Retry JSON-only
@@ -401,11 +433,11 @@ jobs:
           if ! jq -e . C.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _C.prompt
             $CODEX_CMD exec < _C.prompt > C.out || true
-            echo '::group::Retry Debug C.out (first 800 chars)'
-            head -c 800 C.out || true; echo; echo '::endgroup::'
+            echo '::group::Retry Debug C.out (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} C.out || true; echo; echo '::endgroup::'
             python extract_json.py C.out C.clean || true
-            echo '::group::Retry Debug C.clean (first 800 chars)'
-            head -c 800 C.clean || true; echo; echo '::endgroup::'
+            echo '::group::Retry Debug C.clean (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} C.clean || true; echo; echo '::endgroup::'
             if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else echo '{}' > C.json; fi
           fi
 
@@ -437,11 +469,11 @@ jobs:
           open('_META.prompt','w',encoding='utf-8').write(tmpl)
           PY
           $CODEX_CMD exec < _META.prompt > META.out || true
-          echo '::group::Debug META.out (first 800 chars)'
-          head -c 800 META.out || true; echo; echo '::endgroup::'
+          echo '::group::Debug META.out (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} META.out || true; echo; echo '::endgroup::'
           python extract_json.py META.out META.clean || true
-          echo '::group::Debug META.clean (first 800 chars)'
-          head -c 800 META.clean || true; echo; echo '::endgroup::'
+          echo '::group::Debug META.clean (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} META.clean || true; echo; echo '::endgroup::'
           if [ -s META.clean ] && jq -e . META.clean >/dev/null 2>&1; then jq -c . META.clean > META.json; else echo '{}' > META.json; fi
 
       # -------- Find (or create) our comment; delete older Codex comments only ----------
