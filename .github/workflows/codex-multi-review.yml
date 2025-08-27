@@ -447,15 +447,8 @@ jobs:
             if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else echo '{}' > C.json; fi
           fi
 
-      - name: Unanimity check
+      - name: Meta Reviewer
         if: env.CLI_AVAILABLE == 'true'
-        id: agree
-        run: |
-          D1=$(jq -r '.decision' A.json); D2=$(jq -r '.decision' B.json); D3=$(jq -r '.decision' C.json)
-          if [ "$D1" = "$D2" ] && [ "$D2" = "$D3" ] && [ "$D1" != "null" ]; then echo "unanimous=true" >> $GITHUB_OUTPUT; else echo "unanimous=false" >> $GITHUB_OUTPUT; fi
-
-      - name: Meta Reviewer (if unanimous or forced)
-        if: env.CLI_AVAILABLE == 'true' && (steps.agree.outputs.unanimous == 'true' || github.event.inputs.force_meta == 'true' || env.OPTS_FORCE_META == 'true')
         env:
           BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
           HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
@@ -520,14 +513,9 @@ jobs:
           HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
           STRICT: ${{ env.OPTS_STRICT }}
           SCOPE:  ${{ env.OPTS_SCOPE }}
-          UNAN:   ${{ steps.agree.outputs.unanimous }}
         run: |
           SHORT=$(echo "${HEAD_SHA}" | cut -c1-7)
           TRUNC_NOTE=$([ -n "$TRUNCATED" ] && echo "\n> 🔎 Diff truncated for context. Use \`/codex scope <glob>\` to focus." || echo "")
-
-          # Build decision summary (for meta skip reason)
-          D1=$(jq -r '.decision // "N/A"' A.json); D2=$(jq -r '.decision // "N/A"' B.json); D3=$(jq -r '.decision // "N/A"' C.json)
-          if [ "$UNAN" != "true" ]; then META_NOTE="\n_Meta reviewer skipped (no unanimous decision: A=${D1}, B=${D2}, C=${D3})._"; else META_NOTE=""; fi
 
           make_md () {
             local title="$1"; local f="$2"
@@ -564,8 +552,6 @@ jobs:
               "\n**Overall:** \(.overall_score) / 10  \n*Meta decision:* \(.meta_decision)  \n*Confidence:* \(.confidence)\n\n**Summary**\n\(.summary)\n" ' META.json)
             TB=$(jq -r '( .top_blockers // [] ) | if length>0 then (["\n**Top blockers**", (map("- " + .) | join("\n"))] | join("\n")) else "" end' META.json)
             BODY+="$TB"
-          else
-            BODY+="$META_NOTE"
           fi
 
           BODY+="$TRUNC_NOTE"

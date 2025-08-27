@@ -29,13 +29,13 @@ Note: The `@openai/codex` package referenced below is the Codex CLI (open‑sour
   - Correctness & Safety
   - Documentation & Developer Experience
   - Performance & Architecture
-- If all three decisions agree (or forced), a Meta Reviewer posts a consolidated scorecard.
+- A Meta Reviewer always runs and posts a consolidated scorecard.
 - Maintains one up‑to‑date Codex comment with a neutral status `codex/review` (informational only).
 
 ## Maintainer Commands (as PR comments)
 
 - `/codex rerun` — rerun the three reviewers.
-- `/codex meta` — force the Meta Reviewer even if decisions differ.
+- `/codex meta` — trigger a Codex run (meta always runs; same effect as rerun).
 - `/codex strict on|off` — toggle strictness (stricter thresholds).
 - `/codex scope path/to/**.py` — restrict next run to matching files.
 - `@codex <hint>` — add a free‑form focus hint to prompts.
