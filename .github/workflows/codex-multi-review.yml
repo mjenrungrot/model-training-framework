@@ -49,7 +49,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Install Codex CLI
-        run: npm i -g @openai/codex@^1
+        run: |
+          npm i -g @openai/codex
+          codex --version || (echo "Codex CLI not found after install" && exit 1)
 
       - name: Secrets check
         id: secrets_check
@@ -140,17 +142,39 @@ jobs:
                 headSha = pr.head.sha;
               }
             }
+            core.setOutput('prNumber', prNumber ?? '');
+            core.setOutput('baseRef', baseRef ?? '');
+            core.setOutput('baseSha', baseSha ?? '');
+            core.setOutput('headSha', headSha ?? '');
             return { prNumber, baseRef, baseSha, headSha };
 
       - name: Guard - need PR number & secrets
-        if: steps.secrets_check.outputs.has_secrets != 'true' || steps.prctx.outputs.result == '{}' # pragma: allowlist secret
+        if: steps.secrets_check.outputs.has_secrets != 'true' || steps.prctx.outputs.prNumber == '' # pragma: allowlist secret
         run: exit 0
 
       # -------- Build DIFF (scope-aware) ----------
+      - name: Normalize command options
+        id: opts
+        env:
+          IS_COMMENT: ${{ steps.ctx.outputs.is_comment }}
+          CMD_JSON: ${{ steps.cmd.outputs.result }}
+        run: |
+          strict=off; scope=""; hint=""; force=false
+          if [ "$IS_COMMENT" = "true" ] && [ -n "$CMD_JSON" ] && [ "$CMD_JSON" != "{}" ]; then
+            s=$(echo "$CMD_JSON" | jq -r '.strict // empty'); [ -n "$s" ] && strict="$s"
+            sc=$(echo "$CMD_JSON" | jq -r '.scope // empty'); [ -n "$sc" ] && scope="$sc"
+            h=$(echo "$CMD_JSON" | jq -r '.hint // empty'); [ -n "$h" ] && hint="$h"
+            fm=$(echo "$CMD_JSON" | jq -r '.forceMeta // empty'); [ "$fm" = "true" ] && force=true
+          fi
+          echo "OPTS_STRICT=$strict" >> $GITHUB_ENV
+          echo "OPTS_SCOPE=$scope" >> $GITHUB_ENV
+          echo "OPTS_HINT=$hint" >> $GITHUB_ENV
+          echo "OPTS_FORCE_META=$force" >> $GITHUB_ENV
+
       - name: Build diff
         env:
-          BASE: ${{ fromJSON(steps.prctx.outputs.result).baseRef }}
-          SCOPE: ${{ fromJSON(steps.cmd.outputs.result || '{}').scope }}
+          BASE: ${{ steps.prctx.outputs.baseRef }}
+          SCOPE: ${{ env.OPTS_SCOPE }}
         run: |
           git fetch origin "$BASE" --depth=1
           if [ -n "$SCOPE" ]; then
@@ -175,10 +199,10 @@ jobs:
       # -------- Run 3 reviewers (sequential) ----------
       - name: Reviewer A — Correctness
         env:
-          BASE_SHA: ${{ fromJSON(steps.prctx.outputs.result).baseSha }}
-          HEAD_SHA: ${{ fromJSON(steps.prctx.outputs.result).headSha }}
-          STRICT: ${{ fromJSON(steps.cmd.outputs.result || '{}').strict }}
-          HINT:   ${{ fromJSON(steps.cmd.outputs.result || '{}').hint }}
+          BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
+          STRICT: ${{ env.OPTS_STRICT }}
+          HINT:   ${{ env.OPTS_HINT }}
         run: |
           python - <<'PY'
           import os
@@ -208,10 +232,10 @@ jobs:
 
       - name: Reviewer B — Documentation
         env:
-          BASE_SHA: ${{ fromJSON(steps.prctx.outputs.result).baseSha }}
-          HEAD_SHA: ${{ fromJSON(steps.prctx.outputs.result).headSha }}
-          STRICT: ${{ fromJSON(steps.cmd.outputs.result || '{}').strict }}
-          HINT:   ${{ fromJSON(steps.cmd.outputs.result || '{}').hint }}
+          BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
+          STRICT: ${{ env.OPTS_STRICT }}
+          HINT:   ${{ env.OPTS_HINT }}
         run: |
           python - <<'PY'
           import os
@@ -241,10 +265,10 @@ jobs:
 
       - name: Reviewer C — Performance
         env:
-          BASE_SHA: ${{ fromJSON(steps.prctx.outputs.result).baseSha }}
-          HEAD_SHA: ${{ fromJSON(steps.prctx.outputs.result).headSha }}
-          STRICT: ${{ fromJSON(steps.cmd.outputs.result || '{}').strict }}
-          HINT:   ${{ fromJSON(steps.cmd.outputs.result || '{}').hint }}
+          BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
+          STRICT: ${{ env.OPTS_STRICT }}
+          HINT:   ${{ env.OPTS_HINT }}
         run: |
           python - <<'PY'
           import os
@@ -279,10 +303,10 @@ jobs:
           if [ "$D1" = "$D2" ] && [ "$D2" = "$D3" ] && [ "$D1" != "null" ]; then echo "unanimous=true" >> $GITHUB_OUTPUT; else echo "unanimous=false" >> $GITHUB_OUTPUT; fi
 
       - name: Meta Reviewer (if unanimous or forced)
-        if: steps.agree.outputs.unanimous == 'true' || github.event.inputs.force_meta == 'true' || fromJSON(steps.cmd.outputs.result || '{}').forceMeta == true
+        if: steps.agree.outputs.unanimous == 'true' || github.event.inputs.force_meta == 'true' || env.OPTS_FORCE_META == 'true'
         env:
-          BASE_SHA: ${{ fromJSON(steps.prctx.outputs.result).baseSha }}
-          HEAD_SHA: ${{ fromJSON(steps.prctx.outputs.result).headSha }}
+          BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
         run: |
           python - <<'PY'
           import os, json
@@ -305,9 +329,11 @@ jobs:
       - name: List comments
         id: comments
         uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.prctx.outputs.prNumber }}
         with:
           script: |
-            const prNumber = JSON.parse(`${{ steps.prctx.outputs.result }}`).prNumber;
+            const prNumber = Number(process.env.PR_NUMBER);
             const { data } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, per_page: 100 });
             return { comments: data };
 
@@ -323,9 +349,9 @@ jobs:
       - name: Compose body
         id: compose
         env:
-          HEAD_SHA: ${{ fromJSON(steps.prctx.outputs.result).headSha }}
-          STRICT: ${{ fromJSON(steps.cmd.outputs.result || '{}').strict }}
-          SCOPE:  ${{ fromJSON(steps.cmd.outputs.result || '{}').scope }}
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
+          STRICT: ${{ env.OPTS_STRICT }}
+          SCOPE:  ${{ env.OPTS_SCOPE }}
           UNAN:   ${{ steps.agree.outputs.unanimous }}
         run: |
           SHORT=$(echo "${HEAD_SHA}" | cut -c1-7)
@@ -393,9 +419,11 @@ jobs:
 
       - name: Upsert Codex comment
         uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.prctx.outputs.prNumber }}
         with:
           script: |
-            const prNumber = JSON.parse(`${{ steps.prctx.outputs.result }}`).prNumber;
+            const prNumber = Number(process.env.PR_NUMBER);
             const cid = `${{ steps.select_comment.outputs.cid }}`;
             if (cid) {
               await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: `${{ steps.compose.outputs.body }}` });
@@ -409,7 +437,7 @@ jobs:
           script: |
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner, repo: context.repo.repo,
-              sha: `${{ fromJSON(steps.prctx.outputs.result).headSha }}`,
+              sha: `${{ steps.prctx.outputs.headSha }}`,
               state: 'success', context: 'codex/review',
               description: 'Codex review posted'
             });
