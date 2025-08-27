@@ -4,9 +4,11 @@ This repository includes a GitHub Actions workflow that posts an academic‑styl
 
 ## Setup (once)
 
+Note: The `@openai/codex` package referenced below is the Codex CLI (open‑source, maintained for GitHub/CLI workflows) — it is not the legacy 2021 “Codex” models. The CLI authenticates via ChatGPT and uses current OpenAI APIs under the hood; no deprecated Codex model APIs are used.
+
 1. Create `CODEX_AUTH_B64` secret in your repository/org:
 
-   - Install Node.js 18+ and the Codex CLI:
+   - Install Node.js 22+ and the Codex CLI:
 
 - `npm i -g @openai/codex@^1`
 - Login (choose "Sign in with ChatGPT"):

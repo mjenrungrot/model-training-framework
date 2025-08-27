@@ -12,7 +12,7 @@ Required JSON schema (single object):
 {
   "reviewer": "correctness",
   "decision": "APPROVE|REQUEST_CHANGES|COMMENT_ONLY",
-  "confidence": number,
+  "confidence": number (0.0-1.0),
   "summary": string,
   "strengths": [string, ...],
   "weaknesses": [string, ...],

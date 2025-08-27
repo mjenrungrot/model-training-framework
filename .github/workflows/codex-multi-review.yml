@@ -50,8 +50,29 @@ jobs:
 
       - name: Install Codex CLI
         run: |
-          npm i -g @openai/codex@^1
-          codex --version || (echo "Codex CLI not found after install" && exit 1)
+          set +e
+          CLI_OK=0
+          CODEX_CMD="codex"
+          npm i -g @openai/codex >/dev/null 2>&1
+          if command -v codex >/dev/null 2>&1; then CLI_OK=1; CODEX_CMD="codex"; fi
+          if [ "$CLI_OK" -ne 1 ]; then
+            npm i -g @openai/codex@latest >/dev/null 2>&1
+            if command -v codex >/dev/null 2>&1; then CLI_OK=1; CODEX_CMD="codex"; fi
+          fi
+          if [ "$CLI_OK" -ne 1 ]; then
+            npx -y @openai/codex --version >/dev/null 2>&1
+            if [ $? -eq 0 ]; then CLI_OK=1; CODEX_CMD="npx -y @openai/codex"; fi
+          fi
+          set -e
+          if [ "$CLI_OK" -eq 1 ]; then
+            echo "CLI_AVAILABLE=true" >> $GITHUB_ENV
+            echo "CODEX_CMD=$CODEX_CMD" >> $GITHUB_ENV
+            if [ "$CODEX_CMD" = "codex" ]; then codex --version || true; else $CODEX_CMD --version || true; fi
+          else
+            echo "CLI_AVAILABLE=false" >> $GITHUB_ENV
+            echo "CODEX_CMD=codex" >> $GITHUB_ENV
+            echo "Codex CLI unavailable; reviewers will be skipped." >&2
+          fi
 
       - name: Secrets check
         id: secrets_check
@@ -199,6 +220,7 @@ jobs:
           fi
 
       - name: Load prompts (existence check)
+        if: env.CLI_AVAILABLE == 'true'
         run: |
           for f in reviewer_correctness.md reviewer_documentation.md reviewer_performance.md meta_reviewer.md cleanup_policy.md; do
             test -f ".codex/$f";
@@ -206,6 +228,7 @@ jobs:
 
       # -------- Run 3 reviewers (sequential) ----------
       - name: Reviewer A — Correctness
+        if: env.CLI_AVAILABLE == 'true'
         env:
           BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
           HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
@@ -226,22 +249,23 @@ jobs:
             .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
           open('_A.prompt','w',encoding='utf-8').write(tmpl)
           PY
-          codex exec < _A.prompt > A.out || true
+          $CODEX_CMD exec < _A.prompt > A.out || true
           # Filter any banner/log lines before the first JSON brace
           sed -n '/^{/,$p' A.out > A.clean || true
           jq -cr 'try (fromjson) catch empty' A.clean > A.json || echo '{}' > A.json
 
       - name: Validate A.json / Retry JSON-only
-        if: always()
+        if: env.CLI_AVAILABLE == 'true'
         run: |
           if ! jq -e . A.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _A.prompt
-            codex exec < _A.prompt > A.out || true
+            $CODEX_CMD exec < _A.prompt > A.out || true
             sed -n '/^{/,$p' A.out > A.clean || true
             jq -cr 'try (fromjson) catch empty' A.clean > A.json || echo '{}' > A.json
           fi
 
       - name: Reviewer B — Documentation
+        if: env.CLI_AVAILABLE == 'true'
         env:
           BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
           HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
@@ -262,21 +286,22 @@ jobs:
             .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
           open('_B.prompt','w',encoding='utf-8').write(tmpl)
           PY
-          codex exec < _B.prompt > B.out || true
+          $CODEX_CMD exec < _B.prompt > B.out || true
           sed -n '/^{/,$p' B.out > B.clean || true
           jq -cr 'try (fromjson) catch empty' B.clean > B.json || echo '{}' > B.json
 
       - name: Validate B.json / Retry JSON-only
-        if: always()
+        if: env.CLI_AVAILABLE == 'true'
         run: |
           if ! jq -e . B.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _B.prompt
-            codex exec < _B.prompt > B.out || true
+            $CODEX_CMD exec < _B.prompt > B.out || true
             sed -n '/^{/,$p' B.out > B.clean || true
             jq -cr 'try (fromjson) catch empty' B.clean > B.json || echo '{}' > B.json
           fi
 
       - name: Reviewer C — Performance
+        if: env.CLI_AVAILABLE == 'true'
         env:
           BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
           HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
@@ -297,28 +322,29 @@ jobs:
             .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
           open('_C.prompt','w',encoding='utf-8').write(tmpl)
           PY
-          codex exec < _C.prompt > C.out || true
+          $CODEX_CMD exec < _C.prompt > C.out || true
           sed -n '/^{/,$p' C.out > C.clean || true
           jq -cr 'try (fromjson) catch empty' C.clean > C.json || echo '{}' > C.json
 
       - name: Validate C.json / Retry JSON-only
-        if: always()
+        if: env.CLI_AVAILABLE == 'true'
         run: |
           if ! jq -e . C.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _C.prompt
-            codex exec < _C.prompt > C.out || true
+            $CODEX_CMD exec < _C.prompt > C.out || true
             sed -n '/^{/,$p' C.out > C.clean || true
             jq -cr 'try (fromjson) catch empty' C.clean > C.json || echo '{}' > C.json
           fi
 
       - name: Unanimity check
+        if: env.CLI_AVAILABLE == 'true'
         id: agree
         run: |
           D1=$(jq -r '.decision' A.json); D2=$(jq -r '.decision' B.json); D3=$(jq -r '.decision' C.json)
           if [ "$D1" = "$D2" ] && [ "$D2" = "$D3" ] && [ "$D1" != "null" ]; then echo "unanimous=true" >> $GITHUB_OUTPUT; else echo "unanimous=false" >> $GITHUB_OUTPUT; fi
 
       - name: Meta Reviewer (if unanimous or forced)
-        if: steps.agree.outputs.unanimous == 'true' || github.event.inputs.force_meta == 'true' || env.OPTS_FORCE_META == 'true'
+        if: env.CLI_AVAILABLE == 'true' && (steps.agree.outputs.unanimous == 'true' || github.event.inputs.force_meta == 'true' || env.OPTS_FORCE_META == 'true')
         env:
           BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
           HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
@@ -337,7 +363,7 @@ jobs:
             .replace('<<R3_JSON>>', r3))
           open('_META.prompt','w',encoding='utf-8').write(tmpl)
           PY
-          codex exec < _META.prompt > META.out || true
+          $CODEX_CMD exec < _META.prompt > META.out || true
           sed -n '/^{/,$p' META.out > META.clean || true
           jq -cr 'try (fromjson) catch empty' META.clean > META.json || echo '{}' > META.json
 
@@ -373,6 +399,7 @@ jobs:
           echo "del=${DEL_IDS}" >> $GITHUB_OUTPUT
 
       - name: Compose body
+        if: env.CLI_AVAILABLE == 'true'
         id: compose
         env:
           HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
@@ -444,6 +471,7 @@ jobs:
             }
 
       - name: Upsert Codex comment
+        if: env.CLI_AVAILABLE == 'true'
         uses: actions/github-script@v7
         env:
           PR_NUMBER: ${{ steps.prctx.outputs.prNumber }}
@@ -455,6 +483,36 @@ jobs:
               await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: `${{ steps.compose.outputs.body }}` });
             } else {
               await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: `${{ steps.compose.outputs.body }}` });
+            }
+
+      - name: Compose skip body (CLI unavailable)
+        if: env.CLI_AVAILABLE != 'true'
+        id: compose_skip
+        env:
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
+          STRICT: ${{ env.OPTS_STRICT }}
+          SCOPE:  ${{ env.OPTS_SCOPE }}
+        run: |
+          SHORT=$(echo "${HEAD_SHA}" | cut -c1-7)
+          HEADER="<!-- codex-review -->\n[# codex-review | Commit: ${SHORT} | strict:${STRICT:-off} | scope:\"${SCOPE}\" ]\n\n"
+          NOTE="Codex review skipped: Codex CLI unavailable on runner (npm install failed). Try Re-run jobs or /codex rerun later."
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$HEADER$NOTE" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Upsert Codex comment (skip path)
+        if: env.CLI_AVAILABLE != 'true'
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.prctx.outputs.prNumber }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PR_NUMBER);
+            const cid = `${{ steps.select_comment.outputs.cid }}`;
+            if (cid) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: `${{ steps.compose_skip.outputs.body }}` });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: `${{ steps.compose_skip.outputs.body }}` });
             }
 
       - name: Commit status (neutral visibility)
@@ -469,6 +527,7 @@ jobs:
             });
 
       - name: Upload artifacts
+        if: env.CLI_AVAILABLE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: codex-multi-review-${{ github.sha }}
