@@ -591,7 +591,11 @@ jobs:
           SCOPE:  ${{ env.OPTS_SCOPE }}
         run: |
           SHORT=$(echo "${HEAD_SHA}" | cut -c1-7)
-          TRUNC_NOTE=$([ -n "$TRUNCATED" ] && echo "\n> 🔎 Diff truncated for context. Use \`/codex scope <glob>\` to focus." || echo "")
+          if [ -n "$TRUNCATED" ]; then
+            TRUNC_NOTE=$'\n> 🔎 Diff truncated for context. Use `/codex scope <glob>` to focus.'
+          else
+            TRUNC_NOTE=""
+          fi
 
           make_md () {
             local title="$1"; local f="$2"
@@ -610,16 +614,16 @@ jobs:
             ' "$f"
           }
 
-          HEADER="<!-- codex-review -->\n[# codex-review | Commit: ${SHORT} | strict:${STRICT:-off} | scope:\"${SCOPE}\" ]\n\n"
+          HEADER="<!-- codex-review -->"$'\n'"[# codex-review | Commit: ${SHORT} | strict:${STRICT:-off} | scope:\"${SCOPE}\" ]"$'\n\n'
           BODY="${HEADER}"
-          title='Reviewer A — Correctness & Safety'; export title; BODY+="$(make_md "$title" A.json)\n\n"
-          title='Reviewer B — Documentation & DX'; export title; BODY+="$(make_md "$title" B.json)\n\n"
-          title='Reviewer C — Performance & Architecture'; export title; BODY+="$(make_md "$title" C.json)\n\n"
-          title='Reviewer D — Spec Alignment & Traceability'; export title; BODY+="$(make_md "$title" D.json)\n\n"
+          title='Reviewer A — Correctness & Safety'; export title; ct=$(make_md "$title" A.json); BODY+="$ct"$'\n\n'
+          title='Reviewer B — Documentation & DX'; export title; ct=$(make_md "$title" B.json); BODY+="$ct"$'\n\n'
+          title='Reviewer C — Performance & Architecture'; export title; ct=$(make_md "$title" C.json); BODY+="$ct"$'\n\n'
+          title='Reviewer D — Spec Alignment & Traceability'; export title; ct=$(make_md "$title" D.json); BODY+="$ct"$'\n\n'
 
           if [ -f META.json ] && [ "$(jq -r '.overall_score // empty' META.json)" != "" ]; then
-            BODY+="---\n\n**Meta Reviewer Scorecard**\n\n"
-            BODY+=$(jq -r '
+            BODY+=$'---\n\n**Meta Reviewer Scorecard**\n\n'
+            BODY+="$(jq -r '
               "| Category | Score |\n|---|---|\n" +
               "| Correctness | \(.rubric.correctness) |\n" +
               "| Clarity/Docs | \(.rubric.clarity_docs) |\n" +
@@ -627,6 +631,7 @@ jobs:
               "| Performance/Scalability | \(.rubric.performance_scalability) |\n" +
               "| Security/Privacy | \(.rubric.security_privacy) |\n" +
               "\n**Overall:** \(.overall_score) / 10  \n*Meta decision:* \(.meta_decision)  \n*Confidence:* \(.confidence)\n\n**Summary**\n\(.summary)\n" ' META.json)
+            )"
             TB=$(jq -r '( .top_blockers // [] ) | if length>0 then (["\n**Top blockers**", (map("- " + .) | join("\n"))] | join("\n")) else "" end' META.json)
             BODY+="$TB"
           fi
@@ -675,7 +680,7 @@ jobs:
           SCOPE:  ${{ env.OPTS_SCOPE }}
         run: |
           SHORT=$(echo "${HEAD_SHA}" | cut -c1-7)
-          HEADER="<!-- codex-review -->\n[# codex-review | Commit: ${SHORT} | strict:${STRICT:-off} | scope:\"${SCOPE}\" ]\n\n"
+          HEADER="<!-- codex-review -->"$'\n'"[# codex-review | Commit: ${SHORT} | strict:${STRICT:-off} | scope:\"${SCOPE}\" ]"$'\n\n'
           NOTE="Codex review skipped: Codex CLI unavailable on runner (npm install failed). Try Re-run jobs or /codex rerun later."
           {
             echo "body<<__CODEX_EOF__"
