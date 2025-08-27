@@ -554,9 +554,9 @@ jobs:
             const prNumber = Number(process.env.PR_NUMBER);
             const cid = `${{ steps.select_comment.outputs.cid }}`;
             if (cid) {
-              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: `${{ steps.compose.outputs.body }}` });
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: ${{ toJSON(steps.compose.outputs.body) }} });
             } else {
-              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: `${{ steps.compose.outputs.body }}` });
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: ${{ toJSON(steps.compose.outputs.body) }} });
             }
 
       - name: Compose skip body (CLI unavailable)
@@ -584,9 +584,9 @@ jobs:
             const prNumber = Number(process.env.PR_NUMBER);
             const cid = `${{ steps.select_comment.outputs.cid }}`;
             if (cid) {
-              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: `${{ steps.compose_skip.outputs.body }}` });
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: ${{ toJSON(steps.compose_skip.outputs.body) }} });
             } else {
-              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: `${{ steps.compose_skip.outputs.body }}` });
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: ${{ toJSON(steps.compose_skip.outputs.body) }} });
             }
 
       - name: Commit status (neutral visibility)
