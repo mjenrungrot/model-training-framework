@@ -226,6 +226,53 @@ jobs:
             test -f ".codex/$f";
           done
 
+      - name: Write JSON extractor util
+        if: env.CLI_AVAILABLE == 'true'
+        run: |
+          cat > extract_json.py << 'PY'
+          import sys, json
+          if len(sys.argv) != 3:
+              sys.exit(2)
+          src, dst = sys.argv[1], sys.argv[2]
+          s = open(src, 'rb').read().decode('utf-8', 'ignore')
+          spans = []
+          ins = False
+          esc = False
+          depth = 0
+          start = -1
+          for idx, ch in enumerate(s):
+              if ins:
+                  if esc:
+                      esc = False
+                  elif ch == '\\':
+                      esc = True
+                  elif ch == '"':
+                      ins = False
+                  continue
+              if ch == '"':
+                  ins = True
+              elif ch == '{':
+                  if depth == 0:
+                      start = idx
+                  depth += 1
+              elif ch == '}' and depth > 0:
+                  depth -= 1
+                  if depth == 0 and start != -1:
+                      spans.append((start, idx + 1))
+          best = ''
+          for a, b in spans[::-1]:
+              cand = s[a:b].strip()
+              try:
+                  json.loads(cand)
+              except Exception:
+                  continue
+              else:
+                  best = cand
+                  break
+          with open(dst, 'w', encoding='utf-8') as f:
+              f.write(best)
+          PY
+
       # -------- Run 3 reviewers (sequential) ----------
       - name: Reviewer A — Correctness
         if: env.CLI_AVAILABLE == 'true'
@@ -252,40 +299,10 @@ jobs:
           $CODEX_CMD exec < _A.prompt > A.out || true
           echo '::group::Debug A.out (first 800 chars)'
           head -c 800 A.out || true; echo; echo '::endgroup::'
-          python - <<'PY'
-          import json
-          p='A.out'; o='A.clean'
-          s=open(p,'rb').read().decode('utf-8','ignore')
-          spans=[]; ins=False; esc=False; depth=0; start=-1
-          for idx,ch in enumerate(s):
-              if ins:
-                  if esc: esc=False
-                  elif ch=='\\': esc=True
-                  elif ch=='"': ins=False
-                  continue
-              if ch=='"':
-                  ins=True
-              elif ch=='{':
-                  if depth==0: start=idx
-                  depth+=1
-              elif ch=='}' and depth>0:
-                  depth-=1
-                  if depth==0 and start!=-1:
-                      spans.append((start, idx+1))
-          best=''
-          for a,b in spans[::-1]:
-              cand=s[a:b].strip()
-              try:
-                  json.loads(cand)
-                  best=cand
-                  break
-              except Exception:
-                  continue
-          open(o,'w',encoding='utf-8').write(best)
-          PY
+          python extract_json.py A.out A.clean || true
           echo '::group::Debug A.clean (first 800 chars)'
           head -c 800 A.clean || true; echo; echo '::endgroup::'
-          jq -cr 'try (fromjson) catch empty' A.clean > A.json || echo '{}' > A.json
+          if [ -s A.clean ] && jq -e . A.clean >/dev/null 2>&1; then jq -c . A.clean > A.json; else echo '{}' > A.json; fi
 
       - name: Validate A.json / Retry JSON-only
         if: env.CLI_AVAILABLE == 'true'
@@ -295,40 +312,10 @@ jobs:
             $CODEX_CMD exec < _A.prompt > A.out || true
             echo '::group::Retry Debug A.out (first 800 chars)'
             head -c 800 A.out || true; echo; echo '::endgroup::'
-            python - <<'PY'
-            import json
-            p='A.out'; o='A.clean'
-            s=open(p,'rb').read().decode('utf-8','ignore')
-            spans=[]; ins=False; esc=False; depth=0; start=-1
-            for idx,ch in enumerate(s):
-                if ins:
-                    if esc: esc=False
-                    elif ch=='\\': esc=True
-                    elif ch=='"': ins=False
-                    continue
-                if ch=='"':
-                    ins=True
-                elif ch=='{':
-                    if depth==0: start=idx
-                    depth+=1
-                elif ch=='}' and depth>0:
-                    depth-=1
-                    if depth==0 and start!=-1:
-                        spans.append((start, idx+1))
-            best=''
-            for a,b in spans[::-1]:
-                cand=s[a:b].strip()
-                try:
-                    json.loads(cand)
-                    best=cand
-                    break
-                except Exception:
-                    continue
-            open(o,'w',encoding='utf-8').write(best)
-            PY
+            python extract_json.py A.out A.clean || true
             echo '::group::Retry Debug A.clean (first 800 chars)'
             head -c 800 A.clean || true; echo; echo '::endgroup::'
-            jq -cr 'try (fromjson) catch empty' A.clean > A.json || echo '{}' > A.json
+            if [ -s A.clean ] && jq -e . A.clean >/dev/null 2>&1; then jq -c . A.clean > A.json; else echo '{}' > A.json; fi
           fi
 
       - name: Reviewer B — Documentation
@@ -356,40 +343,10 @@ jobs:
           $CODEX_CMD exec < _B.prompt > B.out || true
           echo '::group::Debug B.out (first 800 chars)'
           head -c 800 B.out || true; echo; echo '::endgroup::'
-          python - <<'PY'
-          import json
-          p='B.out'; o='B.clean'
-          s=open(p,'rb').read().decode('utf-8','ignore')
-          spans=[]; ins=False; esc=False; depth=0; start=-1
-          for idx,ch in enumerate(s):
-              if ins:
-                  if esc: esc=False
-                  elif ch=='\\': esc=True
-                  elif ch=='"': ins=False
-                  continue
-              if ch=='"':
-                  ins=True
-              elif ch=='{':
-                  if depth==0: start=idx
-                  depth+=1
-              elif ch=='}' and depth>0:
-                  depth-=1
-                  if depth==0 and start!=-1:
-                      spans.append((start, idx+1))
-          best=''
-          for a,b in spans[::-1]:
-              cand=s[a:b].strip()
-              try:
-                  json.loads(cand)
-                  best=cand
-                  break
-              except Exception:
-                  continue
-          open(o,'w',encoding='utf-8').write(best)
-          PY
+          python extract_json.py B.out B.clean || true
           echo '::group::Debug B.clean (first 800 chars)'
           head -c 800 B.clean || true; echo; echo '::endgroup::'
-          jq -cr 'try (fromjson) catch empty' B.clean > B.json || echo '{}' > B.json
+          if [ -s B.clean ] && jq -e . B.clean >/dev/null 2>&1; then jq -c . B.clean > B.json; else echo '{}' > B.json; fi
 
       - name: Validate B.json / Retry JSON-only
         if: env.CLI_AVAILABLE == 'true'
@@ -399,40 +356,10 @@ jobs:
             $CODEX_CMD exec < _B.prompt > B.out || true
             echo '::group::Retry Debug B.out (first 800 chars)'
             head -c 800 B.out || true; echo; echo '::endgroup::'
-            python - <<'PY'
-            import json
-            p='B.out'; o='B.clean'
-            s=open(p,'rb').read().decode('utf-8','ignore')
-            spans=[]; ins=False; esc=False; depth=0; start=-1
-            for idx,ch in enumerate(s):
-                if ins:
-                    if esc: esc=False
-                    elif ch=='\\': esc=True
-                    elif ch=='"': ins=False
-                    continue
-                if ch=='"':
-                    ins=True
-                elif ch=='{':
-                    if depth==0: start=idx
-                    depth+=1
-                elif ch=='}' and depth>0:
-                    depth-=1
-                    if depth==0 and start!=-1:
-                        spans.append((start, idx+1))
-            best=''
-            for a,b in spans[::-1]:
-                cand=s[a:b].strip()
-                try:
-                    json.loads(cand)
-                    best=cand
-                    break
-                except Exception:
-                    continue
-            open(o,'w',encoding='utf-8').write(best)
-            PY
+            python extract_json.py B.out B.clean || true
             echo '::group::Retry Debug B.clean (first 800 chars)'
             head -c 800 B.clean || true; echo; echo '::endgroup::'
-            jq -cr 'try (fromjson) catch empty' B.clean > B.json || echo '{}' > B.json
+            if [ -s B.clean ] && jq -e . B.clean >/dev/null 2>&1; then jq -c . B.clean > B.json; else echo '{}' > B.json; fi
           fi
 
       - name: Reviewer C — Performance
@@ -460,40 +387,10 @@ jobs:
           $CODEX_CMD exec < _C.prompt > C.out || true
           echo '::group::Debug C.out (first 800 chars)'
           head -c 800 C.out || true; echo; echo '::endgroup::'
-          python - <<'PY'
-          import json
-          p='C.out'; o='C.clean'
-          s=open(p,'rb').read().decode('utf-8','ignore')
-          spans=[]; ins=False; esc=False; depth=0; start=-1
-          for idx,ch in enumerate(s):
-              if ins:
-                  if esc: esc=False
-                  elif ch=='\\': esc=True
-                  elif ch=='"': ins=False
-                  continue
-              if ch=='"':
-                  ins=True
-              elif ch=='{':
-                  if depth==0: start=idx
-                  depth+=1
-              elif ch=='}' and depth>0:
-                  depth-=1
-                  if depth==0 and start!=-1:
-                      spans.append((start, idx+1))
-          best=''
-          for a,b in spans[::-1]:
-              cand=s[a:b].strip()
-              try:
-                  json.loads(cand)
-                  best=cand
-                  break
-              except Exception:
-                  continue
-          open(o,'w',encoding='utf-8').write(best)
-          PY
+          python extract_json.py C.out C.clean || true
           echo '::group::Debug C.clean (first 800 chars)'
           head -c 800 C.clean || true; echo; echo '::endgroup::'
-          jq -cr 'try (fromjson) catch empty' C.clean > C.json || echo '{}' > C.json
+          if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else echo '{}' > C.json; fi
 
       - name: Validate C.json / Retry JSON-only
         if: env.CLI_AVAILABLE == 'true'
@@ -503,40 +400,10 @@ jobs:
             $CODEX_CMD exec < _C.prompt > C.out || true
             echo '::group::Retry Debug C.out (first 800 chars)'
             head -c 800 C.out || true; echo; echo '::endgroup::'
-            python - <<'PY'
-            import json
-            p='C.out'; o='C.clean'
-            s=open(p,'rb').read().decode('utf-8','ignore')
-            spans=[]; ins=False; esc=False; depth=0; start=-1
-            for idx,ch in enumerate(s):
-                if ins:
-                    if esc: esc=False
-                    elif ch=='\\': esc=True
-                    elif ch=='"': ins=False
-                    continue
-                if ch=='"':
-                    ins=True
-                elif ch=='{':
-                    if depth==0: start=idx
-                    depth+=1
-                elif ch=='}' and depth>0:
-                    depth-=1
-                    if depth==0 and start!=-1:
-                        spans.append((start, idx+1))
-            best=''
-            for a,b in spans[::-1]:
-                cand=s[a:b].strip()
-                try:
-                    json.loads(cand)
-                    best=cand
-                    break
-                except Exception:
-                    continue
-            open(o,'w',encoding='utf-8').write(best)
-            PY
+            python extract_json.py C.out C.clean || true
             echo '::group::Retry Debug C.clean (first 800 chars)'
             head -c 800 C.clean || true; echo; echo '::endgroup::'
-            jq -cr 'try (fromjson) catch empty' C.clean > C.json || echo '{}' > C.json
+            if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else echo '{}' > C.json; fi
           fi
 
       - name: Unanimity check
@@ -569,40 +436,10 @@ jobs:
           $CODEX_CMD exec < _META.prompt > META.out || true
           echo '::group::Debug META.out (first 800 chars)'
           head -c 800 META.out || true; echo; echo '::endgroup::'
-          python - <<'PY'
-          import json
-          p='META.out'; o='META.clean'
-          s=open(p,'rb').read().decode('utf-8','ignore')
-          spans=[]; ins=False; esc=False; depth=0; start=-1
-          for idx,ch in enumerate(s):
-              if ins:
-                  if esc: esc=False
-                  elif ch=='\\': esc=True
-                  elif ch=='"': ins=False
-                  continue
-              if ch=='"':
-                  ins=True
-              elif ch=='{':
-                  if depth==0: start=idx
-                  depth+=1
-              elif ch=='}' and depth>0:
-                  depth-=1
-                  if depth==0 and start!=-1:
-                      spans.append((start, idx+1))
-          best=''
-          for a,b in spans[::-1]:
-              cand=s[a:b].strip()
-              try:
-                  json.loads(cand)
-                  best=cand
-                  break
-              except Exception:
-                  continue
-          open(o,'w',encoding='utf-8').write(best)
-          PY
+          python extract_json.py META.out META.clean || true
           echo '::group::Debug META.clean (first 800 chars)'
           head -c 800 META.clean || true; echo; echo '::endgroup::'
-          jq -cr 'try (fromjson) catch empty' META.clean > META.json || echo '{}' > META.json
+          if [ -s META.clean ] && jq -e . META.clean >/dev/null 2>&1; then jq -c . META.clean > META.json; else echo '{}' > META.json; fi
 
       # -------- Find (or create) our comment; delete older Codex comments only ----------
       - name: List comments
