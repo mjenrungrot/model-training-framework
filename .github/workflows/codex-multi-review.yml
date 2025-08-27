@@ -276,6 +276,36 @@ jobs:
           with open(dst, 'w', encoding='utf-8') as f:
               f.write(best)
           PY
+          cat > parse_stats.py << 'PY'
+          import sys, json
+          src = sys.argv[1] if len(sys.argv) > 1 else 'A.out'
+          clean = sys.argv[2] if len(sys.argv) > 2 else 'A.clean'
+          s=open(src,'rb').read().decode('utf-8','ignore')
+          ins=False; esc=False; depth=0; start=-1; spans=[]
+          for i,ch in enumerate(s):
+              if ins:
+                  if esc: esc=False
+                  elif ch=='\\': esc=True
+                  elif ch=='"': ins=False
+                  continue
+              if ch=='"': ins=True
+              elif ch=='{':
+                  if depth==0: start=i
+                  depth+=1
+              elif ch=='}' and depth>0:
+                  depth-=1
+                  if depth==0 and start!=-1:
+                      spans.append((start,i+1))
+          print(f"spans_found={len(spans)}")
+          if spans:
+              a,b=spans[-1]
+              print(f"selected_span=[{a},{b}) length={b-a}")
+          try:
+              json.loads(open(clean,'r',encoding='utf-8').read())
+              print("clean_json_valid=true")
+          except Exception as e:
+              print("clean_json_valid=false", str(e))
+          PY
 
       # -------- Run 3 reviewers (sequential) ----------
       - name: Reviewer A — Correctness
@@ -321,34 +351,7 @@ jobs:
             head -c ${DEBUG_SNIPPET_CHARS} A.clean || true; echo; echo '::endgroup::'
             # Additional parse stats for A
             echo '::group::A.parse stats'
-            python - <<'PY'
-            import json
-            s=open('A.out','rb').read().decode('utf-8','ignore')
-            ins=esc=False; depth=0; start=-1; spans=[]
-            for i,ch in enumerate(s):
-                if ins:
-                    if esc: esc=False
-                    elif ch=='\\': esc=True
-                    elif ch=='"': ins=False
-                    continue
-                if ch=='"': ins=True
-                elif ch=='{':
-                    if depth==0: start=i
-                    depth+=1
-                elif ch=='}' and depth>0:
-                    depth-=1
-                    if depth==0 and start!=-1:
-                        spans.append((start,i+1))
-            print(f"spans_found={len(spans)}")
-            if spans:
-                a,b=spans[-1]
-                print(f"selected_span=[{a},{b}) length={b-a}")
-            try:
-                obj=json.loads(open('A.clean','r',encoding='utf-8').read())
-                print("clean_json_valid=true")
-            except Exception as e:
-                print("clean_json_valid=false", str(e))
-            PY
+            python parse_stats.py A.out A.clean || true
             echo '::endgroup::'
             if [ -s A.clean ] && jq -e . A.clean >/dev/null 2>&1; then jq -c . A.clean > A.json; else echo '{}' > A.json; fi
           fi
