@@ -56,8 +56,8 @@ class TestDataLoaderManager:
         config = MultiDataLoaderConfig()
 
         manager = DataLoaderManager(
-            train_loaders=cast(Any, train_loaders),
-            val_loaders=cast(Any, val_loaders),
+            train_loaders=cast("Any", train_loaders),
+            val_loaders=cast("Any", val_loaders),
             train_config=config,
         )
 
@@ -72,7 +72,7 @@ class TestDataLoaderManager:
         config = MultiDataLoaderConfig(dataloader_names=["source", "target"])
 
         manager = DataLoaderManager(
-            train_loaders=cast(Any, train_loaders), train_config=config
+            train_loaders=cast("Any", train_loaders), train_config=config
         )
 
         assert manager.train_names == ["source", "target"]
@@ -84,7 +84,7 @@ class TestDataLoaderManager:
 
         with pytest.raises(ValueError, match="names must be unique"):
             DataLoaderManager(
-                train_loaders=cast(Any, train_loaders), train_config=config
+                train_loaders=cast("Any", train_loaders), train_config=config
             )
 
     def test_manager_validates_name_count(self):
@@ -94,7 +94,7 @@ class TestDataLoaderManager:
 
         with pytest.raises(ValueError, match="doesn't match"):
             DataLoaderManager(
-                train_loaders=cast(Any, train_loaders), train_config=config
+                train_loaders=cast("Any", train_loaders), train_config=config
             )
 
 
@@ -306,7 +306,7 @@ class TestMultiDataLoaderIterator:
         config = MultiDataLoaderConfig()
 
         iterator = MultiDataLoaderIterator(
-            loaders=cast(Any, loaders),
+            loaders=cast("Any", loaders),
             names=["dl0", "dl1"],
             schedule=schedule,
             config=config,
@@ -326,7 +326,7 @@ class TestMultiDataLoaderIterator:
         config = MultiDataLoaderConfig(cycle_short_loaders=False)
 
         iterator = MultiDataLoaderIterator(
-            loaders=cast(Any, loaders),
+            loaders=cast("Any", loaders),
             names=["dl0", "dl1"],
             schedule=schedule,
             config=config,
@@ -350,7 +350,7 @@ class TestMultiDataLoaderIterator:
         config = MultiDataLoaderConfig(cycle_short_loaders=True)
 
         iterator = MultiDataLoaderIterator(
-            loaders=cast(Any, loaders),
+            loaders=cast("Any", loaders),
             names=["dl0", "dl1"],
             schedule=schedule,
             config=config,
@@ -370,7 +370,7 @@ class TestMultiDataLoaderIterator:
         config = MultiDataLoaderConfig()
 
         iterator = MultiDataLoaderIterator(
-            loaders=cast(Any, loaders),
+            loaders=cast("Any", loaders),
             names=["dl0", "dl1"],
             schedule=schedule,
             config=config,
@@ -394,7 +394,7 @@ class TestMultiDataLoaderIterator:
         config = MultiDataLoaderConfig(prefetch_cap_total_batches=5)
 
         iterator = MultiDataLoaderIterator(
-            loaders=cast(Any, loaders),
+            loaders=cast("Any", loaders),
             names=["dl0", "dl1"],
             schedule=schedule,
             config=config,
@@ -416,7 +416,7 @@ class TestCreateEpochIterator:
         )
 
         manager = DataLoaderManager(
-            train_loaders=cast(Any, train_loaders), train_config=config
+            train_loaders=cast("Any", train_loaders), train_config=config
         )
 
         iterator = manager.create_epoch_iterator("train", epoch=0)
@@ -432,8 +432,8 @@ class TestCreateEpochIterator:
         config = MultiDataLoaderConfig()
 
         manager = DataLoaderManager(
-            train_loaders=cast(Any, train_loaders),
-            val_loaders=cast(Any, val_loaders),
+            train_loaders=cast("Any", train_loaders),
+            val_loaders=cast("Any", val_loaders),
             train_config=config,
         )
 
@@ -453,7 +453,7 @@ class TestCreateEpochIterator:
         )
 
         manager = DataLoaderManager(
-            train_loaders=cast(Any, train_loaders), train_config=config
+            train_loaders=cast("Any", train_loaders), train_config=config
         )
 
         iterator = manager.create_epoch_iterator("train", epoch=0)
@@ -475,7 +475,7 @@ class TestCreateEpochIterator:
         )
 
         manager = DataLoaderManager(
-            train_loaders=cast(Any, train_loaders), train_config=config
+            train_loaders=cast("Any", train_loaders), train_config=config
         )
 
         iterator = manager.create_epoch_iterator("train", epoch=0)
@@ -497,7 +497,7 @@ class TestCreateEpochIterator:
         fabric = MagicMock()
 
         manager = DataLoaderManager(
-            train_loaders=cast(Any, train_loaders), train_config=config, fabric=fabric
+            train_loaders=cast("Any", train_loaders), train_config=config, fabric=fabric
         )
 
         _ = manager.create_epoch_iterator("train", epoch=0)
@@ -521,7 +521,7 @@ class TestCreateEpochIterator:
 
         loader.sampler = MagicMock(spec=TorchDistributedSampler)
 
-        manager = DataLoaderManager(train_loaders=cast(Any, [loader]))
+        manager = DataLoaderManager(train_loaders=cast("Any", [loader]))
 
         manager.create_epoch_iterator("train", epoch=5)
 
@@ -539,7 +539,7 @@ class TestCreateEpochIterator:
         ]
 
         manager = DataLoaderManager(
-            train_loaders=cast(Any, train_loaders), train_config=config
+            train_loaders=cast("Any", train_loaders), train_config=config
         )
 
         iterator = manager.create_epoch_iterator(
@@ -568,7 +568,7 @@ class TestCreateEpochIterator:
         )
 
         manager = DataLoaderManager(
-            train_loaders=cast(Any, train_loaders), train_config=config
+            train_loaders=cast("Any", train_loaders), train_config=config
         )
 
         iterator = manager.create_epoch_iterator("train", epoch=0)
@@ -589,7 +589,7 @@ class TestDeterminism:
         )
         manager1 = DataLoaderManager(
             train_loaders=cast(
-                Any,
+                "Any",
                 [
                     MockDataLoader(100),
                     MockDataLoader(100),
@@ -609,7 +609,7 @@ class TestDeterminism:
         )
         manager2 = DataLoaderManager(
             train_loaders=cast(
-                Any,
+                "Any",
                 [
                     MockDataLoader(100),
                     MockDataLoader(100),
@@ -633,7 +633,7 @@ class TestDeterminism:
         )
         manager1 = DataLoaderManager(
             train_loaders=cast(
-                Any,
+                "Any",
                 [
                     MockDataLoader(100),
                     MockDataLoader(100),
@@ -652,7 +652,7 @@ class TestDeterminism:
         )
         manager2 = DataLoaderManager(
             train_loaders=cast(
-                Any,
+                "Any",
                 [
                     MockDataLoader(100),
                     MockDataLoader(100),

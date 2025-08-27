@@ -28,25 +28,18 @@ weighted_sampling_config:
     frequency: "every_n_steps"
     every_n_steps: 50
     aggregation: "micro_avg_weighted_by_samples"
+    per_loader_metrics: true
   logging:
     log_loader_proportions: true
-    aggregation: "primary_metric_per_loader"
-    per_loader_metrics: true
 
   # Per-loader optimizer configuration
   per_loader_optimizers:
-    task_a:
+    dataset_a:
       optimizer_idx: 0
       loss_weight: 1.0
-    task_b:
+    dataset_b:
       optimizer_idx: 0
       loss_weight: 0.8
-    task_c:
-      optimizer_idx: 1  # Different optimizer for task_c
-      loss_weight: 0.5
-    auxiliary:
-      optimizer_idx: 0
-      loss_weight: 0.1
 
 
 # ============================================================================

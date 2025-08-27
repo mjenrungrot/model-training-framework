@@ -155,6 +155,7 @@ select = [
     "PIE", # flake8-pie
     "SIM", # flake8-simplify
     "RET", # flake8-return
+    "TC",  # flake8-type-checking (typing quotes, cast, etc.)
     "TCH", # flake8-type-checking
     "PTH", # flake8-use-pathlib
     "ERA", # eradicate

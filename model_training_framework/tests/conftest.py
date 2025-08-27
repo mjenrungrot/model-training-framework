@@ -200,7 +200,7 @@ def skip_if_no_slurm():
 
 
 # Provide a custom marker alias with a typing-safe cast for static checkers
-_mark = cast(Any, pytest.mark)
+_mark = cast("Any", pytest.mark)
 _mark.skipif_no_slurm = pytest.mark.skipif(
     skip_if_no_slurm(), reason="SLURM not available"
 )

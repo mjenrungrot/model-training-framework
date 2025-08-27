@@ -13,6 +13,7 @@ This module provides the GenericTrainer class - the main training engine with:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -63,7 +64,15 @@ if TYPE_CHECKING:
     from torch.optim.lr_scheduler import _LRScheduler
     from torch.utils.data import DataLoader
 
+    from .states import ResumeState
+
 logger = logging.getLogger(__name__)
+
+# Runtime reference to ResumeState for isinstance/attribute access without triggering import cycles
+try:  # Guard to avoid hard import issues in unusual import orders
+    from .states import ResumeState as _ResumeStateRuntime
+except Exception:  # pragma: no cover - defensive fallback
+    _ResumeStateRuntime = None  # type: ignore[assignment]
 
 
 class TrainingStep(Protocol):
@@ -260,8 +269,6 @@ class GenericTrainer:
         # Initialize logger based on configuration
         self.logger: LoggerProtocol | None = None
         if ddp_is_primary(fabric):  # Only create logger on primary rank
-            from pathlib import Path
-
             log_dir = (
                 Path(config.logging.tensorboard_dir)
                 if config.logging.tensorboard_dir
@@ -361,10 +368,8 @@ class GenericTrainer:
 
         # Ensure resume_state is of correct type (convert dicts from external loaders)
         try:
-            from .states import ResumeState as _ResumeState
-
-            if isinstance(self.resume_state, dict):
-                self.resume_state = _ResumeState.from_dict(self.resume_state)
+            if isinstance(self.resume_state, dict) and _ResumeStateRuntime is not None:
+                self.resume_state = _ResumeStateRuntime.from_dict(self.resume_state)
         except Exception:
             logger.debug(
                 "resume_state conversion failed; continuing without conversion",
@@ -1266,10 +1271,11 @@ class GenericTrainer:
         try:
             # Ensure resume_state is a proper ResumeState object (not a raw dict)
             try:
-                from .states import ResumeState as _ResumeState
-
-                if isinstance(self.resume_state, dict):
-                    self.resume_state = _ResumeState.from_dict(self.resume_state)  # type: ignore[assignment]
+                if (
+                    isinstance(self.resume_state, dict)
+                    and _ResumeStateRuntime is not None
+                ):
+                    self.resume_state = _ResumeStateRuntime.from_dict(self.resume_state)  # type: ignore[assignment]
             except Exception:
                 logger.debug(
                     "resume_state conversion prior to checkpoint save failed",
@@ -1278,9 +1284,7 @@ class GenericTrainer:
 
             # Update resume state with dataloader manager state
             if self.dataloader_manager:
-                from .states import ResumeState as _ResumeState
-
-                rs_typed = cast(_ResumeState, self.resume_state)
+                rs_typed = cast("ResumeState", self.resume_state)
                 self.resume_state = update_resume_state(
                     rs_typed,
                     rs_typed.phase,
@@ -1290,9 +1294,7 @@ class GenericTrainer:
                 )
 
             # Save checkpoint with all optimizers and schedulers
-            from .states import ResumeState as _ResumeState
-
-            rs_typed = cast(_ResumeState, self.resume_state)
+            rs_typed = cast("ResumeState", self.resume_state)
             checkpoint_path = self.checkpoint_manager.save_checkpoint(
                 model=self.model,
                 optimizers=self.optimizers,  # Save all optimizers
@@ -1385,10 +1387,8 @@ class GenericTrainer:
                 if broadcast_data["resume_state"] is not None:
                     rs = broadcast_data["resume_state"]
                     try:
-                        from .states import ResumeState as _ResumeState
-
-                        if isinstance(rs, dict):
-                            self.resume_state = _ResumeState.from_dict(rs)
+                        if isinstance(rs, dict) and _ResumeStateRuntime is not None:
+                            self.resume_state = _ResumeStateRuntime.from_dict(rs)
                         else:
                             self.resume_state = rs
                     except Exception:
@@ -1396,9 +1396,7 @@ class GenericTrainer:
 
                     # Restore RNG state if available
                     try:
-                        from .states import ResumeState as _ResumeState
-
-                        rs_typed = cast(_ResumeState, self.resume_state)
+                        rs_typed = cast("ResumeState", self.resume_state)
                         if rs_typed.rng is not None:
                             restore_rng_state(rs_typed.rng)
                     except Exception:
@@ -1424,9 +1422,7 @@ class GenericTrainer:
                     # State inside resume_state (from CheckpointManager)
                     assert self.dataloader_manager is not None
                     try:
-                        from .states import ResumeState as _ResumeState
-
-                        rs_typed = cast(_ResumeState, self.resume_state)
+                        rs_typed = cast("ResumeState", self.resume_state)
                         state = rs_typed.dataloader_manager_state
                         if state is not None:
                             self.dataloader_manager.load_state(
@@ -1456,9 +1452,7 @@ class GenericTrainer:
                     assert self.dataloader_manager is not None
                     assert hasattr(self.dataloader_manager, "choice_rng")
                     try:
-                        from .states import ResumeState as _ResumeState
-
-                        rs_typed = cast(_ResumeState, self.resume_state)
+                        rs_typed = cast("ResumeState", self.resume_state)
                         restore_choice_rng_state(
                             rs_typed.choice_rng, self.dataloader_manager.choice_rng
                         )

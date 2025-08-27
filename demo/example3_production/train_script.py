@@ -5,6 +5,7 @@ Example 3 training script: single-experiment run with auto-resume.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from pathlib import Path
 import signal
@@ -49,7 +50,7 @@ def _build_trainer_config(exp: ExperimentConfig) -> GenericTrainerConfig:
         if strategy == "sequential"
         else SamplingStrategy.ROUND_ROBIN
     )
-    names = [f"loader_{i+1}" for i in range(nload)]
+    names = [f"loader_{i + 1}" for i in range(nload)]
     val_names = [f"val_{n}" for n in names]
 
     ckpt_root = PROJECT_ROOT / "experiments" / exp.experiment_name / "checkpoints"
@@ -392,7 +393,6 @@ def run_training_from_config(identifier: str) -> None:
         timer.start()
 
     # Log a nice run banner with expectations
-    import math
 
     loader_sizes = [len(getattr(ld, "dataset", [])) for ld in train_loaders]
     batches_per_epoch = sum(
@@ -405,7 +405,7 @@ def run_training_from_config(identifier: str) -> None:
         exp=exp,
         trainer_cfg=trainer_cfg,
         num_loaders=num_loaders,
-        loader_names=[f"loader_{i+1}" for i in range(num_loaders)],
+        loader_names=[f"loader_{i + 1}" for i in range(num_loaders)],
         world_size=world_size,
         rank=rank,
         resumed=resumed,

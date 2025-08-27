@@ -30,6 +30,12 @@ from .utils import timeout
 
 logger = logging.getLogger(__name__)
 
+# Runtime reference to ResumeState for isinstance/attribute access in functions
+try:  # Guard to avoid hard import errors in unusual import orders
+    from .states import ResumeState as _ResumeStateRuntime
+except Exception:  # pragma: no cover - defensive fallback
+    _ResumeStateRuntime = None  # type: ignore[assignment]
+
 
 @dataclass
 class CheckpointPayload:
@@ -75,9 +81,9 @@ class CheckpointPayload:
         # Preserve None entries to keep stable keys in saved files
         data = asdict(self)
         try:
-            from .states import ResumeState as _ResumeState
-
-            if isinstance(self.resume_state, _ResumeState):
+            if _ResumeStateRuntime is not None and isinstance(
+                self.resume_state, _ResumeStateRuntime
+            ):
                 data["resume_state"] = self.resume_state.to_dict()
         except Exception:
             logger.debug(
@@ -300,10 +306,8 @@ def load_checkpoint(path: Path, trainer: GenericTrainer) -> CheckpointPayload:
     if "resume_state" in checkpoint_data:
         rs = checkpoint_data["resume_state"]
         try:
-            from .states import ResumeState as _ResumeState
-
-            if isinstance(rs, dict):
-                trainer.resume_state = _ResumeState.from_dict(rs)
+            if isinstance(rs, dict) and _ResumeStateRuntime is not None:
+                trainer.resume_state = _ResumeStateRuntime.from_dict(rs)
             else:
                 trainer.resume_state = rs
         except Exception:
@@ -311,9 +315,7 @@ def load_checkpoint(path: Path, trainer: GenericTrainer) -> CheckpointPayload:
 
     # Restore optional fields
     if "metrics_history" in checkpoint_data:
-        from typing import cast as _cast
-
-        _trainer_any = _cast(Any, trainer)
+        _trainer_any = cast("Any", trainer)
         _trainer_any.metrics_history = checkpoint_data["metrics_history"]
 
     logger.info(
@@ -542,7 +544,7 @@ class CheckpointManager:
 
         logger.info(f"Loading checkpoint from {checkpoint_path}")
         raw = cast(
-            dict[str, Any],
+            "dict[str, Any]",
             torch.load(checkpoint_path, map_location=map_location, weights_only=False),
         )
         return CheckpointPayload.from_dict(raw)

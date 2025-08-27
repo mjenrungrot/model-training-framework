@@ -70,7 +70,7 @@ class DistributedTransformer(nn.Module):
         x = self.embedding(x)
         x = x + self.pos_encoding[:, :seq_len, :]
         x = self.transformer(x)
-        return cast(torch.Tensor, self.output(x))
+        return cast("torch.Tensor", self.output(x))
 
 
 def distributed_training_step(
@@ -195,7 +195,7 @@ def build_trainer_config_from_experiment(exp: ExperimentConfig) -> GenericTraine
         if strategy_str == "sequential"
         else SamplingStrategy.ROUND_ROBIN
     )
-    names = [f"loader_{i+1}" for i in range(num_loaders)]
+    names = [f"loader_{i + 1}" for i in range(num_loaders)]
     val_names = [f"val_{n}" for n in names]
 
     ckpt_root = PROJECT_ROOT / "experiments" / exp.experiment_name / "checkpoints"
@@ -261,8 +261,8 @@ def run_training_from_experiment(exp: ExperimentConfig) -> None:
         model.parameters(), lr=exp.optimizer.lr, weight_decay=exp.optimizer.weight_decay
     )
 
-    world_size = int(os.environ.get("WORLD_SIZE", 1))
-    rank = int(os.environ.get("RANK", 0))
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    rank = int(os.environ.get("RANK", "0"))
 
     multi = exp.custom_params.get("multi_loader", {}) if exp.custom_params else {}
     num_loaders = int(multi.get("num_loaders", 1))

@@ -10,13 +10,15 @@ This module tests the GenericTrainer with multi-dataloader support:
 - Validation frequency options
 """
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 import torch
 from torch import nn, optim
-from torch.optim import Optimizer
 from torch.utils.data import DataLoader, TensorDataset
+
+if TYPE_CHECKING:  # Imported for type hints only
+    from torch.optim import Optimizer
 
 from model_training_framework.trainer import (
     GenericTrainer,
@@ -268,7 +270,7 @@ class TestGenericTrainerMulti:
         trainer = GenericTrainer(
             config=config,
             model=model,
-            optimizers=cast(list[Optimizer], [optimizer]),
+            optimizers=cast("list[Optimizer]", [optimizer]),
         )
 
         # Track optimizer steps
@@ -622,7 +624,9 @@ class TestBatchSizeDetection:
         trainer = GenericTrainer(
             config=config,
             model=model,
-            optimizers=cast(list[Optimizer], [optim.SGD(model.parameters(), lr=0.01)]),
+            optimizers=cast(
+                "list[Optimizer]", [optim.SGD(model.parameters(), lr=0.01)]
+            ),
         )
 
         batch = torch.randn(32, 10)
@@ -635,7 +639,9 @@ class TestBatchSizeDetection:
         trainer = GenericTrainer(
             config=config,
             model=model,
-            optimizers=cast(list[Optimizer], [optim.SGD(model.parameters(), lr=0.01)]),
+            optimizers=cast(
+                "list[Optimizer]", [optim.SGD(model.parameters(), lr=0.01)]
+            ),
         )
 
         batch = (torch.randn(16, 10), torch.randn(16, 5))
@@ -648,7 +654,9 @@ class TestBatchSizeDetection:
         trainer = GenericTrainer(
             config=config,
             model=model,
-            optimizers=cast(list[Optimizer], [optim.SGD(model.parameters(), lr=0.01)]),
+            optimizers=cast(
+                "list[Optimizer]", [optim.SGD(model.parameters(), lr=0.01)]
+            ),
         )
 
         # Test with 'input' key
@@ -670,7 +678,9 @@ class TestBatchSizeDetection:
         trainer = GenericTrainer(
             config=config,
             model=model,
-            optimizers=cast(list[Optimizer], [optim.SGD(model.parameters(), lr=0.01)]),
+            optimizers=cast(
+                "list[Optimizer]", [optim.SGD(model.parameters(), lr=0.01)]
+            ),
         )
 
         # Nested list

@@ -28,4 +28,4 @@ class SmallMLP(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return cast(torch.Tensor, self.net(x))
+        return cast("torch.Tensor", self.net(x))

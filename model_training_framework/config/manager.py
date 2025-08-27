@@ -84,7 +84,7 @@ class ConfigurationManager:
 
         # Perform environment variable substitution
         config_data = cast(
-            dict[str, Any], self._substitute_environment_variables(config_data)
+            "dict[str, Any]", self._substitute_environment_variables(config_data)
         )
 
         # Cache the loaded config
@@ -217,11 +217,11 @@ class ConfigurationManager:
 
         if suffix in [".yaml", ".yml"]:
             with config_path.open() as f:
-                return cast(dict[str, Any], yaml.safe_load(f) or {})
+                return cast("dict[str, Any]", yaml.safe_load(f) or {})
 
         elif suffix == ".json":
             with config_path.open() as f:
-                return cast(dict[str, Any], json.load(f))
+                return cast("dict[str, Any]", json.load(f))
 
         else:
             raise ValueError(f"Unsupported configuration file format: {suffix}")

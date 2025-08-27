@@ -77,8 +77,13 @@ trainer.fit(
 #### Round-Robin Strategy (Fair Alternation)
 
 ```python
-from model_training_framework.trainer.config import (
+from model_training_framework.trainer import (
+    GenericTrainer,
+    GenericTrainerConfig,
+    MultiDataLoaderConfig,
     SamplingStrategy,
+    EpochLengthPolicy,
+    ValidationConfig,
     ValAggregation,
 )
 
@@ -111,6 +116,14 @@ trainer.fit(
 #### Weighted Strategy (Importance-Based Sampling)
 
 ```python
+# Minimal imports for copy‑paste
+from model_training_framework.trainer import (
+    GenericTrainerConfig,
+    MultiDataLoaderConfig,
+    SamplingStrategy,
+    EpochLengthPolicy,
+    LoggingConfig,
+)
 # Sample based on dataset importance/size
 config = GenericTrainerConfig(
     multi=MultiDataLoaderConfig(
@@ -129,6 +142,12 @@ config = GenericTrainerConfig(
 #### Alternating Pattern (Custom Schedule)
 
 ```python
+# Minimal imports for copy‑paste
+from model_training_framework.trainer import (
+    GenericTrainerConfig,
+    MultiDataLoaderConfig,
+    SamplingStrategy,
+)
 # Define explicit pattern: 2x A, 1x B, 1x C, repeat
 config = GenericTrainerConfig(
     multi=MultiDataLoaderConfig(
@@ -143,7 +162,11 @@ config = GenericTrainerConfig(
 ### 3. Validation Aggregation Strategies
 
 ```python
-from model_training_framework.trainer.config import ValAggregation
+from model_training_framework.trainer import (
+    GenericTrainerConfig,
+    ValidationConfig,
+    ValAggregation,
+)
 
 # Micro-average: Weight by number of samples
 config = GenericTrainerConfig(
@@ -172,6 +195,12 @@ config = GenericTrainerConfig(
 ### 4. Checkpoint and Resume
 
 ```python
+# Minimal imports for copy‑paste
+from model_training_framework.trainer import (
+    GenericTrainerConfig,
+    CheckpointConfig,
+    FaultToleranceConfig,
+)
 # Checkpoint configuration
 config = GenericTrainerConfig(
     checkpoint=CheckpointConfig(
@@ -250,6 +279,14 @@ config = GenericTrainerConfig(
 ```python
 # DDP configuration for multi-loader training
 from lightning.fabric import Fabric
+
+from model_training_framework.trainer import (
+    GenericTrainer,
+    GenericTrainerConfig,
+    MultiDataLoaderConfig,
+    SamplingStrategy,
+    DDPConfig,
+)
 
 fabric = Fabric(accelerator="gpu", devices=4, strategy="ddp")
 fabric.launch()
