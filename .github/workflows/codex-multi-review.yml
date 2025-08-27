@@ -54,29 +54,17 @@ jobs:
 
       # jq is preinstalled on ubuntu-latest; skip explicit install to save time
 
-      - name: Install Codex CLI
+      - name: Install Codex CLI (prefer npx)
         run: |
-          set +e
-          CLI_OK=0
-          CODEX_CMD="codex"
-          npm i -g @openai/codex >/dev/null 2>&1
-          if command -v codex >/dev/null 2>&1; then CLI_OK=1; CODEX_CMD="codex"; fi
-          if [ "$CLI_OK" -ne 1 ]; then
-            npm i -g @openai/codex@latest >/dev/null 2>&1
-            if command -v codex >/dev/null 2>&1; then CLI_OK=1; CODEX_CMD="codex"; fi
-          fi
-          if [ "$CLI_OK" -ne 1 ]; then
-            npx -y @openai/codex --version >/dev/null 2>&1
-            if [ $? -eq 0 ]; then CLI_OK=1; CODEX_CMD="npx -y @openai/codex"; fi
-          fi
           set -e
-          if [ "$CLI_OK" -eq 1 ]; then
+          CODEX_CMD="npx -y @openai/codex"
+          if $CODEX_CMD --version >/dev/null 2>&1; then
             echo "CLI_AVAILABLE=true" >> $GITHUB_ENV
             echo "CODEX_CMD=$CODEX_CMD" >> $GITHUB_ENV
-            if [ "$CODEX_CMD" = "codex" ]; then codex --version || true; else $CODEX_CMD --version || true; fi
+            $CODEX_CMD --version || true
           else
             echo "CLI_AVAILABLE=false" >> $GITHUB_ENV
-            echo "CODEX_CMD=codex" >> $GITHUB_ENV
+            echo "CODEX_CMD=$CODEX_CMD" >> $GITHUB_ENV
             echo "Codex CLI unavailable; reviewers will be skipped." >&2
           fi
 
@@ -374,7 +362,7 @@ jobs:
           python extract_json.py A.out A.clean || true
           echo '::group::Debug A.clean (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} A.clean || true; echo; echo '::endgroup::'
-          if [ -s A.clean ] && jq -e . A.clean >/dev/null 2>&1; then jq -c . A.clean > A.json; else echo '{}' > A.json; fi
+          if [ -s A.clean ] && jq -e . A.clean >/dev/null 2>&1; then jq -c . A.clean > A.json; else printf '{"reviewer":"correctness","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > A.json; fi
 
       - name: Validate A.json / Retry JSON-only
         if: env.CLI_AVAILABLE == 'true'
@@ -391,7 +379,7 @@ jobs:
             echo '::group::A.parse stats'
             python parse_stats.py A.out A.clean || true
             echo '::endgroup::'
-            if [ -s A.clean ] && jq -e . A.clean >/dev/null 2>&1; then jq -c . A.clean > A.json; else echo '{}' > A.json; fi
+            if [ -s A.clean ] && jq -e . A.clean >/dev/null 2>&1; then jq -c . A.clean > A.json; else printf '{"reviewer":"correctness","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > A.json; fi
           fi
 
       - name: Reviewer B — Documentation
@@ -422,20 +410,20 @@ jobs:
           python extract_json.py B.out B.clean || true
           echo '::group::Debug B.clean (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} B.clean || true; echo; echo '::endgroup::'
-          if [ -s B.clean ] && jq -e . B.clean >/dev/null 2>&1; then jq -c . B.clean > B.json; else echo '{}' > B.json; fi
+          if [ -s B.clean ] && jq -e . B.clean >/dev/null 2>&1; then jq -c . B.clean > B.json; else printf '{"reviewer":"documentation","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > B.json; fi
 
       - name: Validate B.json / Retry JSON-only
         if: env.CLI_AVAILABLE == 'true'
         run: |
           if ! jq -e . B.json >/dev/null 2>&1; then
-            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _B.prompt
+            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _B.prompt
             timeout -k 30s 300s $CODEX_CMD exec < _B.prompt > B.out || true
             echo '::group::Retry Debug B.out (first chars)'
             head -c ${DEBUG_SNIPPET_CHARS} B.out || true; echo; echo '::endgroup::'
             python extract_json.py B.out B.clean || true
             echo '::group::Retry Debug B.clean (first chars)'
             head -c ${DEBUG_SNIPPET_CHARS} B.clean || true; echo; echo '::endgroup::'
-            if [ -s B.clean ] && jq -e . B.clean >/dev/null 2>&1; then jq -c . B.clean > B.json; else echo '{}' > B.json; fi
+            if [ -s B.clean ] && jq -e . B.clean >/dev/null 2>&1; then jq -c . B.clean > B.json; else printf '{"reviewer":"documentation","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > B.json; fi
           fi
 
       - name: Reviewer C — Performance
@@ -466,20 +454,20 @@ jobs:
           python extract_json.py C.out C.clean || true
           echo '::group::Debug C.clean (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} C.clean || true; echo; echo '::endgroup::'
-          if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else echo '{}' > C.json; fi
+          if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else printf '{"reviewer":"performance","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > C.json; fi
 
       - name: Validate C.json / Retry JSON-only
         if: env.CLI_AVAILABLE == 'true'
         run: |
           if ! jq -e . C.json >/dev/null 2>&1; then
-            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _C.prompt
+            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _C.prompt
             timeout -k 30s 300s $CODEX_CMD exec < _C.prompt > C.out || true
             echo '::group::Retry Debug C.out (first chars)'
             head -c ${DEBUG_SNIPPET_CHARS} C.out || true; echo; echo '::endgroup::'
             python extract_json.py C.out C.clean || true
             echo '::group::Retry Debug C.clean (first chars)'
             head -c ${DEBUG_SNIPPET_CHARS} C.clean || true; echo; echo '::endgroup::'
-            if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else echo '{}' > C.json; fi
+            if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else printf '{"reviewer":"performance","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > C.json; fi
           fi
 
       - name: Reviewer D — Spec Alignment
@@ -516,20 +504,20 @@ jobs:
           python extract_json.py D.out D.clean || true
           echo '::group::Debug D.clean (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} D.clean || true; echo; echo '::endgroup::'
-          if [ -s D.clean ] && jq -e . D.clean >/dev/null 2>&1; then jq -c . D.clean > D.json; else echo '{}' > D.json; fi
+          if [ -s D.clean ] && jq -e . D.clean >/dev/null 2>&1; then jq -c . D.clean > D.json; else printf '{"reviewer":"alignment","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > D.json; fi
 
       - name: Validate D.json / Retry JSON-only
         if: env.CLI_AVAILABLE == 'true'
         run: |
           if ! jq -e . D.json >/dev/null 2>&1; then
-            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _D.prompt
+            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _D.prompt
             timeout -k 30s 300s $CODEX_CMD exec < _D.prompt > D.out || true
             echo '::group::Retry Debug D.out (first chars)'
             head -c ${DEBUG_SNIPPET_CHARS} D.out || true; echo; echo '::endgroup::'
             python extract_json.py D.out D.clean || true
             echo '::group::Retry Debug D.clean (first chars)'
             head -c ${DEBUG_SNIPPET_CHARS} D.clean || true; echo; echo '::endgroup::'
-            if [ -s D.clean ] && jq -e . D.clean >/dev/null 2>&1; then jq -c . D.clean > D.json; else echo '{}' > D.json; fi
+            if [ -s D.clean ] && jq -e . D.clean >/dev/null 2>&1; then jq -c . D.clean > D.json; else printf '{"reviewer":"alignment","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > D.json; fi
           fi
 
       - name: Meta Reviewer
