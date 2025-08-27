@@ -44,7 +44,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
@@ -150,8 +149,8 @@ jobs:
       # -------- Build DIFF (scope-aware) ----------
       - name: Build diff
         env:
-          BASE: ${{ fromJson(steps.prctx.outputs.result).baseRef }}
-          SCOPE: ${{ fromJson(steps.cmd.outputs.result || '{}').scope }}
+          BASE: ${{ fromJSON(steps.prctx.outputs.result).baseRef }}
+          SCOPE: ${{ fromJSON(steps.cmd.outputs.result || '{}').scope }}
         run: |
           git fetch origin "$BASE" --depth=1
           if [ -n "$SCOPE" ]; then
@@ -176,10 +175,10 @@ jobs:
       # -------- Run 3 reviewers (sequential) ----------
       - name: Reviewer A — Correctness
         env:
-          BASE_SHA: ${{ fromJson(steps.prctx.outputs.result).baseSha }}
-          HEAD_SHA: ${{ fromJson(steps.prctx.outputs.result).headSha }}
-          STRICT: ${{ fromJson(steps.cmd.outputs.result || '{}').strict }}
-          HINT:   ${{ fromJson(steps.cmd.outputs.result || '{}').hint }}
+          BASE_SHA: ${{ fromJSON(steps.prctx.outputs.result).baseSha }}
+          HEAD_SHA: ${{ fromJSON(steps.prctx.outputs.result).headSha }}
+          STRICT: ${{ fromJSON(steps.cmd.outputs.result || '{}').strict }}
+          HINT:   ${{ fromJSON(steps.cmd.outputs.result || '{}').hint }}
         run: |
           python - <<'PY'
           import os
@@ -209,10 +208,10 @@ jobs:
 
       - name: Reviewer B — Documentation
         env:
-          BASE_SHA: ${{ fromJson(steps.prctx.outputs.result).baseSha }}
-          HEAD_SHA: ${{ fromJson(steps.prctx.outputs.result).headSha }}
-          STRICT: ${{ fromJson(steps.cmd.outputs.result || '{}').strict }}
-          HINT:   ${{ fromJson(steps.cmd.outputs.result || '{}').hint }}
+          BASE_SHA: ${{ fromJSON(steps.prctx.outputs.result).baseSha }}
+          HEAD_SHA: ${{ fromJSON(steps.prctx.outputs.result).headSha }}
+          STRICT: ${{ fromJSON(steps.cmd.outputs.result || '{}').strict }}
+          HINT:   ${{ fromJSON(steps.cmd.outputs.result || '{}').hint }}
         run: |
           python - <<'PY'
           import os
@@ -242,10 +241,10 @@ jobs:
 
       - name: Reviewer C — Performance
         env:
-          BASE_SHA: ${{ fromJson(steps.prctx.outputs.result).baseSha }}
-          HEAD_SHA: ${{ fromJson(steps.prctx.outputs.result).headSha }}
-          STRICT: ${{ fromJson(steps.cmd.outputs.result || '{}').strict }}
-          HINT:   ${{ fromJson(steps.cmd.outputs.result || '{}').hint }}
+          BASE_SHA: ${{ fromJSON(steps.prctx.outputs.result).baseSha }}
+          HEAD_SHA: ${{ fromJSON(steps.prctx.outputs.result).headSha }}
+          STRICT: ${{ fromJSON(steps.cmd.outputs.result || '{}').strict }}
+          HINT:   ${{ fromJSON(steps.cmd.outputs.result || '{}').hint }}
         run: |
           python - <<'PY'
           import os
@@ -280,10 +279,10 @@ jobs:
           if [ "$D1" = "$D2" ] && [ "$D2" = "$D3" ] && [ "$D1" != "null" ]; then echo "unanimous=true" >> $GITHUB_OUTPUT; else echo "unanimous=false" >> $GITHUB_OUTPUT; fi
 
       - name: Meta Reviewer (if unanimous or forced)
-        if: steps.agree.outputs.unanimous == 'true' || github.event.inputs.force_meta == 'true' || fromJson(steps.cmd.outputs.result || '{}').forceMeta == true
+        if: steps.agree.outputs.unanimous == 'true' || github.event.inputs.force_meta == 'true' || fromJSON(steps.cmd.outputs.result || '{}').forceMeta == true
         env:
-          BASE_SHA: ${{ fromJson(steps.prctx.outputs.result).baseSha }}
-          HEAD_SHA: ${{ fromJson(steps.prctx.outputs.result).headSha }}
+          BASE_SHA: ${{ fromJSON(steps.prctx.outputs.result).baseSha }}
+          HEAD_SHA: ${{ fromJSON(steps.prctx.outputs.result).headSha }}
         run: |
           python - <<'PY'
           import os, json
@@ -324,9 +323,9 @@ jobs:
       - name: Compose body
         id: compose
         env:
-          HEAD_SHA: ${{ fromJson(steps.prctx.outputs.result).headSha }}
-          STRICT: ${{ fromJson(steps.cmd.outputs.result || '{}').strict }}
-          SCOPE:  ${{ fromJson(steps.cmd.outputs.result || '{}').scope }}
+          HEAD_SHA: ${{ fromJSON(steps.prctx.outputs.result).headSha }}
+          STRICT: ${{ fromJSON(steps.cmd.outputs.result || '{}').strict }}
+          SCOPE:  ${{ fromJSON(steps.cmd.outputs.result || '{}').scope }}
           UNAN:   ${{ steps.agree.outputs.unanimous }}
         run: |
           SHORT=$(echo "${HEAD_SHA}" | cut -c1-7)
@@ -410,7 +409,7 @@ jobs:
           script: |
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner, repo: context.repo.repo,
-              sha: `${{ fromJson(steps.prctx.outputs.result).headSha }}`,
+              sha: `${{ fromJSON(steps.prctx.outputs.result).headSha }}`,
               state: 'success', context: 'codex/review',
               description: 'Codex review posted'
             });
