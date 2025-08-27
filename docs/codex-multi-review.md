@@ -25,11 +25,12 @@ Note: The `@openai/codex` package referenced below is the Codex CLI (open‑sour
 
 ## What it does
 
-- Runs three Codex reviewers on each PR:
+- Runs four Codex reviewers on each PR:
   - Correctness & Safety
   - Documentation & Developer Experience
   - Performance & Architecture
-- A Meta Reviewer always runs and posts a consolidated scorecard.
+  - Spec Alignment & Traceability (checks PR/issue alignment)
+- A Meta Reviewer always runs and posts a consolidated scorecard (synthesizing the three core reviewers).
 - Maintains one up‑to‑date Codex comment with a neutral status `codex/review` (informational only).
 
 ## Maintainer Commands (as PR comments)

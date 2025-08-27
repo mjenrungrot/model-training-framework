@@ -218,10 +218,46 @@ jobs:
             git diff --name-only "origin/$BASE"...HEAD > changed_files.txt
           fi
 
+      - name: Collect PR details and linked issues
+        id: prdetails
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.prctx.outputs.prNumber }}
+        with:
+          script: |
+            const fs = require('fs');
+            const prNumber = Number(process.env.PR_NUMBER);
+            if (!prNumber) { core.setOutput('written','false'); return; }
+            const { data: pr } = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber });
+            const title = pr.title || '';
+            const body = pr.body || '';
+            const issues = new Map();
+            const add = (m)=>{ const n = Number(m[1]); if (Number.isInteger(n)) issues.set(n, true); };
+            const re1 = /(close[sd]?|resolve[sd]?|fix(?:e[sd])?)\s+#(\d+)/ig;
+            const re2 = /#(\d+)/g;
+            let m;
+            for (const s of [body, title]) {
+              while ((m = re1.exec(s)) !== null) add(m);
+              while ((m = re2.exec(s)) !== null) add(m);
+            }
+            const linked = [];
+            for (const num of issues.keys()) {
+              try {
+                const { data: issue } = await github.rest.issues.get({ owner: context.repo.owner, repo: context.repo.repo, issue_number: num });
+                linked.push({ number: issue.number, title: issue.title || '', body: (issue.body || '').slice(0, 4000) });
+              } catch (e) {
+                linked.push({ number: num, title: '', body: '' });
+              }
+            }
+            fs.writeFileSync('pr_title.txt', title, { encoding: 'utf8' });
+            fs.writeFileSync('pr_body.txt', body, { encoding: 'utf8' });
+            fs.writeFileSync('linked_issues.json', JSON.stringify(linked));
+            core.setOutput('written','true');
+
       - name: Load prompts (existence check)
         if: env.CLI_AVAILABLE == 'true'
         run: |
-          for f in reviewer_correctness.md reviewer_documentation.md reviewer_performance.md meta_reviewer.md cleanup_policy.md; do
+          for f in reviewer_correctness.md reviewer_documentation.md reviewer_performance.md reviewer_alignment.md meta_reviewer.md cleanup_policy.md; do
             test -f ".codex/$f";
           done
 
@@ -439,6 +475,56 @@ jobs:
             if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else echo '{}' > C.json; fi
           fi
 
+      - name: Reviewer D — Spec Alignment
+        if: env.CLI_AVAILABLE == 'true'
+        env:
+          BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
+          STRICT: ${{ env.OPTS_STRICT }}
+          HINT:   ${{ env.OPTS_HINT }}
+        run: |
+          python - <<'PY'
+          import os
+          tmpl = open('.codex/reviewer_alignment.md','r',encoding='utf-8').read()
+          diff = open('pr.diff.limited','r',encoding='utf-8').read()
+          files = open('changed_files.txt','r',encoding='utf-8').read()
+          pr_title = open('pr_title.txt','r',encoding='utf-8').read() if os.path.exists('pr_title.txt') else ''
+          pr_body  = open('pr_body.txt','r',encoding='utf-8').read() if os.path.exists('pr_body.txt') else ''
+          linked   = open('linked_issues.json','r',encoding='utf-8').read() if os.path.exists('linked_issues.json') else '[]'
+          tmpl = (tmpl
+            .replace('<<PR_DIFF>>', diff)
+            .replace('<<CHANGED_FILES>>', files)
+            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
+            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
+            .replace('<<STRICT>>', os.environ.get('STRICT','off') or 'off')
+            .replace('<<FOCUS_HINT>>', os.environ.get('HINT',''))
+            .replace('<<PR_TITLE>>', pr_title)
+            .replace('<<PR_BODY>>', pr_body)
+            .replace('<<LINKED_ISSUES_JSON>>', linked))
+          open('_D.prompt','w',encoding='utf-8').write(tmpl)
+          PY
+          timeout -k 30s 420s $CODEX_CMD exec < _D.prompt > D.out || true
+          echo '::group::Debug D.out (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} D.out || true; echo; echo '::endgroup::'
+          python extract_json.py D.out D.clean || true
+          echo '::group::Debug D.clean (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} D.clean || true; echo; echo '::endgroup::'
+          if [ -s D.clean ] && jq -e . D.clean >/dev/null 2>&1; then jq -c . D.clean > D.json; else echo '{}' > D.json; fi
+
+      - name: Validate D.json / Retry JSON-only
+        if: env.CLI_AVAILABLE == 'true'
+        run: |
+          if ! jq -e . D.json >/dev/null 2>&1; then
+            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _D.prompt
+            timeout -k 30s 300s $CODEX_CMD exec < _D.prompt > D.out || true
+            echo '::group::Retry Debug D.out (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} D.out || true; echo; echo '::endgroup::'
+            python extract_json.py D.out D.clean || true
+            echo '::group::Retry Debug D.clean (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} D.clean || true; echo; echo '::endgroup::'
+            if [ -s D.clean ] && jq -e . D.clean >/dev/null 2>&1; then jq -c . D.clean > D.json; else echo '{}' > D.json; fi
+          fi
+
       - name: Meta Reviewer
         if: env.CLI_AVAILABLE == 'true'
         env:
@@ -534,6 +620,7 @@ jobs:
           title='Reviewer A — Correctness & Safety'; export title; BODY+="$(make_md "$title" A.json)\n\n"
           title='Reviewer B — Documentation & DX'; export title; BODY+="$(make_md "$title" B.json)\n\n"
           title='Reviewer C — Performance & Architecture'; export title; BODY+="$(make_md "$title" C.json)\n\n"
+          title='Reviewer D — Spec Alignment & Traceability'; export title; BODY+="$(make_md "$title" D.json)\n\n"
 
           if [ -f META.json ] && [ "$(jq -r '.overall_score // empty' META.json)" != "" ]; then
             BODY+="---\n\n**Meta Reviewer Scorecard**\n\n"
@@ -631,4 +718,7 @@ jobs:
             pr.diff
             pr.diff.limited
             changed_files.txt
-            A.json B.json C.json META.json
+            pr_title.txt
+            pr_body.txt
+            linked_issues.json
+            A.json B.json C.json D.json META.json
