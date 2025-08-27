@@ -315,3 +315,10 @@ module = [
   "model_training_framework.tests.*",
 ]
 ignore_errors = true
+
+# ===== Markdownlint Configuration =====
+# Some tooling prefers pyproject.toml for configuration. The active
+# markdownlint-cli hook reads .markdownlint.json, which has MD029 disabled.
+# This section mirrors that intent for tools that look here.
+[tool.markdownlint]
+MD029 = false

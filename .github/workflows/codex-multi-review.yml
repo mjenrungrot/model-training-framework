@@ -250,8 +250,35 @@ jobs:
           open('_A.prompt','w',encoding='utf-8').write(tmpl)
           PY
           $CODEX_CMD exec < _A.prompt > A.out || true
-          # Filter any banner/log lines before the first JSON brace
-          sed -n '/^{/,$p' A.out > A.clean || true
+          echo '::group::Debug A.out (first 800 chars)'
+          head -c 800 A.out || true; echo; echo '::endgroup::'
+          python - <<'PY'
+          import sys
+          p='A.out'; o='A.clean'
+          s=open(p,'rb').read().decode('utf-8','ignore')
+          i=s.find('{')
+          if i<0:
+              open(o,'w',encoding='utf-8').write('')
+              sys.exit(0)
+          depth=0; j=i; ins=False; esc=False
+          while j < len(s):
+              ch=s[j]
+              if ins:
+                  if esc: esc=False
+                  elif ch=='\\\\': esc=True
+                  elif ch=='"': ins=False
+              else:
+                  if ch=='"': ins=True
+                  elif ch=='{': depth+=1
+                  elif ch=='}':
+                      depth-=1
+                      if depth==0:
+                          j+=1; break
+              j+=1
+          open(o,'w',encoding='utf-8').write(s[i:j])
+          PY
+          echo '::group::Debug A.clean (first 800 chars)'
+          head -c 800 A.clean || true; echo; echo '::endgroup::'
           jq -cr 'try (fromjson) catch empty' A.clean > A.json || echo '{}' > A.json
 
       - name: Validate A.json / Retry JSON-only
@@ -260,7 +287,35 @@ jobs:
           if ! jq -e . A.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _A.prompt
             $CODEX_CMD exec < _A.prompt > A.out || true
-            sed -n '/^{/,$p' A.out > A.clean || true
+            echo '::group::Retry Debug A.out (first 800 chars)'
+            head -c 800 A.out || true; echo; echo '::endgroup::'
+            python - <<'PY'
+            import sys
+            p='A.out'; o='A.clean'
+            s=open(p,'rb').read().decode('utf-8','ignore')
+            i=s.find('{')
+            if i<0:
+                open(o,'w',encoding='utf-8').write('')
+                sys.exit(0)
+            depth=0; j=i; ins=False; esc=False
+            while j < len(s):
+                ch=s[j]
+                if ins:
+                    if esc: esc=False
+                    elif ch=='\\\\': esc=True
+                    elif ch=='"': ins=False
+                else:
+                    if ch=='"': ins=True
+                    elif ch=='{': depth+=1
+                    elif ch=='}':
+                        depth-=1
+                        if depth==0:
+                            j+=1; break
+                j+=1
+            open(o,'w',encoding='utf-8').write(s[i:j])
+            PY
+            echo '::group::Retry Debug A.clean (first 800 chars)'
+            head -c 800 A.clean || true; echo; echo '::endgroup::'
             jq -cr 'try (fromjson) catch empty' A.clean > A.json || echo '{}' > A.json
           fi
 
@@ -287,7 +342,35 @@ jobs:
           open('_B.prompt','w',encoding='utf-8').write(tmpl)
           PY
           $CODEX_CMD exec < _B.prompt > B.out || true
-          sed -n '/^{/,$p' B.out > B.clean || true
+          echo '::group::Debug B.out (first 800 chars)'
+          head -c 800 B.out || true; echo; echo '::endgroup::'
+          python - <<'PY'
+          import sys
+          p='B.out'; o='B.clean'
+          s=open(p,'rb').read().decode('utf-8','ignore')
+          i=s.find('{')
+          if i<0:
+              open(o,'w',encoding='utf-8').write('')
+              sys.exit(0)
+          depth=0; j=i; ins=False; esc=False
+          while j < len(s):
+              ch=s[j]
+              if ins:
+                  if esc: esc=False
+                  elif ch=='\\\\': esc=True
+                  elif ch=='"': ins=False
+              else:
+                  if ch=='"': ins=True
+                  elif ch=='{': depth+=1
+                  elif ch=='}':
+                      depth-=1
+                      if depth==0:
+                          j+=1; break
+              j+=1
+          open(o,'w',encoding='utf-8').write(s[i:j])
+          PY
+          echo '::group::Debug B.clean (first 800 chars)'
+          head -c 800 B.clean || true; echo; echo '::endgroup::'
           jq -cr 'try (fromjson) catch empty' B.clean > B.json || echo '{}' > B.json
 
       - name: Validate B.json / Retry JSON-only
@@ -296,7 +379,35 @@ jobs:
           if ! jq -e . B.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _B.prompt
             $CODEX_CMD exec < _B.prompt > B.out || true
-            sed -n '/^{/,$p' B.out > B.clean || true
+            echo '::group::Retry Debug B.out (first 800 chars)'
+            head -c 800 B.out || true; echo; echo '::endgroup::'
+            python - <<'PY'
+            import sys
+            p='B.out'; o='B.clean'
+            s=open(p,'rb').read().decode('utf-8','ignore')
+            i=s.find('{')
+            if i<0:
+                open(o,'w',encoding='utf-8').write('')
+                sys.exit(0)
+            depth=0; j=i; ins=False; esc=False
+            while j < len(s):
+                ch=s[j]
+                if ins:
+                    if esc: esc=False
+                    elif ch=='\\\\': esc=True
+                    elif ch=='"': ins=False
+                else:
+                    if ch=='"': ins=True
+                    elif ch=='{': depth+=1
+                    elif ch=='}':
+                        depth-=1
+                        if depth==0:
+                            j+=1; break
+                j+=1
+            open(o,'w',encoding='utf-8').write(s[i:j])
+            PY
+            echo '::group::Retry Debug B.clean (first 800 chars)'
+            head -c 800 B.clean || true; echo; echo '::endgroup::'
             jq -cr 'try (fromjson) catch empty' B.clean > B.json || echo '{}' > B.json
           fi
 
@@ -323,7 +434,35 @@ jobs:
           open('_C.prompt','w',encoding='utf-8').write(tmpl)
           PY
           $CODEX_CMD exec < _C.prompt > C.out || true
-          sed -n '/^{/,$p' C.out > C.clean || true
+          echo '::group::Debug C.out (first 800 chars)'
+          head -c 800 C.out || true; echo; echo '::endgroup::'
+          python - <<'PY'
+          import sys
+          p='C.out'; o='C.clean'
+          s=open(p,'rb').read().decode('utf-8','ignore')
+          i=s.find('{')
+          if i<0:
+              open(o,'w',encoding='utf-8').write('')
+              sys.exit(0)
+          depth=0; j=i; ins=False; esc=False
+          while j < len(s):
+              ch=s[j]
+              if ins:
+                  if esc: esc=False
+                  elif ch=='\\\\': esc=True
+                  elif ch=='"': ins=False
+              else:
+                  if ch=='"': ins=True
+                  elif ch=='{': depth+=1
+                  elif ch=='}':
+                      depth-=1
+                      if depth==0:
+                          j+=1; break
+              j+=1
+          open(o,'w',encoding='utf-8').write(s[i:j])
+          PY
+          echo '::group::Debug C.clean (first 800 chars)'
+          head -c 800 C.clean || true; echo; echo '::endgroup::'
           jq -cr 'try (fromjson) catch empty' C.clean > C.json || echo '{}' > C.json
 
       - name: Validate C.json / Retry JSON-only
@@ -332,7 +471,35 @@ jobs:
           if ! jq -e . C.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _C.prompt
             $CODEX_CMD exec < _C.prompt > C.out || true
-            sed -n '/^{/,$p' C.out > C.clean || true
+            echo '::group::Retry Debug C.out (first 800 chars)'
+            head -c 800 C.out || true; echo; echo '::endgroup::'
+            python - <<'PY'
+            import sys
+            p='C.out'; o='C.clean'
+            s=open(p,'rb').read().decode('utf-8','ignore')
+            i=s.find('{')
+            if i<0:
+                open(o,'w',encoding='utf-8').write('')
+                sys.exit(0)
+            depth=0; j=i; ins=False; esc=False
+            while j < len(s):
+                ch=s[j]
+                if ins:
+                    if esc: esc=False
+                    elif ch=='\\\\': esc=True
+                    elif ch=='"': ins=False
+                else:
+                    if ch=='"': ins=True
+                    elif ch=='{': depth+=1
+                    elif ch=='}':
+                        depth-=1
+                        if depth==0:
+                            j+=1; break
+                j+=1
+            open(o,'w',encoding='utf-8').write(s[i:j])
+            PY
+            echo '::group::Retry Debug C.clean (first 800 chars)'
+            head -c 800 C.clean || true; echo; echo '::endgroup::'
             jq -cr 'try (fromjson) catch empty' C.clean > C.json || echo '{}' > C.json
           fi
 
@@ -364,7 +531,35 @@ jobs:
           open('_META.prompt','w',encoding='utf-8').write(tmpl)
           PY
           $CODEX_CMD exec < _META.prompt > META.out || true
-          sed -n '/^{/,$p' META.out > META.clean || true
+          echo '::group::Debug META.out (first 800 chars)'
+          head -c 800 META.out || true; echo; echo '::endgroup::'
+          python - <<'PY'
+          import sys
+          p='META.out'; o='META.clean'
+          s=open(p,'rb').read().decode('utf-8','ignore')
+          i=s.find('{')
+          if i<0:
+              open(o,'w',encoding='utf-8').write('')
+              sys.exit(0)
+          depth=0; j=i; ins=False; esc=False
+          while j < len(s):
+              ch=s[j]
+              if ins:
+                  if esc: esc=False
+                  elif ch=='\\\\': esc=True
+                  elif ch=='"': ins=False
+              else:
+                  if ch=='"': ins=True
+                  elif ch=='{': depth+=1
+                  elif ch=='}':
+                      depth-=1
+                      if depth==0:
+                          j+=1; break
+              j+=1
+          open(o,'w',encoding='utf-8').write(s[i:j])
+          PY
+          echo '::group::Debug META.clean (first 800 chars)'
+          head -c 800 META.clean || true; echo; echo '::endgroup::'
           jq -cr 'try (fromjson) catch empty' META.clean > META.json || echo '{}' > META.json
 
       # -------- Find (or create) our comment; delete older Codex comments only ----------
