@@ -253,29 +253,35 @@ jobs:
           echo '::group::Debug A.out (first 800 chars)'
           head -c 800 A.out || true; echo; echo '::endgroup::'
           python - <<'PY'
-          import sys
+          import json
           p='A.out'; o='A.clean'
           s=open(p,'rb').read().decode('utf-8','ignore')
-          i=s.find('{')
-          if i<0:
-              open(o,'w',encoding='utf-8').write('')
-              sys.exit(0)
-          depth=0; j=i; ins=False; esc=False
-          while j < len(s):
-              ch=s[j]
+          spans=[]; ins=False; esc=False; depth=0; start=-1
+          for idx,ch in enumerate(s):
               if ins:
                   if esc: esc=False
-                  elif ch=='\\\\': esc=True
+                  elif ch=='\\': esc=True
                   elif ch=='"': ins=False
-              else:
-                  if ch=='"': ins=True
-                  elif ch=='{': depth+=1
-                  elif ch=='}':
-                      depth-=1
-                      if depth==0:
-                          j+=1; break
-              j+=1
-          open(o,'w',encoding='utf-8').write(s[i:j])
+                  continue
+              if ch=='"':
+                  ins=True
+              elif ch=='{':
+                  if depth==0: start=idx
+                  depth+=1
+              elif ch=='}' and depth>0:
+                  depth-=1
+                  if depth==0 and start!=-1:
+                      spans.append((start, idx+1))
+          best=''
+          for a,b in spans[::-1]:
+              cand=s[a:b].strip()
+              try:
+                  json.loads(cand)
+                  best=cand
+                  break
+              except Exception:
+                  continue
+          open(o,'w',encoding='utf-8').write(best)
           PY
           echo '::group::Debug A.clean (first 800 chars)'
           head -c 800 A.clean || true; echo; echo '::endgroup::'
@@ -290,29 +296,35 @@ jobs:
             echo '::group::Retry Debug A.out (first 800 chars)'
             head -c 800 A.out || true; echo; echo '::endgroup::'
             python - <<'PY'
-            import sys
+            import json
             p='A.out'; o='A.clean'
             s=open(p,'rb').read().decode('utf-8','ignore')
-            i=s.find('{')
-            if i<0:
-                open(o,'w',encoding='utf-8').write('')
-                sys.exit(0)
-            depth=0; j=i; ins=False; esc=False
-            while j < len(s):
-                ch=s[j]
+            spans=[]; ins=False; esc=False; depth=0; start=-1
+            for idx,ch in enumerate(s):
                 if ins:
                     if esc: esc=False
-                    elif ch=='\\\\': esc=True
+                    elif ch=='\\': esc=True
                     elif ch=='"': ins=False
-                else:
-                    if ch=='"': ins=True
-                    elif ch=='{': depth+=1
-                    elif ch=='}':
-                        depth-=1
-                        if depth==0:
-                            j+=1; break
-                j+=1
-            open(o,'w',encoding='utf-8').write(s[i:j])
+                    continue
+                if ch=='"':
+                    ins=True
+                elif ch=='{':
+                    if depth==0: start=idx
+                    depth+=1
+                elif ch=='}' and depth>0:
+                    depth-=1
+                    if depth==0 and start!=-1:
+                        spans.append((start, idx+1))
+            best=''
+            for a,b in spans[::-1]:
+                cand=s[a:b].strip()
+                try:
+                    json.loads(cand)
+                    best=cand
+                    break
+                except Exception:
+                    continue
+            open(o,'w',encoding='utf-8').write(best)
             PY
             echo '::group::Retry Debug A.clean (first 800 chars)'
             head -c 800 A.clean || true; echo; echo '::endgroup::'
@@ -345,29 +357,35 @@ jobs:
           echo '::group::Debug B.out (first 800 chars)'
           head -c 800 B.out || true; echo; echo '::endgroup::'
           python - <<'PY'
-          import sys
+          import json
           p='B.out'; o='B.clean'
           s=open(p,'rb').read().decode('utf-8','ignore')
-          i=s.find('{')
-          if i<0:
-              open(o,'w',encoding='utf-8').write('')
-              sys.exit(0)
-          depth=0; j=i; ins=False; esc=False
-          while j < len(s):
-              ch=s[j]
+          spans=[]; ins=False; esc=False; depth=0; start=-1
+          for idx,ch in enumerate(s):
               if ins:
                   if esc: esc=False
-                  elif ch=='\\\\': esc=True
+                  elif ch=='\\': esc=True
                   elif ch=='"': ins=False
-              else:
-                  if ch=='"': ins=True
-                  elif ch=='{': depth+=1
-                  elif ch=='}':
-                      depth-=1
-                      if depth==0:
-                          j+=1; break
-              j+=1
-          open(o,'w',encoding='utf-8').write(s[i:j])
+                  continue
+              if ch=='"':
+                  ins=True
+              elif ch=='{':
+                  if depth==0: start=idx
+                  depth+=1
+              elif ch=='}' and depth>0:
+                  depth-=1
+                  if depth==0 and start!=-1:
+                      spans.append((start, idx+1))
+          best=''
+          for a,b in spans[::-1]:
+              cand=s[a:b].strip()
+              try:
+                  json.loads(cand)
+                  best=cand
+                  break
+              except Exception:
+                  continue
+          open(o,'w',encoding='utf-8').write(best)
           PY
           echo '::group::Debug B.clean (first 800 chars)'
           head -c 800 B.clean || true; echo; echo '::endgroup::'
@@ -382,29 +400,35 @@ jobs:
             echo '::group::Retry Debug B.out (first 800 chars)'
             head -c 800 B.out || true; echo; echo '::endgroup::'
             python - <<'PY'
-            import sys
+            import json
             p='B.out'; o='B.clean'
             s=open(p,'rb').read().decode('utf-8','ignore')
-            i=s.find('{')
-            if i<0:
-                open(o,'w',encoding='utf-8').write('')
-                sys.exit(0)
-            depth=0; j=i; ins=False; esc=False
-            while j < len(s):
-                ch=s[j]
+            spans=[]; ins=False; esc=False; depth=0; start=-1
+            for idx,ch in enumerate(s):
                 if ins:
                     if esc: esc=False
-                    elif ch=='\\\\': esc=True
+                    elif ch=='\\': esc=True
                     elif ch=='"': ins=False
-                else:
-                    if ch=='"': ins=True
-                    elif ch=='{': depth+=1
-                    elif ch=='}':
-                        depth-=1
-                        if depth==0:
-                            j+=1; break
-                j+=1
-            open(o,'w',encoding='utf-8').write(s[i:j])
+                    continue
+                if ch=='"':
+                    ins=True
+                elif ch=='{':
+                    if depth==0: start=idx
+                    depth+=1
+                elif ch=='}' and depth>0:
+                    depth-=1
+                    if depth==0 and start!=-1:
+                        spans.append((start, idx+1))
+            best=''
+            for a,b in spans[::-1]:
+                cand=s[a:b].strip()
+                try:
+                    json.loads(cand)
+                    best=cand
+                    break
+                except Exception:
+                    continue
+            open(o,'w',encoding='utf-8').write(best)
             PY
             echo '::group::Retry Debug B.clean (first 800 chars)'
             head -c 800 B.clean || true; echo; echo '::endgroup::'
@@ -437,29 +461,35 @@ jobs:
           echo '::group::Debug C.out (first 800 chars)'
           head -c 800 C.out || true; echo; echo '::endgroup::'
           python - <<'PY'
-          import sys
+          import json
           p='C.out'; o='C.clean'
           s=open(p,'rb').read().decode('utf-8','ignore')
-          i=s.find('{')
-          if i<0:
-              open(o,'w',encoding='utf-8').write('')
-              sys.exit(0)
-          depth=0; j=i; ins=False; esc=False
-          while j < len(s):
-              ch=s[j]
+          spans=[]; ins=False; esc=False; depth=0; start=-1
+          for idx,ch in enumerate(s):
               if ins:
                   if esc: esc=False
-                  elif ch=='\\\\': esc=True
+                  elif ch=='\\': esc=True
                   elif ch=='"': ins=False
-              else:
-                  if ch=='"': ins=True
-                  elif ch=='{': depth+=1
-                  elif ch=='}':
-                      depth-=1
-                      if depth==0:
-                          j+=1; break
-              j+=1
-          open(o,'w',encoding='utf-8').write(s[i:j])
+                  continue
+              if ch=='"':
+                  ins=True
+              elif ch=='{':
+                  if depth==0: start=idx
+                  depth+=1
+              elif ch=='}' and depth>0:
+                  depth-=1
+                  if depth==0 and start!=-1:
+                      spans.append((start, idx+1))
+          best=''
+          for a,b in spans[::-1]:
+              cand=s[a:b].strip()
+              try:
+                  json.loads(cand)
+                  best=cand
+                  break
+              except Exception:
+                  continue
+          open(o,'w',encoding='utf-8').write(best)
           PY
           echo '::group::Debug C.clean (first 800 chars)'
           head -c 800 C.clean || true; echo; echo '::endgroup::'
@@ -474,29 +504,35 @@ jobs:
             echo '::group::Retry Debug C.out (first 800 chars)'
             head -c 800 C.out || true; echo; echo '::endgroup::'
             python - <<'PY'
-            import sys
+            import json
             p='C.out'; o='C.clean'
             s=open(p,'rb').read().decode('utf-8','ignore')
-            i=s.find('{')
-            if i<0:
-                open(o,'w',encoding='utf-8').write('')
-                sys.exit(0)
-            depth=0; j=i; ins=False; esc=False
-            while j < len(s):
-                ch=s[j]
+            spans=[]; ins=False; esc=False; depth=0; start=-1
+            for idx,ch in enumerate(s):
                 if ins:
                     if esc: esc=False
-                    elif ch=='\\\\': esc=True
+                    elif ch=='\\': esc=True
                     elif ch=='"': ins=False
-                else:
-                    if ch=='"': ins=True
-                    elif ch=='{': depth+=1
-                    elif ch=='}':
-                        depth-=1
-                        if depth==0:
-                            j+=1; break
-                j+=1
-            open(o,'w',encoding='utf-8').write(s[i:j])
+                    continue
+                if ch=='"':
+                    ins=True
+                elif ch=='{':
+                    if depth==0: start=idx
+                    depth+=1
+                elif ch=='}' and depth>0:
+                    depth-=1
+                    if depth==0 and start!=-1:
+                        spans.append((start, idx+1))
+            best=''
+            for a,b in spans[::-1]:
+                cand=s[a:b].strip()
+                try:
+                    json.loads(cand)
+                    best=cand
+                    break
+                except Exception:
+                    continue
+            open(o,'w',encoding='utf-8').write(best)
             PY
             echo '::group::Retry Debug C.clean (first 800 chars)'
             head -c 800 C.clean || true; echo; echo '::endgroup::'
@@ -534,29 +570,35 @@ jobs:
           echo '::group::Debug META.out (first 800 chars)'
           head -c 800 META.out || true; echo; echo '::endgroup::'
           python - <<'PY'
-          import sys
+          import json
           p='META.out'; o='META.clean'
           s=open(p,'rb').read().decode('utf-8','ignore')
-          i=s.find('{')
-          if i<0:
-              open(o,'w',encoding='utf-8').write('')
-              sys.exit(0)
-          depth=0; j=i; ins=False; esc=False
-          while j < len(s):
-              ch=s[j]
+          spans=[]; ins=False; esc=False; depth=0; start=-1
+          for idx,ch in enumerate(s):
               if ins:
                   if esc: esc=False
-                  elif ch=='\\\\': esc=True
+                  elif ch=='\\': esc=True
                   elif ch=='"': ins=False
-              else:
-                  if ch=='"': ins=True
-                  elif ch=='{': depth+=1
-                  elif ch=='}':
-                      depth-=1
-                      if depth==0:
-                          j+=1; break
-              j+=1
-          open(o,'w',encoding='utf-8').write(s[i:j])
+                  continue
+              if ch=='"':
+                  ins=True
+              elif ch=='{':
+                  if depth==0: start=idx
+                  depth+=1
+              elif ch=='}' and depth>0:
+                  depth-=1
+                  if depth==0 and start!=-1:
+                      spans.append((start, idx+1))
+          best=''
+          for a,b in spans[::-1]:
+              cand=s[a:b].strip()
+              try:
+                  json.loads(cand)
+                  best=cand
+                  break
+              except Exception:
+                  continue
+          open(o,'w',encoding='utf-8').write(best)
           PY
           echo '::group::Debug META.clean (first 800 chars)'
           head -c 800 META.clean || true; echo; echo '::endgroup::'
