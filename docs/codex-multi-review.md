@@ -42,6 +42,34 @@ Note: The `@openai/codex` package referenced below is the Codex CLI (open‑sour
 
 Access control: accepted from OWNER, MEMBER, COLLABORATOR, or the PR author. Others are ignored.
 
+## Permissions & Secrets
+
+- Required GitHub Actions permissions (declared in the workflow):
+  - `contents: write`
+  - `pull-requests: write`
+  - `statuses: write`
+  - `issues: write`
+- Required secret: `CODEX_AUTH_B64` containing a base64 of `~/.codex/auth.json` (no newlines). Add it at the repository or organization level under Settings → Secrets and variables → Actions. <!-- pragma: allowlist secret -->
+
+## Manual Run (forks/missing secrets)
+
+Maintainers can run the workflow manually:
+
+- GitHub → Actions → `codex-multi-review` → Run workflow
+
+This is useful for forked PRs that cannot access repository secrets.
+
+## Comment Hygiene
+
+The workflow maintains exactly one Codex‑generated comment per PR and updates it in place. Older Codex comments are cleaned up; human and other bot comments are never touched. See `.codex/cleanup_policy.md` for details.
+
+## Notes and Tips
+
+- Node.js version: the workflow uses Node.js 22 (setup via `actions/setup-node@v4`).
+- Verify CLI: after `codex login`, run `codex --version` locally before creating the secret.
+- Scope examples: multiple globs are supported, e.g., `model_training_framework/**/*.py docs/**/*.md`.
+- Codex CLI: see <https://www.npmjs.com/package/@openai/codex> and <https://github.com/openai/codex-cli>.
+
 ## Notes on Privacy & Safety
 
 - Input minimization: only the PR diff + changed paths are sent, not a full repo crawl.

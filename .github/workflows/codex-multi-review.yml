@@ -6,10 +6,6 @@ on:
   issue_comment:
     types: [created]
   workflow_dispatch:
-    inputs:
-      force_meta:
-        description: "Force meta reviewer"
-        default: "false"
 
 permissions:
   contents: write
@@ -123,20 +119,19 @@ jobs:
               return isPR && ['OWNER','MEMBER','COLLABORATOR'].includes(assoc) ||
                      (assoc === 'CONTRIBUTOR' && context.payload.issue.user?.login === context.payload.comment.user?.login);
             }
-            let run=false, forceMeta=false, strict=null, scope="", hint="";
+            let run=false, strict=null, scope="", hint="";
             if (isPR && allow()) {
               if (/\b\/codex\s+rerun\b/i.test(body)) run=true;
-              if (/\b\/codex\s+meta\b/i.test(body)) { run=true; forceMeta=true; }
+              if (/\b\/codex\s+meta\b/i.test(body)) { run=true; }
               const m = body.match(/\b\/codex\s+strict\s+(on|off)\b/i); if (m) { run=true; strict=m[1].toLowerCase(); }
               const s = body.match(/\b\/codex\s+scope\s+(.+)\b/i); if (s) { run=true; scope=s[1].trim(); }
               if (/@codex/i.test(body)) { run=true; hint = body.replace(/.*@codex/i,'').trim(); }
             }
             core.setOutput('run', run ? 'true' : 'false');
-            core.setOutput('forceMeta', forceMeta ? 'true' : 'false');
             core.setOutput('strict', strict ?? '');
             core.setOutput('scope', scope);
             core.setOutput('hint', hint);
-            return { run, forceMeta, strict, scope, hint };
+            return { run, strict, scope, hint };
 
       - name: Skip if comment not a command
         if: steps.ctx.outputs.is_comment == 'true' && steps.cmd.outputs.run != 'true'
@@ -190,19 +185,16 @@ jobs:
           STRICT_OUT: ${{ steps.cmd.outputs.strict }}
           SCOPE_OUT: ${{ steps.cmd.outputs.scope }}
           HINT_OUT: ${{ steps.cmd.outputs.hint }}
-          FORCE_META_OUT: ${{ steps.cmd.outputs.forceMeta }}
         run: |
-          strict=off; scope=""; hint=""; force=false
+          strict=off; scope=""; hint=""
           if [ "$IS_COMMENT" = "true" ]; then
             [ -n "$STRICT_OUT" ] && strict="$STRICT_OUT"
             [ -n "$SCOPE_OUT" ] && scope="$SCOPE_OUT"
             [ -n "$HINT_OUT" ] && hint="$HINT_OUT"
-            [ "$FORCE_META_OUT" = "true" ] && force=true
           fi
           echo "OPTS_STRICT=$strict" >> $GITHUB_ENV
           echo "OPTS_SCOPE=$scope" >> $GITHUB_ENV
           echo "OPTS_HINT=$hint" >> $GITHUB_ENV
-          echo "OPTS_FORCE_META=$force" >> $GITHUB_ENV
 
       - name: Build diff
         env:
