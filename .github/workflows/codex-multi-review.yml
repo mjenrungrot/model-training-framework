@@ -1,0 +1,426 @@
+name: codex-multi-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      force_meta:
+        description: "Force meta reviewer"
+        default: "false"
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+  issues: write
+
+concurrency:
+  group: codex-multi-review-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Detect context (PR vs comment)
+        id: ctx
+        run: |
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            echo "is_comment=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_comment=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Install Codex CLI
+        run: npm i -g @openai/codex@^1
+
+      - name: Secrets check
+        id: secrets_check
+        run: | # pragma: allowlist secret
+          # pragma: allowlist secret
+          if [ -z "${{ secrets.CODEX_AUTH_B64 }}" ]; then
+            echo "has_secrets=false" >> $GITHUB_OUTPUT # pragma: allowlist secret
+          else
+            echo "has_secrets=true" >> $GITHUB_OUTPUT # pragma: allowlist secret
+          fi
+
+      - name: Early exit w/ notice if no secrets
+        if: steps.secrets_check.outputs.has_secrets != 'true' && github.event_name != 'workflow_dispatch' # pragma: allowlist secret
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const isPR = !!context.payload.pull_request || !!context.payload.issue?.pull_request;
+            if (!isPR) return;
+            const issue_number = context.payload.pull_request?.number ?? context.payload.issue.number;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number,
+              body: "Codex review skipped: missing `CODEX_AUTH_B64` (likely a fork). A maintainer can run via **Actions → codex-multi-review → Run workflow**."
+            });
+
+      - name: Prepare Codex
+        if: steps.secrets_check.outputs.has_secrets == 'true' # pragma: allowlist secret
+        run: |
+          mkdir -p ~/.codex
+          echo "${{ secrets.CODEX_AUTH_B64 }}" | base64 -d > ~/.codex/auth.json # pragma: allowlist secret
+          printf 'preferred_auth_method = "chatgpt"\n' >> ~/.codex/config.toml
+
+      # -------- Parse user commands (issue_comment) ----------
+      - name: Parse commands (comment)
+        id: cmd
+        if: steps.ctx.outputs.is_comment == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = (context.payload.comment.body || "").trim();
+            const assoc = context.payload.comment.author_association; // OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE
+            const isPR = !!context.payload.issue?.pull_request;
+            function allow() {
+              return isPR && ['OWNER','MEMBER','COLLABORATOR'].includes(assoc) ||
+                     (assoc === 'CONTRIBUTOR' && context.payload.issue.user?.login === context.payload.comment.user?.login);
+            }
+            let run=false, forceMeta=false, strict=null, scope="", hint="";
+            if (isPR && allow()) {
+              if (/\b\/codex\s+rerun\b/i.test(body)) run=true;
+              if (/\b\/codex\s+meta\b/i.test(body)) { run=true; forceMeta=true; }
+              const m = body.match(/\b\/codex\s+strict\s+(on|off)\b/i); if (m) { run=true; strict=m[1].toLowerCase(); }
+              const s = body.match(/\b\/codex\s+scope\s+(.+)\b/i); if (s) { run=true; scope=s[1].trim(); }
+              if (/@codex/i.test(body)) { run=true; hint = body.replace(/.*@codex/i,'').trim(); }
+            }
+            return { run, forceMeta, strict, scope, hint };
+
+      - name: Skip if comment not a command
+        if: steps.ctx.outputs.is_comment == 'true' && fromJson(steps.cmd.outputs.result).run != true
+        run: echo "No codex command found; exiting."
+
+      # -------- Establish PR context (works for both triggers) ----------
+      - name: PR context
+        id: prctx
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let prNumber, baseRef, baseSha, headSha;
+            if (context.payload.pull_request) {
+              prNumber = context.payload.pull_request.number;
+              baseRef = context.payload.pull_request.base.ref;
+              baseSha = context.payload.pull_request.base.sha;
+              headSha = context.payload.pull_request.head.sha;
+            } else if (context.payload.issue && context.payload.issue.pull_request) {
+              prNumber = context.payload.issue.number;
+              const pr = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber });
+              baseRef = pr.data.base.ref;
+              baseSha = pr.data.base.sha;
+              headSha = pr.data.head.sha;
+            } else {
+              // workflow_dispatch: use current branch's open PR if any
+              const branch = context.ref.replace('refs/heads/','');
+              const prs = await github.rest.pulls.list({ owner: context.repo.owner, repo: context.repo.repo, head: `${context.repo.owner}:${branch}`, state: 'open' });
+              if (prs.data.length) {
+                const pr = prs.data[0];
+                prNumber = pr.number;
+                baseRef = pr.base.ref;
+                baseSha = pr.base.sha;
+                headSha = pr.head.sha;
+              }
+            }
+            return { prNumber, baseRef, baseSha, headSha };
+
+      - name: Guard - need PR number & secrets
+        if: steps.secrets_check.outputs.has_secrets != 'true' || steps.prctx.outputs.result == '{}' # pragma: allowlist secret
+        run: exit 0
+
+      # -------- Build DIFF (scope-aware) ----------
+      - name: Build diff
+        env:
+          BASE: ${{ fromJson(steps.prctx.outputs.result).baseRef }}
+          SCOPE: ${{ fromJson(steps.cmd.outputs.result || '{}').scope }}
+        run: |
+          git fetch origin "$BASE" --depth=1
+          if [ -n "$SCOPE" ]; then
+            git diff --unified=3 --no-color "origin/$BASE"...HEAD -- "$SCOPE" > pr.diff || true
+          else
+            git diff --unified=3 --no-color "origin/$BASE"...HEAD > pr.diff
+          fi
+          if [ $(wc -c < pr.diff) -gt 180000 ]; then head -c 180000 pr.diff > pr.diff.limited; echo "TRUNCATED=1" >> $GITHUB_ENV; else cp pr.diff pr.diff.limited; fi
+
+          if [ -n "$SCOPE" ]; then
+            git diff --name-only "origin/$BASE"...HEAD -- "$SCOPE" > changed_files.txt || true
+          else
+            git diff --name-only "origin/$BASE"...HEAD > changed_files.txt
+          fi
+
+      - name: Load prompts (existence check)
+        run: |
+          for f in reviewer_correctness.md reviewer_documentation.md reviewer_performance.md meta_reviewer.md cleanup_policy.md; do
+            test -f ".codex/$f";
+          done
+
+      # -------- Run 3 reviewers (sequential) ----------
+      - name: Reviewer A — Correctness
+        env:
+          BASE_SHA: ${{ fromJson(steps.prctx.outputs.result).baseSha }}
+          HEAD_SHA: ${{ fromJson(steps.prctx.outputs.result).headSha }}
+          STRICT: ${{ fromJson(steps.cmd.outputs.result || '{}').strict }}
+          HINT:   ${{ fromJson(steps.cmd.outputs.result || '{}').hint }}
+        run: |
+          python - <<'PY'
+          import os
+          tmpl = open('.codex/reviewer_correctness.md','r',encoding='utf-8').read()
+          diff = open('pr.diff.limited','r',encoding='utf-8').read()
+          files = open('changed_files.txt','r',encoding='utf-8').read()
+          tmpl = (tmpl
+            .replace('<<PR_DIFF>>', diff)
+            .replace('<<CHANGED_FILES>>', files)
+            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
+            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
+            .replace('<<STRICT>>', os.environ.get('STRICT','off') or 'off')
+            .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
+          open('_A.prompt','w',encoding='utf-8').write(tmpl)
+          PY
+          codex exec < _A.prompt > A.out || true
+          jq -cr 'try (fromjson) catch empty' A.out > A.json || echo '{}' > A.json
+
+      - name: Validate A.json / Retry JSON-only
+        if: always()
+        run: |
+          if ! jq -e . A.json >/dev/null 2>&1; then
+            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _A.prompt
+            codex exec < _A.prompt > A.out || true
+            jq -cr 'try (fromjson) catch empty' A.out > A.json || echo '{}' > A.json
+          fi
+
+      - name: Reviewer B — Documentation
+        env:
+          BASE_SHA: ${{ fromJson(steps.prctx.outputs.result).baseSha }}
+          HEAD_SHA: ${{ fromJson(steps.prctx.outputs.result).headSha }}
+          STRICT: ${{ fromJson(steps.cmd.outputs.result || '{}').strict }}
+          HINT:   ${{ fromJson(steps.cmd.outputs.result || '{}').hint }}
+        run: |
+          python - <<'PY'
+          import os
+          tmpl = open('.codex/reviewer_documentation.md','r',encoding='utf-8').read()
+          diff = open('pr.diff.limited','r',encoding='utf-8').read()
+          files = open('changed_files.txt','r',encoding='utf-8').read()
+          tmpl = (tmpl
+            .replace('<<PR_DIFF>>', diff)
+            .replace('<<CHANGED_FILES>>', files)
+            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
+            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
+            .replace('<<STRICT>>', os.environ.get('STRICT','off') or 'off')
+            .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
+          open('_B.prompt','w',encoding='utf-8').write(tmpl)
+          PY
+          codex exec < _B.prompt > B.out || true
+          jq -cr 'try (fromjson) catch empty' B.out > B.json || echo '{}' > B.json
+
+      - name: Validate B.json / Retry JSON-only
+        if: always()
+        run: |
+          if ! jq -e . B.json >/dev/null 2>&1; then
+            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _B.prompt
+            codex exec < _B.prompt > B.out || true
+            jq -cr 'try (fromjson) catch empty' B.out > B.json || echo '{}' > B.json
+          fi
+
+      - name: Reviewer C — Performance
+        env:
+          BASE_SHA: ${{ fromJson(steps.prctx.outputs.result).baseSha }}
+          HEAD_SHA: ${{ fromJson(steps.prctx.outputs.result).headSha }}
+          STRICT: ${{ fromJson(steps.cmd.outputs.result || '{}').strict }}
+          HINT:   ${{ fromJson(steps.cmd.outputs.result || '{}').hint }}
+        run: |
+          python - <<'PY'
+          import os
+          tmpl = open('.codex/reviewer_performance.md','r',encoding='utf-8').read()
+          diff = open('pr.diff.limited','r',encoding='utf-8').read()
+          files = open('changed_files.txt','r',encoding='utf-8').read()
+          tmpl = (tmpl
+            .replace('<<PR_DIFF>>', diff)
+            .replace('<<CHANGED_FILES>>', files)
+            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
+            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
+            .replace('<<STRICT>>', os.environ.get('STRICT','off') or 'off')
+            .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
+          open('_C.prompt','w',encoding='utf-8').write(tmpl)
+          PY
+          codex exec < _C.prompt > C.out || true
+          jq -cr 'try (fromjson) catch empty' C.out > C.json || echo '{}' > C.json
+
+      - name: Validate C.json / Retry JSON-only
+        if: always()
+        run: |
+          if ! jq -e . C.json >/dev/null 2>&1; then
+            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _C.prompt
+            codex exec < _C.prompt > C.out || true
+            jq -cr 'try (fromjson) catch empty' C.out > C.json || echo '{}' > C.json
+          fi
+
+      - name: Unanimity check
+        id: agree
+        run: |
+          D1=$(jq -r '.decision' A.json); D2=$(jq -r '.decision' B.json); D3=$(jq -r '.decision' C.json)
+          if [ "$D1" = "$D2" ] && [ "$D2" = "$D3" ] && [ "$D1" != "null" ]; then echo "unanimous=true" >> $GITHUB_OUTPUT; else echo "unanimous=false" >> $GITHUB_OUTPUT; fi
+
+      - name: Meta Reviewer (if unanimous or forced)
+        if: steps.agree.outputs.unanimous == 'true' || github.event.inputs.force_meta == 'true' || fromJson(steps.cmd.outputs.result || '{}').forceMeta == true
+        env:
+          BASE_SHA: ${{ fromJson(steps.prctx.outputs.result).baseSha }}
+          HEAD_SHA: ${{ fromJson(steps.prctx.outputs.result).headSha }}
+        run: |
+          python - <<'PY'
+          import os, json
+          tmpl = open('.codex/meta_reviewer.md','r',encoding='utf-8').read()
+          r1 = open('A.json','r',encoding='utf-8').read().strip()
+          r2 = open('B.json','r',encoding='utf-8').read().strip()
+          r3 = open('C.json','r',encoding='utf-8').read().strip()
+          tmpl = (tmpl
+            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
+            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
+            .replace('<<R1_JSON>>', r1)
+            .replace('<<R2_JSON>>', r2)
+            .replace('<<R3_JSON>>', r3))
+          open('_META.prompt','w',encoding='utf-8').write(tmpl)
+          PY
+          codex exec < _META.prompt > META.out || true
+          jq -cr 'try (fromjson) catch empty' META.out > META.json || echo '{}' > META.json
+
+      # -------- Find (or create) our comment; delete older Codex comments only ----------
+      - name: List comments
+        id: comments
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = JSON.parse(`${{ steps.prctx.outputs.result }}`).prNumber;
+            const { data } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, per_page: 100 });
+            return { comments: data };
+
+      - name: Select comment to update and cleanup IDs
+        id: select_comment
+        run: |
+          echo '${{ steps.comments.outputs.result }}' > comments.json
+          CANDIDATE_ID=$(jq -r '[.comments[] | select(.user.login=="github-actions[bot]") | select(.body | contains("<!-- codex-review -->"))] | sort_by(.created_at) | last?.id // empty' comments.json)
+          DEL_IDS=$(jq -r --arg cid "$CANDIDATE_ID" '[.comments[] | select(.user.login=="github-actions[bot]") | select(.body | contains("<!-- codex-review -->")) | select((.id|tostring) != $cid)] | map(.id) | @json' comments.json)
+          echo "cid=${CANDIDATE_ID}" >> $GITHUB_OUTPUT
+          echo "del=${DEL_IDS}" >> $GITHUB_OUTPUT
+
+      - name: Compose body
+        id: compose
+        env:
+          HEAD_SHA: ${{ fromJson(steps.prctx.outputs.result).headSha }}
+          STRICT: ${{ fromJson(steps.cmd.outputs.result || '{}').strict }}
+          SCOPE:  ${{ fromJson(steps.cmd.outputs.result || '{}').scope }}
+          UNAN:   ${{ steps.agree.outputs.unanimous }}
+        run: |
+          SHORT=$(echo "${HEAD_SHA}" | cut -c1-7)
+          TRUNC_NOTE=$([ -n "$TRUNCATED" ] && echo "\n> 🔎 Diff truncated for context. Use \`/codex scope <glob>\` to focus." || echo "")
+
+          # Build decision summary (for meta skip reason)
+          D1=$(jq -r '.decision // "N/A"' A.json); D2=$(jq -r '.decision // "N/A"' B.json); D3=$(jq -r '.decision // "N/A"' C.json)
+          if [ "$UNAN" != "true" ]; then META_NOTE="\n_Meta reviewer skipped (no unanimous decision: A=${D1}, B=${D2}, C=${D3})._"; else META_NOTE=""; fi
+
+          make_md () {
+            local title="$1"; local f="$2"
+            jq -r '
+              def bullets($k): ( .[$k] // [] ) | if length>0 then (map("- " + .) | join("\n")) else "_none_" end;
+              def cites: ( .citations // [] ) | if length>0 then (map("- " + (.file // "?") + (if .lines then ":" + .lines else "" end) + " — " + (.reason // "")) | join("\n")) else "_none_" end;
+              "#### \(env.title)\n" +
+              "*Decision:* \(.decision // "N/A")  \n*Confidence:* \(.confidence // "N/A")\n\n" +
+              "**Summary**\n\(.summary // "_none_")\n\n" +
+              "**Strengths**\n" + bullets("strengths") + "\n\n" +
+              "**Weaknesses**\n" + bullets("weaknesses") + "\n\n" +
+              "**Required changes**\n" + bullets("required_changes") + "\n\n" +
+              "**Suggested changes**\n" + bullets("suggested_changes") + "\n\n" +
+              "**Inline suggestions (selected)**\n" + ( .inline_suggestions // [] | map(.suggestion_markdown) | join("\n\n") | if .=="" then "_none_" else . end ) + "\n\n" +
+              "**Citations**\n" + cites
+            ' "$f"
+          }
+
+          HEADER="<!-- codex-review -->\n[# codex-review | Commit: ${SHORT} | strict:${STRICT:-off} | scope:\"${SCOPE}\" ]\n\n"
+          BODY="${HEADER}"
+          title='Reviewer A — Correctness & Safety'; export title; BODY+="$(make_md "$title" A.json)\n\n"
+          title='Reviewer B — Documentation & DX'; export title; BODY+="$(make_md "$title" B.json)\n\n"
+          title='Reviewer C — Performance & Architecture'; export title; BODY+="$(make_md "$title" C.json)\n\n"
+
+          if [ -f META.json ] && [ "$(jq -r '.overall_score // empty' META.json)" != "" ]; then
+            BODY+="---\n\n**Meta Reviewer Scorecard**\n\n"
+            BODY+=$(jq -r '
+              "| Category | Score |\n|---|---|\n" +
+              "| Correctness | \(.rubric.correctness) |\n" +
+              "| Clarity/Docs | \(.rubric.clarity_docs) |\n" +
+              "| Reproducibility | \(.rubric.reproducibility) |\n" +
+              "| Performance/Scalability | \(.rubric.performance_scalability) |\n" +
+              "| Security/Privacy | \(.rubric.security_privacy) |\n" +
+              "\n**Overall:** \(.overall_score) / 10  \n*Meta decision:* \(.meta_decision)  \n*Confidence:* \(.confidence)\n\n**Summary**\n\(.summary)\n" ' META.json)
+            TB=$(jq -r '( .top_blockers // [] ) | if length>0 then (["\n**Top blockers**", (map("- " + .) | join("\n"))] | join("\n")) else "" end' META.json)
+            BODY+="$TB"
+          else
+            BODY+="$META_NOTE"
+          fi
+
+          BODY+="$TRUNC_NOTE"
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Delete older Codex comments (safe)
+        if: steps.select_comment.outputs.del != '[]'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const ids = JSON.parse(`${{ steps.select_comment.outputs.del }}`);
+            for (const id of ids) {
+              try {
+                await github.rest.issues.deleteComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: id });
+              } catch (e) { core.warning(`Cleanup failed for ${id}: ${e.message}`); }
+            }
+
+      - name: Upsert Codex comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = JSON.parse(`${{ steps.prctx.outputs.result }}`).prNumber;
+            const cid = `${{ steps.select_comment.outputs.cid }}`;
+            if (cid) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: `${{ steps.compose.outputs.body }}` });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: `${{ steps.compose.outputs.body }}` });
+            }
+
+      - name: Commit status (neutral visibility)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner, repo: context.repo.repo,
+              sha: `${{ fromJson(steps.prctx.outputs.result).headSha }}`,
+              state: 'success', context: 'codex/review',
+              description: 'Codex review posted'
+            });
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-multi-review-${{ github.sha }}
+          path: |
+            pr.diff
+            pr.diff.limited
+            changed_files.txt
+            A.json B.json C.json META.json
