@@ -1,0 +1,730 @@
+name: codex-multi-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+  issues: write
+
+concurrency:
+  group: codex-multi-review-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CODEX_REASONING_EFFORT: high
+      DEBUG_SNIPPET_CHARS: "4000"
+
+    steps:
+      - name: Detect context (PR vs comment)
+        id: ctx
+        run: |
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            echo "is_comment=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_comment=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-cache-codex-cli-v1
+          restore-keys: |
+            ${{ runner.os }}-npm-cache-
+
+      # jq is preinstalled on ubuntu-latest; skip explicit install to save time
+
+      - name: Install Codex CLI (prefer npx)
+        run: |
+          set -e
+          CODEX_CMD="npx -y @openai/codex"
+          if $CODEX_CMD --version >/dev/null 2>&1; then
+            echo "CLI_AVAILABLE=true" >> $GITHUB_ENV
+            echo "CODEX_CMD=$CODEX_CMD" >> $GITHUB_ENV
+            $CODEX_CMD --version || true
+          else
+            echo "CLI_AVAILABLE=false" >> $GITHUB_ENV
+            echo "CODEX_CMD=$CODEX_CMD" >> $GITHUB_ENV
+            echo "Codex CLI unavailable; reviewers will be skipped." >&2
+          fi
+
+      - name: Secrets check
+        id: secrets_check
+        run: | # pragma: allowlist secret
+          # pragma: allowlist secret
+          if [ -z "${{ secrets.CODEX_AUTH_B64 }}" ]; then
+            echo "has_secrets=false" >> $GITHUB_OUTPUT # pragma: allowlist secret
+          else
+            echo "has_secrets=true" >> $GITHUB_OUTPUT # pragma: allowlist secret
+          fi
+
+      - name: Early exit w/ notice if no secrets
+        if: steps.secrets_check.outputs.has_secrets != 'true' && github.event_name != 'workflow_dispatch' # pragma: allowlist secret
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const isPR = !!context.payload.pull_request || !!context.payload.issue?.pull_request;
+            if (!isPR) return;
+            const issue_number = context.payload.pull_request?.number ?? context.payload.issue.number;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number,
+              body: "Codex review skipped: missing `CODEX_AUTH_B64` (likely a fork). A maintainer can run via **Actions → codex-multi-review → Run workflow**."
+            });
+
+      - name: Prepare Codex
+        if: steps.secrets_check.outputs.has_secrets == 'true' # pragma: allowlist secret
+        run: |
+          mkdir -p ~/.codex
+          echo "${{ secrets.CODEX_AUTH_B64 }}" | base64 -d > ~/.codex/auth.json # pragma: allowlist secret
+          printf 'preferred_auth_method = "chatgpt"\n' >> ~/.codex/config.toml
+          printf 'reasoning_effort = "high"\n' >> ~/.codex/config.toml
+
+      # -------- Parse user commands (issue_comment) ----------
+      - name: Parse commands (comment)
+        id: cmd
+        if: steps.ctx.outputs.is_comment == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = (context.payload.comment.body || "").trim();
+            const assoc = context.payload.comment.author_association; // OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE
+            const isPR = !!context.payload.issue?.pull_request;
+            function allow() {
+              return isPR && ['OWNER','MEMBER','COLLABORATOR'].includes(assoc) ||
+                     (assoc === 'CONTRIBUTOR' && context.payload.issue.user?.login === context.payload.comment.user?.login);
+            }
+            let run=false, strict=null, scope="", hint="";
+            if (isPR && allow()) {
+              if (/\b\/codex\s+rerun\b/i.test(body)) run=true;
+              if (/\b\/codex\s+meta\b/i.test(body)) { run=true; }
+              const m = body.match(/\b\/codex\s+strict\s+(on|off)\b/i); if (m) { run=true; strict=m[1].toLowerCase(); }
+              const s = body.match(/\b\/codex\s+scope\s+(.+)\b/i); if (s) { run=true; scope=s[1].trim(); }
+              if (/@codex/i.test(body)) { run=true; hint = body.replace(/.*@codex/i,'').trim(); }
+            }
+            core.setOutput('run', run ? 'true' : 'false');
+            core.setOutput('strict', strict ?? '');
+            core.setOutput('scope', scope);
+            core.setOutput('hint', hint);
+            return { run, strict, scope, hint };
+
+      - name: Skip if comment not a command
+        if: steps.ctx.outputs.is_comment == 'true' && steps.cmd.outputs.run != 'true'
+        run: echo "No codex command found; exiting."
+
+      # -------- Establish PR context (works for both triggers) ----------
+      - name: PR context
+        id: prctx
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let prNumber, baseRef, baseSha, headSha;
+            if (context.payload.pull_request) {
+              prNumber = context.payload.pull_request.number;
+              baseRef = context.payload.pull_request.base.ref;
+              baseSha = context.payload.pull_request.base.sha;
+              headSha = context.payload.pull_request.head.sha;
+            } else if (context.payload.issue && context.payload.issue.pull_request) {
+              prNumber = context.payload.issue.number;
+              const pr = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber });
+              baseRef = pr.data.base.ref;
+              baseSha = pr.data.base.sha;
+              headSha = pr.data.head.sha;
+            } else {
+              // workflow_dispatch: use current branch's open PR if any
+              const branch = context.ref.replace('refs/heads/','');
+              const prs = await github.rest.pulls.list({ owner: context.repo.owner, repo: context.repo.repo, head: `${context.repo.owner}:${branch}`, state: 'open' });
+              if (prs.data.length) {
+                const pr = prs.data[0];
+                prNumber = pr.number;
+                baseRef = pr.base.ref;
+                baseSha = pr.base.sha;
+                headSha = pr.head.sha;
+              }
+            }
+            core.setOutput('prNumber', prNumber ?? '');
+            core.setOutput('baseRef', baseRef ?? '');
+            core.setOutput('baseSha', baseSha ?? '');
+            core.setOutput('headSha', headSha ?? '');
+            return { prNumber, baseRef, baseSha, headSha };
+
+      - name: Guard - need PR number & secrets
+        if: steps.secrets_check.outputs.has_secrets != 'true' || steps.prctx.outputs.prNumber == '' # pragma: allowlist secret
+        run: exit 0
+
+      # -------- Build DIFF (scope-aware) ----------
+      - name: Normalize command options
+        id: opts
+        env:
+          IS_COMMENT: ${{ steps.ctx.outputs.is_comment }}
+          STRICT_OUT: ${{ steps.cmd.outputs.strict }}
+          SCOPE_OUT: ${{ steps.cmd.outputs.scope }}
+          HINT_OUT: ${{ steps.cmd.outputs.hint }}
+        run: |
+          strict=off; scope=""; hint=""
+          if [ "$IS_COMMENT" = "true" ]; then
+            [ -n "$STRICT_OUT" ] && strict="$STRICT_OUT"
+            [ -n "$SCOPE_OUT" ] && scope="$SCOPE_OUT"
+            [ -n "$HINT_OUT" ] && hint="$HINT_OUT"
+          fi
+          echo "OPTS_STRICT=$strict" >> $GITHUB_ENV
+          echo "OPTS_SCOPE=$scope" >> $GITHUB_ENV
+          echo "OPTS_HINT=$hint" >> $GITHUB_ENV
+
+      - name: Build diff
+        env:
+          BASE: ${{ steps.prctx.outputs.baseRef }}
+          SCOPE: ${{ env.OPTS_SCOPE }}
+        run: |
+          git fetch origin "$BASE" --depth=1
+          if [ -n "$SCOPE" ]; then
+            # Support multiple space-separated globs as separate pathspecs
+            read -r -a scopes <<< "$SCOPE"
+            git diff --unified=3 --no-color "origin/$BASE"...HEAD -- "${scopes[@]}" > pr.diff || true
+          else
+            git diff --unified=3 --no-color "origin/$BASE"...HEAD > pr.diff
+          fi
+          if [ $(wc -c < pr.diff) -gt 180000 ]; then head -c 180000 pr.diff > pr.diff.limited; echo "TRUNCATED=1" >> $GITHUB_ENV; else cp pr.diff pr.diff.limited; fi
+
+          if [ -n "$SCOPE" ]; then
+            # Use the same parsed scopes for changed-files list
+            git diff --name-only "origin/$BASE"...HEAD -- "${scopes[@]}" > changed_files.txt || true
+          else
+            git diff --name-only "origin/$BASE"...HEAD > changed_files.txt
+          fi
+
+      - name: Collect PR details and linked issues
+        id: prdetails
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.prctx.outputs.prNumber }}
+        with:
+          script: |
+            const fs = require('fs');
+            const prNumber = Number(process.env.PR_NUMBER);
+            if (!prNumber) { core.setOutput('written','false'); return; }
+            const { data: pr } = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber });
+            const title = pr.title || '';
+            const body = pr.body || '';
+            const issues = new Map();
+            const add = (m)=>{ const n = Number(m[1]); if (Number.isInteger(n)) issues.set(n, true); };
+            const re1 = /(close[sd]?|resolve[sd]?|fix(?:e[sd])?)\s+#(\d+)/ig;
+            const re2 = /#(\d+)/g;
+            let m;
+            for (const s of [body, title]) {
+              while ((m = re1.exec(s)) !== null) add(m);
+              while ((m = re2.exec(s)) !== null) add(m);
+            }
+            const linked = [];
+            for (const num of issues.keys()) {
+              try {
+                const { data: issue } = await github.rest.issues.get({ owner: context.repo.owner, repo: context.repo.repo, issue_number: num });
+                linked.push({ number: issue.number, title: issue.title || '', body: (issue.body || '').slice(0, 4000) });
+              } catch (e) {
+                linked.push({ number: num, title: '', body: '' });
+              }
+            }
+            fs.writeFileSync('pr_title.txt', title, { encoding: 'utf8' });
+            fs.writeFileSync('pr_body.txt', body, { encoding: 'utf8' });
+            fs.writeFileSync('linked_issues.json', JSON.stringify(linked));
+            core.setOutput('written','true');
+
+      - name: Load prompts (existence check)
+        if: env.CLI_AVAILABLE == 'true'
+        run: |
+          for f in reviewer_correctness.md reviewer_documentation.md reviewer_performance.md reviewer_alignment.md meta_reviewer.md cleanup_policy.md; do
+            test -f ".codex/$f";
+          done
+
+      - name: Write JSON extractor util
+        if: env.CLI_AVAILABLE == 'true'
+        run: |
+          cat > extract_json.py << 'PY'
+          import sys, json
+          if len(sys.argv) != 3:
+              sys.exit(2)
+          src, dst = sys.argv[1], sys.argv[2]
+          s = open(src, 'rb').read().decode('utf-8', 'ignore')
+          spans = []
+          ins = False
+          esc = False
+          depth = 0
+          start = -1
+          for idx, ch in enumerate(s):
+              if ins:
+                  if esc:
+                      esc = False
+                  elif ch == '\\':
+                      esc = True
+                  elif ch == '"':
+                      ins = False
+                  continue
+              if ch == '"':
+                  ins = True
+              elif ch == '{':
+                  if depth == 0:
+                      start = idx
+                  depth += 1
+              elif ch == '}' and depth > 0:
+                  depth -= 1
+                  if depth == 0 and start != -1:
+                      spans.append((start, idx + 1))
+          best = ''
+          for a, b in spans[::-1]:
+              cand = s[a:b].strip()
+              try:
+                  json.loads(cand)
+              except Exception:
+                  continue
+              else:
+                  best = cand
+                  break
+          with open(dst, 'w', encoding='utf-8') as f:
+              f.write(best)
+          PY
+          cat > parse_stats.py << 'PY'
+          import sys, json
+          src = sys.argv[1] if len(sys.argv) > 1 else 'A.out'
+          clean = sys.argv[2] if len(sys.argv) > 2 else 'A.clean'
+          s=open(src,'rb').read().decode('utf-8','ignore')
+          ins=False; esc=False; depth=0; start=-1; spans=[]
+          for i,ch in enumerate(s):
+              if ins:
+                  if esc: esc=False
+                  elif ch=='\\': esc=True
+                  elif ch=='"': ins=False
+                  continue
+              if ch=='"': ins=True
+              elif ch=='{':
+                  if depth==0: start=i
+                  depth+=1
+              elif ch=='}' and depth>0:
+                  depth-=1
+                  if depth==0 and start!=-1:
+                      spans.append((start,i+1))
+          print(f"spans_found={len(spans)}")
+          if spans:
+              a,b=spans[-1]
+              print(f"selected_span=[{a},{b}) length={b-a}")
+          try:
+              json.loads(open(clean,'r',encoding='utf-8').read())
+              print("clean_json_valid=true")
+          except Exception as e:
+              print("clean_json_valid=false", str(e))
+          PY
+
+      # -------- Run 3 reviewers (sequential) ----------
+      - name: Reviewer A — Correctness
+        if: env.CLI_AVAILABLE == 'true'
+        env:
+          BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
+          STRICT: ${{ env.OPTS_STRICT }}
+          HINT:   ${{ env.OPTS_HINT }}
+        run: |
+          python - <<'PY'
+          import os
+          tmpl = open('.codex/reviewer_correctness.md','r',encoding='utf-8').read()
+          diff = open('pr.diff.limited','r',encoding='utf-8').read()
+          files = open('changed_files.txt','r',encoding='utf-8').read()
+          tmpl = (tmpl
+            .replace('<<PR_DIFF>>', diff)
+            .replace('<<CHANGED_FILES>>', files)
+            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
+            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
+            .replace('<<STRICT>>', os.environ.get('STRICT','off') or 'off')
+            .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
+          open('_A.prompt','w',encoding='utf-8').write(tmpl)
+          PY
+          timeout -k 30s 420s $CODEX_CMD exec < _A.prompt > A.out || true
+          echo '::group::Debug A.out (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} A.out || true; echo; echo '::endgroup::'
+          python extract_json.py A.out A.clean || true
+          echo '::group::Debug A.clean (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} A.clean || true; echo; echo '::endgroup::'
+          if [ -s A.clean ] && jq -e . A.clean >/dev/null 2>&1; then jq -c . A.clean > A.json; else printf '{"reviewer":"correctness","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > A.json; fi
+
+      - name: Validate A.json / Retry JSON-only
+        if: env.CLI_AVAILABLE == 'true'
+        run: |
+          if ! jq -e . A.json >/dev/null 2>&1; then
+            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders like 'number (0.0-1.0)'; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _A.prompt
+            timeout -k 30s 300s $CODEX_CMD exec < _A.prompt > A.out || true
+            echo '::group::Retry Debug A.out (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} A.out || true; echo; echo '::endgroup::'
+            python extract_json.py A.out A.clean || true
+            echo '::group::Retry Debug A.clean (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} A.clean || true; echo; echo '::endgroup::'
+            # Additional parse stats for A
+            echo '::group::A.parse stats'
+            python parse_stats.py A.out A.clean || true
+            echo '::endgroup::'
+            if [ -s A.clean ] && jq -e . A.clean >/dev/null 2>&1; then jq -c . A.clean > A.json; else printf '{"reviewer":"correctness","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > A.json; fi
+          fi
+
+      - name: Reviewer B — Documentation
+        if: env.CLI_AVAILABLE == 'true'
+        env:
+          BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
+          STRICT: ${{ env.OPTS_STRICT }}
+          HINT:   ${{ env.OPTS_HINT }}
+        run: |
+          python - <<'PY'
+          import os
+          tmpl = open('.codex/reviewer_documentation.md','r',encoding='utf-8').read()
+          diff = open('pr.diff.limited','r',encoding='utf-8').read()
+          files = open('changed_files.txt','r',encoding='utf-8').read()
+          tmpl = (tmpl
+            .replace('<<PR_DIFF>>', diff)
+            .replace('<<CHANGED_FILES>>', files)
+            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
+            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
+            .replace('<<STRICT>>', os.environ.get('STRICT','off') or 'off')
+            .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
+          open('_B.prompt','w',encoding='utf-8').write(tmpl)
+          PY
+          timeout -k 30s 420s $CODEX_CMD exec < _B.prompt > B.out || true
+          echo '::group::Debug B.out (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} B.out || true; echo; echo '::endgroup::'
+          python extract_json.py B.out B.clean || true
+          echo '::group::Debug B.clean (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} B.clean || true; echo; echo '::endgroup::'
+          if [ -s B.clean ] && jq -e . B.clean >/dev/null 2>&1; then jq -c . B.clean > B.json; else printf '{"reviewer":"documentation","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > B.json; fi
+
+      - name: Validate B.json / Retry JSON-only
+        if: env.CLI_AVAILABLE == 'true'
+        run: |
+          if ! jq -e . B.json >/dev/null 2>&1; then
+            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _B.prompt
+            timeout -k 30s 300s $CODEX_CMD exec < _B.prompt > B.out || true
+            echo '::group::Retry Debug B.out (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} B.out || true; echo; echo '::endgroup::'
+            python extract_json.py B.out B.clean || true
+            echo '::group::Retry Debug B.clean (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} B.clean || true; echo; echo '::endgroup::'
+            if [ -s B.clean ] && jq -e . B.clean >/dev/null 2>&1; then jq -c . B.clean > B.json; else printf '{"reviewer":"documentation","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > B.json; fi
+          fi
+
+      - name: Reviewer C — Performance
+        if: env.CLI_AVAILABLE == 'true'
+        env:
+          BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
+          STRICT: ${{ env.OPTS_STRICT }}
+          HINT:   ${{ env.OPTS_HINT }}
+        run: |
+          python - <<'PY'
+          import os
+          tmpl = open('.codex/reviewer_performance.md','r',encoding='utf-8').read()
+          diff = open('pr.diff.limited','r',encoding='utf-8').read()
+          files = open('changed_files.txt','r',encoding='utf-8').read()
+          tmpl = (tmpl
+            .replace('<<PR_DIFF>>', diff)
+            .replace('<<CHANGED_FILES>>', files)
+            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
+            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
+            .replace('<<STRICT>>', os.environ.get('STRICT','off') or 'off')
+            .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
+          open('_C.prompt','w',encoding='utf-8').write(tmpl)
+          PY
+          timeout -k 30s 420s $CODEX_CMD exec < _C.prompt > C.out || true
+          echo '::group::Debug C.out (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} C.out || true; echo; echo '::endgroup::'
+          python extract_json.py C.out C.clean || true
+          echo '::group::Debug C.clean (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} C.clean || true; echo; echo '::endgroup::'
+          if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else printf '{"reviewer":"performance","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > C.json; fi
+
+      - name: Validate C.json / Retry JSON-only
+        if: env.CLI_AVAILABLE == 'true'
+        run: |
+          if ! jq -e . C.json >/dev/null 2>&1; then
+            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _C.prompt
+            timeout -k 30s 300s $CODEX_CMD exec < _C.prompt > C.out || true
+            echo '::group::Retry Debug C.out (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} C.out || true; echo; echo '::endgroup::'
+            python extract_json.py C.out C.clean || true
+            echo '::group::Retry Debug C.clean (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} C.clean || true; echo; echo '::endgroup::'
+            if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else printf '{"reviewer":"performance","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > C.json; fi
+          fi
+
+      - name: Reviewer D — Spec Alignment
+        if: env.CLI_AVAILABLE == 'true'
+        env:
+          BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
+          STRICT: ${{ env.OPTS_STRICT }}
+          HINT:   ${{ env.OPTS_HINT }}
+        run: |
+          python - <<'PY'
+          import os
+          tmpl = open('.codex/reviewer_alignment.md','r',encoding='utf-8').read()
+          diff = open('pr.diff.limited','r',encoding='utf-8').read()
+          files = open('changed_files.txt','r',encoding='utf-8').read()
+          pr_title = open('pr_title.txt','r',encoding='utf-8').read() if os.path.exists('pr_title.txt') else ''
+          pr_body  = open('pr_body.txt','r',encoding='utf-8').read() if os.path.exists('pr_body.txt') else ''
+          linked   = open('linked_issues.json','r',encoding='utf-8').read() if os.path.exists('linked_issues.json') else '[]'
+          tmpl = (tmpl
+            .replace('<<PR_DIFF>>', diff)
+            .replace('<<CHANGED_FILES>>', files)
+            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
+            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
+            .replace('<<STRICT>>', os.environ.get('STRICT','off') or 'off')
+            .replace('<<FOCUS_HINT>>', os.environ.get('HINT',''))
+            .replace('<<PR_TITLE>>', pr_title)
+            .replace('<<PR_BODY>>', pr_body)
+            .replace('<<LINKED_ISSUES_JSON>>', linked))
+          open('_D.prompt','w',encoding='utf-8').write(tmpl)
+          PY
+          timeout -k 30s 420s $CODEX_CMD exec < _D.prompt > D.out || true
+          echo '::group::Debug D.out (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} D.out || true; echo; echo '::endgroup::'
+          python extract_json.py D.out D.clean || true
+          echo '::group::Debug D.clean (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} D.clean || true; echo; echo '::endgroup::'
+          if [ -s D.clean ] && jq -e . D.clean >/dev/null 2>&1; then jq -c . D.clean > D.json; else printf '{"reviewer":"alignment","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > D.json; fi
+
+      - name: Validate D.json / Retry JSON-only
+        if: env.CLI_AVAILABLE == 'true'
+        run: |
+          if ! jq -e . D.json >/dev/null 2>&1; then
+            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _D.prompt
+            timeout -k 30s 300s $CODEX_CMD exec < _D.prompt > D.out || true
+            echo '::group::Retry Debug D.out (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} D.out || true; echo; echo '::endgroup::'
+            python extract_json.py D.out D.clean || true
+            echo '::group::Retry Debug D.clean (first chars)'
+            head -c ${DEBUG_SNIPPET_CHARS} D.clean || true; echo; echo '::endgroup::'
+            if [ -s D.clean ] && jq -e . D.clean >/dev/null 2>&1; then jq -c . D.clean > D.json; else printf '{"reviewer":"alignment","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > D.json; fi
+          fi
+
+      - name: Meta Reviewer
+        if: env.CLI_AVAILABLE == 'true'
+        env:
+          BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
+        run: |
+          python - <<'PY'
+          import os, json
+          tmpl = open('.codex/meta_reviewer.md','r',encoding='utf-8').read()
+          r1 = open('A.json','r',encoding='utf-8').read().strip()
+          r2 = open('B.json','r',encoding='utf-8').read().strip()
+          r3 = open('C.json','r',encoding='utf-8').read().strip()
+          tmpl = (tmpl
+            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
+            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
+            .replace('<<R1_JSON>>', r1)
+            .replace('<<R2_JSON>>', r2)
+            .replace('<<R3_JSON>>', r3))
+          open('_META.prompt','w',encoding='utf-8').write(tmpl)
+          PY
+          timeout -k 30s 420s $CODEX_CMD exec < _META.prompt > META.out || true
+          echo '::group::Debug META.out (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} META.out || true; echo; echo '::endgroup::'
+          python extract_json.py META.out META.clean || true
+          echo '::group::Debug META.clean (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} META.clean || true; echo; echo '::endgroup::'
+          if [ -s META.clean ] && jq -e . META.clean >/dev/null 2>&1; then jq -c . META.clean > META.json; else echo '{}' > META.json; fi
+
+      # -------- Find (or create) our comment; delete older Codex comments only ----------
+      - name: List comments
+        id: comments
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.prctx.outputs.prNumber }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PR_NUMBER);
+            const { data } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, per_page: 100 });
+            return { comments: data };
+
+      - name: Select comment to update and cleanup IDs
+        id: select_comment
+        run: |
+          # Use a quoted heredoc to safely write JSON with arbitrary content
+          cat > comments.json <<'JSON'
+          ${{ steps.comments.outputs.result }}
+          JSON
+          CANDIDATE_ID=$(jq -r '
+            (.comments
+             | map(select(.user.login=="github-actions[bot]") | select(.body | contains("<!-- codex-review -->")))
+             | sort_by(.created_at)
+             | (if length>0 then .[-1].id else "" end)
+            )' comments.json)
+          DEL_IDS=$(jq -r --arg cid "$CANDIDATE_ID" '
+            (.comments
+             | map(select(.user.login=="github-actions[bot]") | select(.body | contains("<!-- codex-review -->")))
+             | map(select((.id|tostring) != $cid))
+             | map(.id)
+            ) | @json' comments.json)
+          echo "cid=${CANDIDATE_ID}" >> $GITHUB_OUTPUT
+          echo "del=${DEL_IDS}" >> $GITHUB_OUTPUT
+
+      - name: Compose body
+        if: env.CLI_AVAILABLE == 'true'
+        id: compose
+        env:
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
+          STRICT: ${{ env.OPTS_STRICT }}
+          SCOPE:  ${{ env.OPTS_SCOPE }}
+        run: |
+          SHORT=$(echo "${HEAD_SHA}" | cut -c1-7)
+          if [ -n "$TRUNCATED" ]; then
+            TRUNC_NOTE=$'\n> 🔎 Diff truncated for context. Use `/codex scope <glob>` to focus.'
+          else
+            TRUNC_NOTE=""
+          fi
+
+          make_md () {
+            local title="$1"; local f="$2"
+            jq -r '
+              def bullets($k): ( .[$k] // [] ) | if length>0 then (map("- " + .) | join("\n")) else "_none_" end;
+              def cites: ( .citations // [] ) | if length>0 then (map("- " + (.file // "?") + (if .lines then ":" + .lines else "" end) + " — " + (.reason // "")) | join("\n")) else "_none_" end;
+              "#### \(env.title)\n" +
+              "*Decision:* \(.decision // "N/A")  \n*Confidence:* \(.confidence // "N/A")\n\n" +
+              "**Summary**\n\(.summary // "_none_")\n\n" +
+              "**Strengths**\n" + bullets("strengths") + "\n\n" +
+              "**Weaknesses**\n" + bullets("weaknesses") + "\n\n" +
+              "**Required changes**\n" + bullets("required_changes") + "\n\n" +
+              "**Suggested changes**\n" + bullets("suggested_changes") + "\n\n" +
+              "**Inline suggestions (selected)**\n" + ( .inline_suggestions // [] | map(.suggestion_markdown) | join("\n\n") | if .=="" then "_none_" else . end ) + "\n\n" +
+              "**Citations**\n" + cites
+            ' "$f"
+          }
+
+          HEADER="<!-- codex-review -->"$'\n'"[# codex-review | Commit: ${SHORT} | strict:${STRICT:-off} | scope:\"${SCOPE}\" ]"$'\n\n'
+          BODY="${HEADER}"
+          title='Reviewer A — Correctness & Safety'; export title; ct=$(make_md "$title" A.json); BODY+="$ct"$'\n\n'
+          title='Reviewer B — Documentation & DX'; export title; ct=$(make_md "$title" B.json); BODY+="$ct"$'\n\n'
+          title='Reviewer C — Performance & Architecture'; export title; ct=$(make_md "$title" C.json); BODY+="$ct"$'\n\n'
+          title='Reviewer D — Spec Alignment & Traceability'; export title; ct=$(make_md "$title" D.json); BODY+="$ct"$'\n\n'
+
+          if [ -f META.json ] && [ "$(jq -r '.overall_score // empty' META.json)" != "" ]; then
+            BODY+=$'---\n\n**Meta Reviewer Scorecard**\n\n'
+            BODY+="$(jq -r '
+              "| Category | Score |\n|---|---|\n" +
+              "| Correctness | \(.rubric.correctness) |\n" +
+              "| Clarity/Docs | \(.rubric.clarity_docs) |\n" +
+              "| Reproducibility | \(.rubric.reproducibility) |\n" +
+              "| Performance/Scalability | \(.rubric.performance_scalability) |\n" +
+              "| Security/Privacy | \(.rubric.security_privacy) |\n" +
+              "\n**Overall:** \(.overall_score) / 10  \n*Meta decision:* \(.meta_decision)  \n*Confidence:* \(.confidence)\n\n**Summary**\n\(.summary)\n" ' META.json)
+            )"
+            TB=$(jq -r '( .top_blockers // [] ) | if length>0 then (["\n**Top blockers**", (map("- " + .) | join("\n"))] | join("\n")) else "" end' META.json)
+            BODY+="$TB"
+          fi
+
+          BODY+="$TRUNC_NOTE"
+          {
+            echo "body<<__CODEX_EOF__"
+            printf "%s" "$BODY"
+            echo
+            echo "__CODEX_EOF__"
+          } >> $GITHUB_OUTPUT
+
+      - name: Delete older Codex comments (safe)
+        if: steps.select_comment.outputs.del != '[]'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const ids = JSON.parse(`${{ steps.select_comment.outputs.del }}`);
+            for (const id of ids) {
+              try {
+                await github.rest.issues.deleteComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: id });
+              } catch (e) { core.warning(`Cleanup failed for ${id}: ${e.message}`); }
+            }
+
+      - name: Upsert Codex comment
+        if: env.CLI_AVAILABLE == 'true'
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.prctx.outputs.prNumber }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PR_NUMBER);
+            const cid = `${{ steps.select_comment.outputs.cid }}`;
+            if (cid) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: ${{ toJSON(steps.compose.outputs.body) }} });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: ${{ toJSON(steps.compose.outputs.body) }} });
+            }
+
+      - name: Compose skip body (CLI unavailable)
+        if: env.CLI_AVAILABLE != 'true'
+        id: compose_skip
+        env:
+          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
+          STRICT: ${{ env.OPTS_STRICT }}
+          SCOPE:  ${{ env.OPTS_SCOPE }}
+        run: |
+          SHORT=$(echo "${HEAD_SHA}" | cut -c1-7)
+          HEADER="<!-- codex-review -->"$'\n'"[# codex-review | Commit: ${SHORT} | strict:${STRICT:-off} | scope:\"${SCOPE}\" ]"$'\n\n'
+          NOTE="Codex review skipped: Codex CLI unavailable on runner (npm install failed). Try Re-run jobs or /codex rerun later."
+          {
+            echo "body<<__CODEX_EOF__"
+            printf "%s" "$HEADER$NOTE"
+            echo
+            echo "__CODEX_EOF__"
+          } >> $GITHUB_OUTPUT
+
+      - name: Upsert Codex comment (skip path)
+        if: env.CLI_AVAILABLE != 'true'
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.prctx.outputs.prNumber }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PR_NUMBER);
+            const cid = `${{ steps.select_comment.outputs.cid }}`;
+            if (cid) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: ${{ toJSON(steps.compose_skip.outputs.body) }} });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: ${{ toJSON(steps.compose_skip.outputs.body) }} });
+            }
+
+      - name: Commit status (neutral visibility)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner, repo: context.repo.repo,
+              sha: `${{ steps.prctx.outputs.headSha }}`,
+              state: 'success', context: 'codex/review',
+              description: 'Codex review posted'
+            });
+
+      - name: Upload artifacts
+        if: env.CLI_AVAILABLE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-multi-review-${{ github.sha }}
+          path: |
+            pr.diff
+            pr.diff.limited
+            changed_files.txt
+            pr_title.txt
+            pr_body.txt
+            linked_issues.json
+            A.json B.json C.json D.json META.json
