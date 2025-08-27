@@ -490,7 +490,10 @@ jobs:
       - name: Select comment to update and cleanup IDs
         id: select_comment
         run: |
-          echo '${{ steps.comments.outputs.result }}' > comments.json
+          # Use a quoted heredoc to safely write JSON with arbitrary content
+          cat > comments.json <<'JSON'
+          ${{ steps.comments.outputs.result }}
+          JSON
           CANDIDATE_ID=$(jq -r '
             (.comments
              | map(select(.user.login=="github-actions[bot]") | select(.body | contains("<!-- codex-review -->")))
