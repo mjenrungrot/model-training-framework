@@ -211,14 +211,17 @@ jobs:
         run: |
           git fetch origin "$BASE" --depth=1
           if [ -n "$SCOPE" ]; then
-            git diff --unified=3 --no-color "origin/$BASE"...HEAD -- "$SCOPE" > pr.diff || true
+            # Support multiple space-separated globs as separate pathspecs
+            read -r -a scopes <<< "$SCOPE"
+            git diff --unified=3 --no-color "origin/$BASE"...HEAD -- "${scopes[@]}" > pr.diff || true
           else
             git diff --unified=3 --no-color "origin/$BASE"...HEAD > pr.diff
           fi
           if [ $(wc -c < pr.diff) -gt 180000 ]; then head -c 180000 pr.diff > pr.diff.limited; echo "TRUNCATED=1" >> $GITHUB_ENV; else cp pr.diff pr.diff.limited; fi
 
           if [ -n "$SCOPE" ]; then
-            git diff --name-only "origin/$BASE"...HEAD -- "$SCOPE" > changed_files.txt || true
+            # Use the same parsed scopes for changed-files list
+            git diff --name-only "origin/$BASE"...HEAD -- "${scopes[@]}" > changed_files.txt || true
           else
             git diff --name-only "origin/$BASE"...HEAD > changed_files.txt
           fi
@@ -330,7 +333,7 @@ jobs:
             .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
           open('_A.prompt','w',encoding='utf-8').write(tmpl)
           PY
-          $CODEX_CMD exec < _A.prompt > A.out || true
+          timeout -k 30s 420s $CODEX_CMD exec < _A.prompt > A.out || true
           echo '::group::Debug A.out (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} A.out || true; echo; echo '::endgroup::'
           python extract_json.py A.out A.clean || true
@@ -343,7 +346,7 @@ jobs:
         run: |
           if ! jq -e . A.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders like 'number (0.0-1.0)'; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _A.prompt
-            $CODEX_CMD exec < _A.prompt > A.out || true
+            timeout -k 30s 300s $CODEX_CMD exec < _A.prompt > A.out || true
             echo '::group::Retry Debug A.out (first chars)'
             head -c ${DEBUG_SNIPPET_CHARS} A.out || true; echo; echo '::endgroup::'
             python extract_json.py A.out A.clean || true
@@ -378,7 +381,7 @@ jobs:
             .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
           open('_B.prompt','w',encoding='utf-8').write(tmpl)
           PY
-          $CODEX_CMD exec < _B.prompt > B.out || true
+          timeout -k 30s 420s $CODEX_CMD exec < _B.prompt > B.out || true
           echo '::group::Debug B.out (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} B.out || true; echo; echo '::endgroup::'
           python extract_json.py B.out B.clean || true
@@ -391,7 +394,7 @@ jobs:
         run: |
           if ! jq -e . B.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _B.prompt
-            $CODEX_CMD exec < _B.prompt > B.out || true
+            timeout -k 30s 300s $CODEX_CMD exec < _B.prompt > B.out || true
             echo '::group::Retry Debug B.out (first chars)'
             head -c ${DEBUG_SNIPPET_CHARS} B.out || true; echo; echo '::endgroup::'
             python extract_json.py B.out B.clean || true
@@ -422,7 +425,7 @@ jobs:
             .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
           open('_C.prompt','w',encoding='utf-8').write(tmpl)
           PY
-          $CODEX_CMD exec < _C.prompt > C.out || true
+          timeout -k 30s 420s $CODEX_CMD exec < _C.prompt > C.out || true
           echo '::group::Debug C.out (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} C.out || true; echo; echo '::endgroup::'
           python extract_json.py C.out C.clean || true
@@ -435,7 +438,7 @@ jobs:
         run: |
           if ! jq -e . C.json >/dev/null 2>&1; then
             echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _C.prompt
-            $CODEX_CMD exec < _C.prompt > C.out || true
+            timeout -k 30s 300s $CODEX_CMD exec < _C.prompt > C.out || true
             echo '::group::Retry Debug C.out (first chars)'
             head -c ${DEBUG_SNIPPET_CHARS} C.out || true; echo; echo '::endgroup::'
             python extract_json.py C.out C.clean || true
@@ -471,7 +474,7 @@ jobs:
             .replace('<<R3_JSON>>', r3))
           open('_META.prompt','w',encoding='utf-8').write(tmpl)
           PY
-          $CODEX_CMD exec < _META.prompt > META.out || true
+          timeout -k 30s 420s $CODEX_CMD exec < _META.prompt > META.out || true
           echo '::group::Debug META.out (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} META.out || true; echo; echo '::endgroup::'
           python extract_json.py META.out META.clean || true
