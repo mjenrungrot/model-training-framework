@@ -637,9 +637,12 @@ jobs:
           fi
 
           BODY+="$TRUNC_NOTE"
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$BODY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          {
+            echo "body<<__CODEX_EOF__"
+            printf "%s" "$BODY"
+            echo
+            echo "__CODEX_EOF__"
+          } >> $GITHUB_OUTPUT
 
       - name: Delete older Codex comments (safe)
         if: steps.select_comment.outputs.del != '[]'
@@ -679,9 +682,12 @@ jobs:
           SHORT=$(echo "${HEAD_SHA}" | cut -c1-7)
           HEADER="<!-- codex-review -->\n[# codex-review | Commit: ${SHORT} | strict:${STRICT:-off} | scope:\"${SCOPE}\" ]\n\n"
           NOTE="Codex review skipped: Codex CLI unavailable on runner (npm install failed). Try Re-run jobs or /codex rerun later."
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$HEADER$NOTE" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          {
+            echo "body<<__CODEX_EOF__"
+            printf "%s" "$HEADER$NOTE"
+            echo
+            echo "__CODEX_EOF__"
+          } >> $GITHUB_OUTPUT
 
       - name: Upsert Codex comment (skip path)
         if: env.CLI_AVAILABLE != 'true'
