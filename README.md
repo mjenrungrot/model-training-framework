@@ -23,9 +23,25 @@ git clone https://github.com/example/model-training-framework.git
 cd model-training-framework
 pip install -e .
 
-# Install with optional dependencies
-pip install -e ".[dev,wandb,docs]"
+# Install with all optional dependencies
+pip install -e ".[all]"
+
+# Or install specific extras
+pip install -e ".[dev]"           # Development tools
+pip install -e ".[tensorboard]"   # TensorBoard logging
+pip install -e ".[wandb]"         # Weights & Biases integration
+pip install -e ".[docs]"          # Documentation tools
 ```
+
+### Core Dependencies
+
+- `torch>=2.0.0` - PyTorch framework
+- `lightning>=2.0.0` - PyTorch Lightning
+- `lightning-fabric>=2.0.0` - Lightning Fabric for distributed training
+- `tensorboard>=2.10.0` - TensorBoard logging
+- `numpy>=1.21.0` - Numerical operations
+- `pyyaml>=6.0` - Configuration files
+- `gitpython>=3.1.0` - Git integration
 
 ## Quick Start
 
@@ -56,10 +72,13 @@ trainer = GenericTrainer(
     optimizers=[optimizer],  # Always a list
 )
 
-# Training step signature includes dataloader info
-def training_step(trainer, batch, dataloader_idx, dataloader_name):
+# Training step signature includes batch index and dataloader info
+def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
+    # batch_idx is 0-based within this dataloader for the epoch
     # dataloader_idx will be 0, dataloader_name will be "main"
-    loss = compute_loss(trainer.model, batch)
+    x, y = batch
+    outputs = trainer.model(x)
+    loss = torch.nn.functional.cross_entropy(outputs, y)
     return {"loss": loss}
 
 trainer.set_training_step(training_step)
@@ -316,15 +335,29 @@ trainer = GenericTrainer(
 
 Comprehensive examples are available in the `demo/` directory:
 
-### Beginner Examples
+### Beginner Examples (example1_beginner_local)
 
 - **[basic_model_training.py](demo/example1_beginner_local/basic_model_training.py)**: Single dataloader with multi-loader API
 - **[multi_loader_training.py](demo/example1_beginner_local/multi_loader_training.py)**: Multiple dataloaders with various strategies
+- **[sample_dataset.py](demo/example1_beginner_local/data/sample_dataset.py)**: Example dataset implementation
+
+### Intermediate HPC Examples (example2_intermediate_hpc)
+
+- **[train_script.py](demo/example2_intermediate_hpc/train_script.py)**: Distributed training with DDP
+- **[orchestrate.py](demo/example2_intermediate_hpc/orchestrate.py)**: SLURM job orchestration
+- **[config.py](demo/example2_intermediate_hpc/config.py)**: Configuration management
+
+### Production Examples (example3_production)
+
+- **[train_script.py](demo/example3_production/train_script.py)**: Production training with fault tolerance
+- **[orchestrate.py](demo/example3_production/orchestrate.py)**: Advanced job orchestration
+- **[model.py](demo/example3_production/model.py)**: Model architecture examples
+- **[data.py](demo/example3_production/data.py)**: Data pipeline implementation
 
 ### Configuration Examples
 
-- **[multi_loader_config.yaml](demo/example1_beginner_local/config_examples/multi_loader_config.yaml)**: Complete configuration examples
-- **[sampling_strategies.yaml](demo/example1_beginner_local/config_examples/sampling_strategies.yaml)**: All sampling strategies explained
+- **[multi_loader_config.yaml](demo/example1_beginner_local/config_examples/multi_loader_config.yaml)**: Complete multi-loader configuration
+- **[simple_config.yaml](demo/example1_beginner_local/config_examples/simple_config.yaml)**: Basic configuration example
 
 ## 🔄 Migration Guide
 
@@ -369,7 +402,7 @@ trainer.fit(
    ```python
    # Old: def training_step(batch)
    # New:
-   def training_step(trainer, batch, dataloader_idx, dataloader_name):
+   def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
        pass
    ```
 
@@ -499,20 +532,25 @@ import argparse
 from pathlib import Path
 
 from model_training_framework import ModelTrainingFramework
-from model_training_framework.trainer import GenericTrainer, GenericTrainerConfig
+from model_training_framework.trainer import (
+    GenericTrainer,
+    GenericTrainerConfig,
+    MultiDataLoaderConfig,
+    SamplingStrategy,
+)
 
 import torch
 import torch.nn as nn
 from lightning.fabric import Fabric
 
-def training_step(trainer, batch, micro_step):
+def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
     """Define training step logic."""
     x, y = batch
     pred = trainer.model(x)
     loss = nn.functional.cross_entropy(pred, y)
     return {"loss": loss}
 
-def validation_step(trainer, batch, batch_idx):
+def validation_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
     """Define validation step logic."""
     x, y = batch
     pred = trainer.model(x)
@@ -542,23 +580,28 @@ def main():
     train_loader = fabric.setup_dataloaders(train_loader)
     val_loader = fabric.setup_dataloaders(val_loader)
 
-    # Create trainer
-    trainer_config = GenericTrainerConfig()
+    # Create trainer with multi-loader config
+    trainer_config = GenericTrainerConfig(
+        multi=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,
+            dataloader_names=["main"],
+        )
+    )
     trainer = GenericTrainer(
         config=trainer_config,
         fabric=fabric,
         model=model,
-        optimizer=optimizer
+        optimizers=[optimizer]  # Always use list
     )
 
     # Set step functions
     trainer.set_training_step(training_step)
     trainer.set_validation_step(validation_step)
 
-    # Train model
+    # Train model with lists of loaders
     trainer.fit(
-        train_loader=train_loader,
-        val_loader=val_loader,
+        train_loaders=[train_loader],  # Always use list
+        val_loaders=[val_loader],      # Always use list
         max_epochs=config.training.max_epochs
     )
 
@@ -627,6 +670,96 @@ print(f"Submitted {results.success_count} jobs successfully")
 
 ## Advanced Features
 
+### Hooks System
+
+The framework provides a comprehensive hooks system for injecting custom behavior:
+
+```python
+from model_training_framework.trainer import TrainerHooks, GenericTrainer
+
+class CustomHook(TrainerHooks):
+    def on_epoch_start(self, trainer, epoch):
+        print(f"Starting epoch {epoch}")
+
+    def on_train_batch_end(self, trainer, batch, dataloader_idx, dataloader_name, metrics):
+        if metrics["loss"] > 10:
+            print(f"High loss detected: {metrics['loss']}")
+
+    def on_validation_end(self, trainer, epoch, metrics):
+        print(f"Validation metrics: {metrics}")
+
+# Register hooks with trainer
+trainer = GenericTrainer(config=config, model=model, optimizers=[optimizer])
+trainer.hook_manager.register_hook(CustomHook())
+```
+
+Available hooks:
+
+- `on_train_start/end` - Training lifecycle
+- `on_epoch_start/end` - Epoch boundaries
+- `on_train_batch_start/end` - Training batches
+- `on_validation_start/end` - Validation phases
+- `on_before/after_backward` - Gradient computation
+- `on_before/after_optimizer_step` - Optimization
+- `on_checkpoint_save/load` - Checkpointing
+- `on_gradient_clip` - Gradient clipping
+
+### Metrics Management
+
+Advanced metrics tracking with per-loader and global aggregation:
+
+```python
+from model_training_framework.trainer import MetricsManager, AggregationStrategy
+
+# Configure metrics aggregation
+config = GenericTrainerConfig(
+    metrics=MetricsConfig(
+        aggregation_strategy=AggregationStrategy.WEIGHTED_AVERAGE,
+        track_proportions=True,
+        per_loader_metrics=True,
+    )
+)
+
+# Access metrics during training
+def on_epoch_end(trainer, epoch, metrics):
+    # Per-loader metrics
+    loader_a_loss = metrics.get("train/dl_loader_a/loss")
+
+    # Global aggregated metrics
+    global_loss = metrics.get("train/loss")
+
+    # Loader proportions
+    proportions = trainer.metrics_manager.get_loader_proportions()
+```
+
+### Enhanced Logging
+
+Multiple logging backends with unified interface:
+
+```python
+from model_training_framework.trainer import (
+    WandBLogger, TensorBoardLogger, ConsoleLogger, CompositeLogger
+)
+
+# Single logger
+logger = TensorBoardLogger(log_dir="./tb_logs")
+
+# Multiple loggers
+loggers = CompositeLogger([
+    ConsoleLogger(log_level="INFO"),
+    TensorBoardLogger(log_dir="./tb_logs"),
+    WandBLogger(project="my_project", entity="my_team")
+])
+
+config = GenericTrainerConfig(
+    logging=LoggingConfig(
+        logger=loggers,
+        log_every_n_steps=10,
+        log_loader_proportions=True,
+    )
+)
+```
+
 ### Fault-Tolerant Training
 
 The framework provides preemption-safe training with automatic checkpointing:
@@ -683,23 +816,33 @@ config = {
 
 ### Core Classes
 
+- **GenericTrainer**: Multi-dataloader training engine with fault tolerance
+- **MultiDataLoaderManager**: Manages multiple dataloaders with various sampling strategies
+- **MetricsManager**: Advanced metrics tracking and aggregation
+- **HookManager**: Training lifecycle hooks system
+- **CheckpointManager**: Checkpoint saving and loading with exact resume
+
+### Configuration Classes
+
+- **GenericTrainerConfig**: Main trainer configuration
+- **MultiDataLoaderConfig**: Multi-loader sampling configuration
+- **ValidationConfig**: Validation aggregation settings
+- **CheckpointConfig**: Checkpointing behavior
+- **LoggingConfig**: Logging and monitoring settings
+
+### Logging & Monitoring
+
+- **WandBLogger**: Weights & Biases integration
+- **TensorBoardLogger**: TensorBoard logging
+- **ConsoleLogger**: Structured console output
+- **CompositeLogger**: Multiple logger backends
+
+### SLURM & Orchestration
+
 - **ModelTrainingFramework**: Main orchestration class
-- **ExperimentConfig**: Experiment configuration schema
-- **ParameterGrid**: Parameter search space definition
-- **GenericTrainer**: Fault-tolerant training engine
 - **SLURMLauncher**: Job submission and management
-
-### Configuration Management
-
-- **ConfigurationManager**: Configuration loading and validation
-- **ConfigValidator**: Configuration validation
-- **ParameterGridSearch**: Grid search execution
-
-### SLURM Integration — API
-
-- **SLURMLauncher**: Job launcher and batch submission
-- **SLURMJobMonitor**: Job status monitoring
-- **GitManager**: Git operations and branch management
+- **ParameterGrid**: Grid search configuration
+- **GitManager**: Experiment branch management
 
 ## Contributing
 
