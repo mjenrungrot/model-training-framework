@@ -44,6 +44,14 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-cache-codex-cli-v1
+          restore-keys: |
+            ${{ runner.os }}-npm-cache-
+
       # jq is preinstalled on ubuntu-latest; skip explicit install to save time
 
       - name: Install Codex CLI
