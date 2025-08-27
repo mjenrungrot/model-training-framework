@@ -318,13 +318,13 @@ class SLURMJobMonitor:
         active_jobs = self.get_active_jobs()
 
         # Count jobs by status
-        status_counts = {}
+        status_counts: dict[str, int] = {}
         for job_info in active_jobs.values():
             status = job_info.status.value
             status_counts[status] = status_counts.get(status, 0) + 1
 
         # Count finished jobs by status
-        finished_counts = {}
+        finished_counts: dict[str, int] = {}
         for job_info in self.job_history:
             status = job_info.status.value
             finished_counts[status] = finished_counts.get(status, 0) + 1

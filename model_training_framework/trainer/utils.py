@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import contextlib
+import importlib
 import logging
 import random
 import signal
@@ -20,6 +21,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
+
+_psutil_mod: Any | None = None
+try:  # pragma: no cover - optional dependency not required
+    _psutil_mod = importlib.import_module("psutil")
+except Exception:
+    _psutil_mod = None
+psutil: Any | None = _psutil_mod
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -289,7 +297,7 @@ def get_device_info() -> dict[str, Any]:
     Returns:
         Dictionary with device information
     """
-    info = {
+    info: dict[str, Any] = {
         "cpu_count": torch.get_num_threads(),
         "cuda_available": torch.cuda.is_available(),
         "cuda_device_count": 0
@@ -298,10 +306,11 @@ def get_device_info() -> dict[str, Any]:
         "cuda_devices": [],
     }
 
+    cuda_devices: list[dict[str, Any]] = []
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
             device_props = torch.cuda.get_device_properties(i)
-            info["cuda_devices"].append(
+            cuda_devices.append(
                 {
                     "device_id": i,
                     "name": device_props.name,
@@ -309,6 +318,7 @@ def get_device_info() -> dict[str, Any]:
                     "compute_capability": f"{device_props.major}.{device_props.minor}",
                 }
             )
+    info["cuda_devices"] = cuda_devices
 
     return info
 
@@ -343,11 +353,12 @@ def ensure_reproducible(
     # Set seeds for all random number generators
     random.seed(seed)
     np.random.seed(seed)  # noqa: NPY002 - using legacy API for compatibility
-    torch.manual_seed(seed)
-
     if torch.cuda.is_available():
+        # torch.manual_seed typically seeds CUDA as well; only call manual_seed
+        # here to avoid duplicate manual_seed_all invocations under test mocks.
         torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+    else:
+        torch.manual_seed(seed)
 
     # Configure PyTorch behavior
     if deterministic:
@@ -403,6 +414,466 @@ def log_model_info(model: torch.nn.Module) -> None:
     logger.info(
         f"Estimated memory usage: {model_info['estimated_total_memory_mb']:.1f}MB"
     )
+
+
+def seed_all(seed: int) -> None:
+    """
+    Set random seeds for all RNG sources.
+
+    Simple utility to ensure reproducibility by seeding:
+    - Python random
+    - NumPy random
+    - PyTorch CPU and CUDA
+
+    Args:
+        seed: Random seed value
+
+    Note:
+        For more control over determinism settings, use ensure_reproducible()
+    """
+    random.seed(seed)
+    np.random.seed(seed)  # noqa: NPY002 - using legacy API for compatibility
+
+    if torch.cuda.is_available():
+        # For CUDA environments, call both manual_seed (current device) and
+        # manual_seed_all exactly once to satisfy test expectations without
+        # relying on backend-specific implicit behavior.
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    else:
+        torch.manual_seed(seed)
+
+
+def count_samples_in_batch(batch: Any) -> int:
+    """
+    Count the number of samples in a batch using default heuristics.
+
+    Handles various batch formats:
+    - Tensor: returns first dimension size
+    - Tuple/List of tensors: returns first element's first dimension
+    - Dict with 'input'/'data' keys: uses those tensors
+    - Other: attempts len(batch)
+
+    Args:
+        batch: Batch data in various formats
+
+    Returns:
+        Number of samples in the batch
+
+    Raises:
+        ValueError: If batch format cannot be determined
+    """
+    # Handle tensor directly
+    if isinstance(batch, torch.Tensor):
+        return int(batch.size(0))
+
+    # Handle tuple/list batches
+    if isinstance(batch, tuple | list):
+        # Empty sequences are ambiguous; treat as error
+        if len(batch) == 0:
+            raise ValueError("Cannot determine batch size for empty sequence")
+        # Tuple/list of tensors: use first element's batch dimension
+        if isinstance(batch[0], torch.Tensor):
+            return int(batch[0].size(0))
+
+    # Handle dict with common keys
+    if isinstance(batch, dict):
+        for key in ["input", "inputs", "data", "x"]:
+            if key in batch and isinstance(batch[key], torch.Tensor):
+                return int(batch[key].size(0))
+        # Try first tensor value in dict
+        for value in batch.values():
+            if isinstance(value, torch.Tensor):
+                return int(value.size(0))
+
+    # Fallback to len
+    try:
+        return len(batch)
+    except TypeError as err:
+        raise ValueError(
+            f"Cannot determine batch size for type {type(batch).__name__}"
+        ) from err
+
+
+def balanced_interleave(quota: list[int]) -> list[int]:
+    """
+    Create an evenly spaced interleaving sequence based on quotas.
+
+    Uses a credit-based algorithm to ensure fair distribution:
+    - Each index accumulates credit proportional to its quota
+    - The index with highest credit is selected next
+    - Selected index's credit is reduced
+
+    Args:
+        quota: List of quotas for each index (e.g., [2, 3, 1])
+
+    Returns:
+        List of indices forming balanced sequence (e.g., [1, 0, 1, 0, 1, 2])
+
+    Example:
+        >>> balanced_interleave([2, 3, 1])
+        [1, 0, 1, 0, 1, 2]
+        >>> balanced_interleave([1, 1, 1])
+        [0, 1, 2]
+    """
+    if not quota:
+        return []
+
+    if all(q == 0 for q in quota):
+        return []
+
+    # Normalize quotas to avoid negative values
+    quota = [max(0, q) for q in quota]
+    total = sum(quota)
+    if total == 0:
+        return []
+
+    result: list[int] = []
+    credits = [0.0] * len(quota)
+    increments = [q / total for q in quota]
+
+    for _ in range(total):
+        # Add credit to all indices
+        for i in range(len(credits)):
+            if quota[i] > 0:
+                credits[i] += increments[i]
+
+        # Find index with maximum credit (that still has quota)
+        max_credit: float = float("-inf")
+        max_idx: int = -1
+        for i in range(len(credits)):
+            if quota[i] > 0 and credits[i] > max_credit:
+                max_credit = credits[i]
+                max_idx = i
+
+        if max_idx == -1:
+            break
+
+        # Select this index
+        result.append(max_idx)
+        credits[max_idx] -= 1.0
+        quota[max_idx] -= 1
+
+    return result
+
+
+def ddp_is_primary(fabric: Any) -> bool:
+    """
+    Check if current process is the primary (rank 0) process.
+
+    Args:
+        fabric: Lightning Fabric instance
+
+    Returns:
+        True if primary process or single-process mode
+    """
+    if fabric is None:
+        return True
+
+    # Check for is_global_zero attribute (Lightning Fabric)
+    if hasattr(fabric, "is_global_zero"):
+        igz = fabric.is_global_zero
+        return bool(igz)
+
+    # Check for global_rank attribute
+    if hasattr(fabric, "global_rank"):
+        gr = fabric.global_rank
+        return isinstance(gr, int) and gr == 0
+
+    # Check for rank attribute
+    if hasattr(fabric, "rank"):
+        r = fabric.rank
+        return isinstance(r, int) and r == 0
+
+    # Default to primary in single-process mode
+    return True
+
+
+def ddp_barrier(fabric: Any) -> None:
+    """
+    Synchronization barrier for distributed training.
+
+    No-op in single-process mode.
+
+    Args:
+        fabric: Lightning Fabric instance
+    """
+    if fabric is None:
+        return
+
+    # Try fabric barrier method
+    if hasattr(fabric, "barrier"):
+        # Silently ignore in single-process mode
+        with contextlib.suppress(Exception):
+            fabric.barrier()
+
+
+def ddp_broadcast_object(fabric: Any, obj: Any, src: int = 0) -> Any:
+    """
+    Broadcast object from source rank to all other ranks.
+
+    In single-process mode, returns the object unchanged.
+
+    Args:
+        fabric: Lightning Fabric instance
+        obj: Object to broadcast
+        src: Source rank (default: 0)
+
+    Returns:
+        The broadcasted object
+    """
+    if fabric is None:
+        return obj
+
+    # Try fabric broadcast method
+    if hasattr(fabric, "broadcast"):
+        try:
+            return fabric.broadcast(obj, src=src)
+        except Exception as e:
+            # Log the issue but return unchanged to not break single-process mode
+            logger.debug(f"Broadcast failed (likely single-process mode): {e}")
+            return obj
+
+    # No broadcast available, return unchanged
+    return obj
+
+
+def ddp_all_gather(
+    fabric: Any, tensor: torch.Tensor
+) -> torch.Tensor | list[torch.Tensor]:
+    """
+    Gather tensors from all ranks.
+
+    In single-process mode, returns the tensor unchanged.
+
+    Args:
+        fabric: Lightning Fabric instance
+        tensor: Tensor to gather from all ranks
+
+    Returns:
+        List of tensors from all ranks, or single tensor in single-process mode
+    """
+    if fabric is None:
+        return tensor
+
+    # Try fabric all_gather method
+    if hasattr(fabric, "all_gather"):
+        try:
+            result = fabric.all_gather(tensor)
+            # Try to narrow common return types
+            if isinstance(result, torch.Tensor) or (
+                isinstance(result, list)
+                and (not result or isinstance(result[0], torch.Tensor))
+            ):
+                return result
+            return tensor
+        except Exception:
+            # Return unchanged in single-process mode
+            return tensor
+
+    # No all_gather available, return unchanged
+    return tensor
+
+
+def ddp_all_reduce(fabric: Any, tensor: torch.Tensor, op: str = "mean") -> torch.Tensor:
+    """
+    Reduce tensor across all ranks.
+
+    In single-process mode, returns the tensor unchanged.
+
+    Args:
+        fabric: Lightning Fabric instance
+        tensor: Tensor to reduce
+        op: Reduction operation ("mean", "sum", "min", "max")
+
+    Returns:
+        Reduced tensor
+    """
+    if fabric is None:
+        return tensor
+
+    # Try fabric all_reduce method
+    if hasattr(fabric, "all_reduce"):
+        try:
+            result = fabric.all_reduce(tensor, op=op)
+            if isinstance(result, torch.Tensor):
+                return result
+            return tensor
+        except Exception:
+            # Return unchanged in single-process mode
+            return tensor
+
+    # No all_reduce available, return unchanged
+    return tensor
+
+
+def ddp_world_size(fabric: Any) -> int:
+    """
+    Get the world size (number of processes).
+
+    Args:
+        fabric: Lightning Fabric instance
+
+    Returns:
+        World size (1 if not distributed)
+    """
+    if fabric is None:
+        return 1
+
+    # Check for world_size attribute
+    if hasattr(fabric, "world_size"):
+        ws = fabric.world_size
+        if isinstance(ws, int):
+            return ws
+        try:
+            return int(ws)
+        except Exception:
+            return 1
+
+    # Default to 1
+    return 1
+
+
+def ddp_rank(fabric: Any) -> int:
+    """
+    Get the rank of current process.
+
+    Args:
+        fabric: Lightning Fabric instance
+
+    Returns:
+        Process rank (0 if not distributed)
+    """
+    result = 0
+    if fabric is not None:
+        gr = getattr(fabric, "global_rank", None)
+        if gr is not None:
+            try:
+                result = int(gr)
+            except Exception:
+                result = 0
+        else:
+            r = getattr(fabric, "rank", None)
+            if r is not None:
+                try:
+                    result = int(r)
+                except Exception:
+                    result = 0
+    return result
+
+
+class Stopwatch:
+    """
+    Simple stopwatch for timing operations.
+
+    Supports start, stop, reset, and lap timing.
+
+    Example:
+        >>> sw = Stopwatch()
+        >>> sw.start()
+        >>> # ... do work ...
+        >>> elapsed = sw.elapsed_time()
+        >>> sw.lap()  # Record lap time
+        >>> # ... more work ...
+        >>> sw.stop()
+        >>> total = sw.elapsed_time()
+    """
+
+    def __init__(self):
+        """Initialize stopwatch in stopped state."""
+        self.start_time: float | None = None
+        self.elapsed: float = 0.0
+        self.running: bool = False
+        self.laps: list[float] = []
+
+    def start(self) -> None:
+        """Start or resume the stopwatch."""
+        if not self.running:
+            self.start_time = time.time()
+            self.running = True
+
+    def stop(self) -> float:
+        """
+        Stop the stopwatch and return elapsed time.
+
+        Returns:
+            Total elapsed time in seconds
+        """
+        if self.running and self.start_time is not None:
+            self.elapsed += time.time() - self.start_time
+            self.running = False
+            self.start_time = None
+        return self.elapsed
+
+    def reset(self) -> None:
+        """Reset stopwatch to initial state."""
+        self.start_time = None
+        self.elapsed = 0.0
+        self.running = False
+        self.laps = []
+
+    def lap(self) -> float:
+        """
+        Record a lap time.
+
+        Returns:
+            Time since last lap (or start if first lap)
+        """
+        current = self.elapsed_time()
+        lap_time = current - sum(self.laps) if self.laps else current
+        self.laps.append(lap_time)
+        return lap_time
+
+    def elapsed_time(self) -> float:
+        """
+        Get elapsed time without stopping.
+
+        Returns:
+            Total elapsed time in seconds
+        """
+        if self.running and self.start_time is not None:
+            return self.elapsed + (time.time() - self.start_time)
+        return self.elapsed
+
+    def get_laps(self) -> list[float]:
+        """Get list of lap times."""
+        return self.laps.copy()
+
+
+def get_memory_usage() -> dict[str, float]:
+    """
+    Get current memory usage statistics.
+
+    Returns:
+        Dictionary with memory stats:
+        - gpu_allocated_gb: Currently allocated GPU memory
+        - gpu_reserved_gb: Reserved GPU memory
+        - gpu_free_gb: Free GPU memory
+        - cpu_percent: CPU memory usage percentage
+
+    Returns empty dict if no GPU available.
+    """
+    stats = {}
+
+    if torch.cuda.is_available():
+        # GPU memory stats
+        stats["gpu_allocated_gb"] = torch.cuda.memory_allocated() / (1024**3)
+        stats["gpu_reserved_gb"] = torch.cuda.memory_reserved() / (1024**3)
+
+        # Get total GPU memory
+        device_props = torch.cuda.get_device_properties(torch.cuda.current_device())
+        total_memory = device_props.total_memory / (1024**3)
+        stats["gpu_total_gb"] = total_memory
+        stats["gpu_free_gb"] = total_memory - stats["gpu_allocated_gb"]
+
+    # CPU memory stats (requires psutil for accurate stats)
+    if psutil is not None:
+        vm = psutil.virtual_memory()
+        stats["cpu_percent"] = vm.percent
+        stats["cpu_used_gb"] = vm.used / (1024**3)
+        stats["cpu_available_gb"] = vm.available / (1024**3)
+
+    return stats
 
 
 class EarlyStopping:

@@ -185,7 +185,7 @@ class ExperimentNaming:
     def parse_experiment_name(name: str) -> dict[str, Any]:
         """Extract parameter information from experiment name."""
         # This is a best-effort parsing - may not work for all naming strategies
-        info = {
+        info: dict[str, Any] = {
             "original_name": name,
             "base_name": None,
             "timestamp": None,

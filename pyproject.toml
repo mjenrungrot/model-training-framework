@@ -38,7 +38,9 @@ keywords = [
 requires-python = ">=3.12"
 dependencies = [
     "torch>=2.0.0",
+    "lightning>=2.0.0",
     "lightning-fabric>=2.0.0",
+    "tensorboard>=2.10.0",
     "pyyaml>=6.0",
     "gitpython>=3.1.0",
     "numpy>=1.21.0",
@@ -153,6 +155,7 @@ select = [
     "PIE", # flake8-pie
     "SIM", # flake8-simplify
     "RET", # flake8-return
+    "TC",  # flake8-type-checking (typing quotes, cast, etc.)
     "TCH", # flake8-type-checking
     "PTH", # flake8-use-pathlib
     "ERA", # eradicate
@@ -169,6 +172,7 @@ ignore = [
     "B008",   # Do not perform function calls in argument defaults
     "B905",   # `zip()` without an explicit `strict=` parameter
     "N806",   # Variable in function should be lowercase
+    "N812",   # Lowercase imported as non-lowercase
     "PLR0913", # Too many arguments to function call
     "PLR0912", # Too many branches
     "PLR0915", # Too many statements
@@ -305,3 +309,9 @@ exclude_lines = [
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod",
 ]
+
+[[tool.mypy.overrides]]
+module = [
+  "model_training_framework.tests.*",
+]
+ignore_errors = true

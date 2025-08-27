@@ -1,22 +1,88 @@
 """
 Trainer Configuration Classes
 
-This module defines configuration classes for the training engine:
-- CheckpointConfig for checkpoint behavior
-- PreemptionConfig for handling job preemption
-- PerformanceConfig for optimization settings
-- LoggingConfig for training logging
-- GenericTrainerConfig for overall trainer configuration
+This module defines configuration classes for the multi-dataloader-only training engine.
+All configurations assume multi-dataloader operation, even for single loader scenarios.
+
+Key Classes:
+- MultiDataLoaderConfig: Core configuration for dataloader management
+- CheckpointConfig: Checkpoint behavior and scheduling
+- PreemptionConfig: Job preemption handling
+- PerformanceConfig: Optimization settings
+- LoggingConfig: Training logging and metrics
+- GenericTrainerConfig: Overall trainer configuration
+
+Example (Single Dataloader):
+    config = GenericTrainerConfig(
+        train_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,
+            dataloader_names=["main"]  # Single loader still needs config
+        ),
+        val_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,
+            dataloader_names=["main_val"]
+        ),
+    )
+
+Example (Multiple Dataloaders):
+    config = GenericTrainerConfig(
+        train_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.WEIGHTED,
+            dataloader_weights=[0.6, 0.3, 0.1],
+            dataloader_names=["large", "medium", "small"]
+        ),
+        val_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.ROUND_ROBIN,
+            dataloader_names=["val_a", "val_b"]
+        ),
+    )
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 import signal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+import warnings
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+# Multi-dataloader enums
+class SamplingStrategy(Enum):
+    """Strategy for sampling from multiple dataloaders."""
+
+    SEQUENTIAL = "sequential"  # Process loaders one after another
+    ROUND_ROBIN = "round_robin"  # Alternate between loaders
+    WEIGHTED = "weighted"  # Sample based on weights
+    ALTERNATING = "alternating"  # Follow explicit pattern
+
+
+class EpochLengthPolicy(Enum):
+    """Policy for determining epoch length with multiple dataloaders."""
+
+    SUM_OF_LENGTHS = "sum_of_lengths"  # Sum of all loader lengths
+    MAX_OF_LENGTHS = "max_of_lengths"  # Maximum loader length
+    MIN_OF_LENGTHS = "min_of_lengths"  # Minimum loader length
+    FIXED_NUM_STEPS = "fixed_num_steps"  # Fixed number of steps
+
+
+class ValidationFrequency(Enum):
+    """Frequency for running validation."""
+
+    PER_EPOCH = "per_epoch"  # Validate at epoch boundaries
+    EVERY_N_STEPS = "every_n_steps"  # Validate every N training steps
+
+
+class ValAggregation(Enum):
+    """Aggregation strategy for validation metrics across dataloaders."""
+
+    MICRO_AVG_WEIGHTED_BY_SAMPLES = "micro_avg_weighted_by_samples"  # Weight by samples
+    MACRO_AVG_EQUAL_LOADERS = "macro_avg_equal_loaders"  # Equal weight per loader
+    PRIMARY_METRIC_PER_LOADER = "primary_metric_per_loader"  # Track per-loader metrics
+    CUSTOM = "custom"  # User-defined aggregation
 
 
 @dataclass
@@ -99,6 +165,98 @@ class PerformanceConfig:
 
 
 @dataclass
+class MultiDataLoaderConfig:
+    """
+    Configuration for multi-dataloader training.
+
+    Defines how to sample from multiple dataloaders, determine epoch length,
+    and manage iteration state for fault-tolerant resume.
+    """
+
+    sampling_strategy: SamplingStrategy = SamplingStrategy.ROUND_ROBIN
+    dataloader_weights: list[float] | None = None  # Weights for WEIGHTED strategy
+    alternating_pattern: list[int] | None = None  # Pattern for ALTERNATING strategy
+    dataloader_names: list[str] = field(default_factory=list)  # Names for logging
+    epoch_length_policy: EpochLengthPolicy = EpochLengthPolicy.SUM_OF_LENGTHS
+    steps_per_epoch: int | None = None  # For FIXED_NUM_STEPS policy
+    cycle_short_loaders: bool = True  # Whether to cycle shorter loaders
+    burst_size: int = 1  # Number of batches per loader per switch
+    choice_rng_seed: int | None = None  # Seed for weighted sampling
+    prefetch_cap_total_batches: int | None = None  # Max batches to prefetch
+
+
+@dataclass
+class ValidationConfig:
+    """
+    Configuration for validation during training.
+
+    Controls when validation runs and how metrics are aggregated
+    across multiple validation dataloaders.
+    """
+
+    frequency: ValidationFrequency = ValidationFrequency.PER_EPOCH
+    every_n_steps: int | None = None  # For EVERY_N_STEPS frequency
+    aggregation: ValAggregation = ValAggregation.MICRO_AVG_WEIGHTED_BY_SAMPLES
+    per_loader_metrics: bool = True  # Log per-loader metrics
+    global_metrics: bool = True  # Log aggregated metrics
+    early_stopping_source: str = "both"  # Options: "both", "hook", "legacy"
+
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        valid_sources = {"both", "hook", "legacy"}
+        if self.early_stopping_source not in valid_sources:
+            raise ValueError(
+                f"early_stopping_source must be one of {valid_sources}, "
+                f"got '{self.early_stopping_source}'"
+            )
+
+
+@dataclass
+class FaultToleranceConfig:
+    """
+    Configuration for fault-tolerant training.
+
+    Enables deterministic resume after preemption by saving
+    dataloader iteration state.
+    """
+
+    save_sampler_state: bool = True  # Save sampler state for resume
+    save_dataset_state: bool = True  # Save dataset iteration state
+    verify_deterministic_resume: bool = False  # Verify resume produces same batches
+    checkpoint_timeout_sec: float = 300.0  # Max time for checkpoint save
+
+
+@dataclass
+class DDPConfig:
+    """
+    Configuration for Distributed Data Parallel training.
+
+    Settings for DDP/Fabric distributed training synchronization.
+    """
+
+    backend: str = "nccl"  # DDP backend (nccl, gloo, mpi)
+    init_method: str | None = None  # Process group init method
+    find_unused_parameters: bool = False  # Find unused parameters in model
+    gradient_as_bucket_view: bool = True  # Use gradient bucket view optimization
+
+    # Schedule synchronization across ranks
+    sync_schedules_across_ranks: bool = (
+        True  # Ensure identical schedules across processes
+    )
+    validate_schedule_consistency: bool = (
+        False  # Runtime validation of schedule consistency
+    )
+
+    # Additional DDP optimizations
+    broadcast_buffers: bool = (
+        True  # Broadcast buffers (e.g., BatchNorm stats) at forward
+    )
+    bucket_cap_mb: int = (
+        25  # Gradient bucketing size in MB for communication efficiency
+    )
+
+
+@dataclass
 class LoggingConfig:
     """
     Configuration for experiment tracking and logging.
@@ -107,23 +265,23 @@ class LoggingConfig:
     TensorBoard, CSV files, and console output.
     """
 
-    use_wandb: bool = True  # Whether to use Weights & Biases for experiment tracking
+    # Logger type selection (default to console; opt-in for external services)
+    logger_type: str = (
+        "console"  # Options: "console", "wandb", "tensorboard", "composite"
+    )
+
+    # Legacy W&B configuration (kept for backward compatibility)
+    use_wandb: bool = False  # Whether to use Weights & Biases for experiment tracking
     wandb_project: str | None = None  # W&B project name (uses experiment name if None)
     wandb_entity: str | None = None  # W&B entity/team name
     wandb_tags: list[str] = field(default_factory=list)  # Tags for W&B experiment
     wandb_notes: str | None = None  # Notes for W&B experiment
 
-    log_scalars_every_n_steps: int | None = (
-        50  # How often to log scalar metrics (None = every step)
-    )
-    log_images_every_n_steps: int | None = 500  # How often to log images (None = never)
-    log_gradients: bool = False  # Whether to log gradient statistics
-    log_model_parameters: bool = False  # Whether to log model parameter statistics
-    log_system_metrics: bool = True  # Whether to log system metrics (GPU, memory, etc.)
-
-    # Additional logging backends
+    # TensorBoard configuration
     use_tensorboard: bool = False  # Whether to use TensorBoard logging
     tensorboard_dir: str | None = None  # TensorBoard log directory
+
+    # CSV logging
     use_csv: bool = True  # Whether to log metrics to CSV files
     csv_log_dir: str | None = None  # CSV log directory (uses checkpoint dir if None)
 
@@ -132,6 +290,77 @@ class LoggingConfig:
     console_log_format: str = (
         "[%(asctime)s] %(levelname)s: %(message)s"  # Console log format
     )
+
+    # Composite logger configuration
+    composite_loggers: list[str] | None = (
+        None  # Explicit logger list for composite logger
+    )
+
+    # Metrics configuration
+    log_per_loader_metrics: bool = True  # Log metrics per dataloader
+    log_global_metrics: bool = True  # Log globally aggregated metrics
+    log_loader_proportions: bool = True  # Log loader usage proportions (for WEIGHTED)
+    all_reduce_metrics: bool = (
+        False  # Aggregate metrics across ranks before logging (DDP)
+    )
+
+    # Logging frequencies
+    log_scalars_every_n_steps: int | None = (
+        50  # How often to log scalar metrics (None = every step)
+    )
+    log_images_every_n_steps: int | None = 500  # How often to log images (None = never)
+    log_gradients: bool = False  # Whether to log gradient statistics
+    log_model_parameters: bool = False  # Whether to log model parameter statistics
+    log_system_metrics: bool = True  # Whether to log system metrics (GPU, memory, etc.)
+
+
+@dataclass
+class HooksConfig:
+    """
+    Configuration for training hooks system.
+
+    Allows injection of custom behavior at various training lifecycle points.
+    """
+
+    # Hook class paths to load (e.g., ["mypackage.hooks.CustomHook"])
+    hook_classes: list[str] = field(default_factory=list)
+
+    # Hook-specific configuration passed to hook constructors
+    hook_configs: dict[str, Any] = field(default_factory=dict)
+
+    # Built-in hooks
+    enable_logging_hook: bool = False  # Enable detailed logging hook
+    enable_gradient_monitor: bool = False  # Enable gradient monitoring hook
+    enable_model_checkpoint_hook: bool = False  # Enable model checkpoint tracking
+    enable_early_stopping_hook: bool = False  # Enable early stopping hook
+
+    # Built-in hook configurations
+    early_stopping_config: dict[str, Any] = field(
+        default_factory=lambda: {
+            "monitor": "val/loss",
+            "patience": 10,
+            "mode": "min",
+            "min_delta": 0.0001,
+        }
+    )
+
+    gradient_monitor_config: dict[str, Any] = field(
+        default_factory=lambda: {
+            "log_frequency": 100,
+            "param_filter": None,  # Optional list of param names to monitor
+        }
+    )
+
+    model_checkpoint_config: dict[str, Any] = field(
+        default_factory=lambda: {
+            "save_top_k": 3,
+            "monitor": "val/loss",
+        }
+    )
+
+    # Hook execution settings
+    continue_on_hook_error: bool = True  # Continue training if hook raises error
+    log_hook_errors: bool = True  # Log hook errors to console
 
 
 @dataclass
@@ -147,6 +376,23 @@ class GenericTrainerConfig:
     preemption: PreemptionConfig = field(default_factory=PreemptionConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    hooks: HooksConfig = field(default_factory=HooksConfig)  # Hooks configuration
+
+    # Multi-dataloader configuration
+    # Split configuration for train and val phases
+    train_loader_config: MultiDataLoaderConfig = field(
+        default_factory=MultiDataLoaderConfig
+    )
+    val_loader_config: MultiDataLoaderConfig = field(
+        default_factory=MultiDataLoaderConfig
+    )
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
+    fault_tolerance: FaultToleranceConfig = field(default_factory=FaultToleranceConfig)
+    ddp: DDPConfig | None = None  # Optional DDP configuration
+
+    # Per-loader configuration
+    loss_weights_per_loader: list[float] | None = None  # Loss weights per dataloader
+    per_loader_optimizer_id: list[int] | None = None  # Optimizer ID per dataloader
 
     # Training loop behavior
     log_loss_every_n_steps: int | None = 100  # How often to log training loss
@@ -194,7 +440,10 @@ class GenericTrainerConfig:
         ):
             raise ValueError("checkpoint monitor_mode must be 'min' or 'max'")
 
-    def get_summary(self) -> dict[str, any]:
+        # Validate multi-dataloader configuration (train/val)
+        validate_trainer_config(self)
+
+    def get_summary(self) -> dict[str, Any]:
         """Get a summary of the configuration."""
         return {
             "checkpoint": {
@@ -225,4 +474,181 @@ class GenericTrainerConfig:
                 "validate_every_n_epochs": self.validate_every_n_epochs,
                 "early_stopping_patience": self.early_stopping_patience,
             },
+            "train_multi_dataloader": {
+                "sampling_strategy": self.train_loader_config.sampling_strategy.value,
+                "epoch_length_policy": self.train_loader_config.epoch_length_policy.value,
+                "dataloader_names": self.train_loader_config.dataloader_names,
+            },
+            "val_multi_dataloader": {
+                "sampling_strategy": self.val_loader_config.sampling_strategy.value,
+                "epoch_length_policy": self.val_loader_config.epoch_length_policy.value,
+                "dataloader_names": self.val_loader_config.dataloader_names,
+            },
+            "validation": {
+                "frequency": self.validation.frequency.value,
+                "aggregation": self.validation.aggregation.value,
+            },
         }
+
+
+def validate_infinite_loader_constraints(
+    epoch_length_policy: EpochLengthPolicy, assume_finite_loaders: bool = True
+) -> None:
+    """
+    Validate epoch length policy constraints for infinite loaders.
+
+    Args:
+        epoch_length_policy: The epoch length policy to validate
+        assume_finite_loaders: Whether to assume all loaders are finite (default True)
+
+    Raises:
+        ValueError: If policy cannot handle infinite loaders and assumption is False
+    """
+    if not assume_finite_loaders:
+        incompatible_policies = {
+            EpochLengthPolicy.SUM_OF_LENGTHS,
+            EpochLengthPolicy.MIN_OF_LENGTHS,
+        }
+        if epoch_length_policy in incompatible_policies:
+            warnings.warn(
+                f"EpochLengthPolicy.{epoch_length_policy.name} cannot handle infinite "
+                f"dataloaders. Runtime validation will enforce finite loader requirement.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+
+def _validate_multi_config(
+    multi: MultiDataLoaderConfig,
+    *,
+    assume_finite_loaders: bool = True,
+    context: str = "train",
+) -> None:
+    """Validate a single MultiDataLoaderConfig for internal consistency."""
+    # Validate dataloader weights
+    if multi.sampling_strategy == SamplingStrategy.WEIGHTED:
+        if multi.dataloader_weights is None:
+            raise ValueError(
+                f"dataloader_weights must be provided for WEIGHTED sampling strategy ({context})"
+            )
+        if any(w <= 0 for w in multi.dataloader_weights):
+            raise ValueError("All dataloader weights must be positive")
+        # Validate weight count matches dataloader count
+        if multi.dataloader_names and len(multi.dataloader_weights) != len(
+            multi.dataloader_names
+        ):
+            raise ValueError(
+                f"Number of dataloader_weights ({len(multi.dataloader_weights)}) must match "
+                f"number of dataloaders ({len(multi.dataloader_names)}) for {context}"
+            )
+
+    # Validate alternating pattern
+    if multi.sampling_strategy == SamplingStrategy.ALTERNATING:
+        if multi.alternating_pattern is None:
+            raise ValueError(
+                f"alternating_pattern must be provided for ALTERNATING sampling strategy ({context})"
+            )
+        if not multi.alternating_pattern:
+            raise ValueError("alternating_pattern cannot be empty")
+        # Validate indices are non-negative
+        if any(idx < 0 for idx in multi.alternating_pattern):
+            raise ValueError("alternating_pattern indices must be non-negative")
+        # If dataloader names provided, validate indices are in range
+        if multi.dataloader_names:
+            max_idx = len(multi.dataloader_names) - 1
+            if any(idx > max_idx for idx in multi.alternating_pattern):
+                raise ValueError(
+                    f"alternating_pattern indices must be in range [0, {max_idx}] for {context}"
+                )
+
+    # Validate fixed steps policy
+    if multi.epoch_length_policy == EpochLengthPolicy.FIXED_NUM_STEPS:
+        if multi.steps_per_epoch is None:
+            raise ValueError(
+                f"steps_per_epoch must be provided for FIXED_NUM_STEPS epoch length policy ({context})"
+            )
+        if multi.steps_per_epoch <= 0:
+            raise ValueError("steps_per_epoch must be positive")
+
+    # Validate burst size
+    if multi.burst_size <= 0:
+        raise ValueError("burst_size must be positive")
+
+    # Validate prefetch cap
+    if multi.prefetch_cap_total_batches is not None and (
+        multi.prefetch_cap_total_batches <= 0
+    ):
+        raise ValueError("prefetch_cap_total_batches must be positive")
+
+    # Validate dataloader names uniqueness (warning only)
+    if multi.dataloader_names:
+        unique_names = set(multi.dataloader_names)
+        if len(unique_names) != len(multi.dataloader_names):
+            warnings.warn(
+                f"dataloader_names contains duplicates in {context} config; this may affect logging clarity",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    # Validate infinite loader constraints (warning for incompatible policies)
+    validate_infinite_loader_constraints(
+        multi.epoch_length_policy, assume_finite_loaders
+    )
+
+
+def validate_trainer_config(
+    config: GenericTrainerConfig, assume_finite_loaders: bool = True
+) -> None:
+    """
+    Validate trainer configuration for consistency.
+
+    Checks multi-dataloader configuration constraints and raises
+    ValueError for invalid configurations.
+
+    Args:
+        config: Trainer configuration to validate
+
+    Raises:
+        ValueError: If configuration is invalid
+    """
+    # Validate the train and val multi configs separately
+    _validate_multi_config(
+        config.train_loader_config,
+        assume_finite_loaders=assume_finite_loaders,
+        context="train",
+    )
+    _validate_multi_config(
+        config.val_loader_config,
+        assume_finite_loaders=assume_finite_loaders,
+        context="val",
+    )
+
+    # Validate validation frequency
+    if config.validation.frequency == ValidationFrequency.EVERY_N_STEPS:
+        if config.validation.every_n_steps is None:
+            raise ValueError(
+                "every_n_steps must be provided for EVERY_N_STEPS validation frequency"
+            )
+        if config.validation.every_n_steps <= 0:
+            raise ValueError("every_n_steps must be positive")
+
+    # Validate loss weights
+    if config.loss_weights_per_loader is not None:
+        if any(w <= 0 for w in config.loss_weights_per_loader):
+            raise ValueError("All loss weights must be positive")
+        if config.train_loader_config.dataloader_names and len(
+            config.loss_weights_per_loader
+        ) != len(config.train_loader_config.dataloader_names):
+            raise ValueError("Number of loss weights must match number of dataloaders")
+
+    # Validate per-loader optimizer IDs
+    if config.per_loader_optimizer_id is not None:
+        if config.train_loader_config.dataloader_names and len(
+            config.per_loader_optimizer_id
+        ) != len(config.train_loader_config.dataloader_names):
+            raise ValueError("Number of optimizer IDs must match number of dataloaders")
+        if any(idx < 0 for idx in config.per_loader_optimizer_id):
+            raise ValueError("Optimizer IDs must be non-negative")
+    # Note: Full infinite loader validation happens at runtime when actual
+    # dataloaders are provided. For policies that cannot handle infinite loaders
+    # (SUM_OF_LENGTHS, MIN_OF_LENGTHS), runtime validation will enforce finite length

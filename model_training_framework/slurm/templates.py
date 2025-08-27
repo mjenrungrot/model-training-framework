@@ -10,7 +10,7 @@ This module provides template rendering for SLURM batch scripts:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import re
 import string
@@ -64,12 +64,7 @@ class TemplateContext:
     mail_user: str | None = None
 
     # Additional parameters
-    extra_params: dict[str, Any] = None
-
-    def __post_init__(self):
-        """Initialize extra parameters if not provided."""
-        if self.extra_params is None:
-            self.extra_params = {}
+    extra_params: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert context to dictionary for template rendering."""

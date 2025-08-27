@@ -160,8 +160,8 @@ class TestPathUtilities:
         child = Path("/home/user/project/configs")
         non_child = Path("/home/other/project")
 
-        assert is_subpath(child, parent) == True
-        assert is_subpath(non_child, parent) == False
+        assert is_subpath(child, parent)
+        assert not is_subpath(non_child, parent)
 
     def test_safe_filename(self):
         """Test creating safe filename."""
@@ -214,8 +214,8 @@ class TestValidationUtilities:
     def test_validate_type(self):
         """Test type validation."""
         # Valid type
-        assert validate_type("test", str, "test_string") == True
-        assert validate_type(42, int, "test_int") == True
+        assert validate_type("test", str, "test_string")
+        assert validate_type(42, int, "test_int")
 
         # Invalid type
         with pytest.raises(TypeError):
@@ -224,8 +224,8 @@ class TestValidationUtilities:
     def test_validate_range(self):
         """Test range validation."""
         # Valid ranges
-        assert validate_range(5, min_val=0, max_val=10) == True
-        assert validate_range(5.5, min_val=5.0, max_val=6.0) == True
+        assert validate_range(5, min_val=0, max_val=10)
+        assert validate_range(5.5, min_val=5.0, max_val=6.0)
 
         # Invalid ranges
         with pytest.raises(ValueError):
@@ -239,7 +239,7 @@ class TestValidationUtilities:
         choices = {"option1", "option2", "option3"}
 
         # Valid choice
-        assert validate_choices("option1", choices) == True
+        assert validate_choices("option1", choices)
 
         # Invalid choice
         with pytest.raises(ValueError):
@@ -249,7 +249,7 @@ class TestValidationUtilities:
         """Test string format validation."""
         # Valid email pattern
         email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-        assert validate_string_format("test@example.com", email_pattern) == True
+        assert validate_string_format("test@example.com", email_pattern)
 
         # Invalid format
         with pytest.raises(ValueError):
@@ -262,7 +262,7 @@ class TestValidationUtilities:
             f.flush()
 
             # Valid file
-            assert validate_path_exists(f.name, must_be_file=True) == True
+            assert validate_path_exists(f.name, must_be_file=True)
 
             # Invalid directory requirement
             with pytest.raises(ValueError):
@@ -278,8 +278,8 @@ class TestValidationUtilities:
     def test_validate_email(self):
         """Test email validation."""
         # Valid emails
-        assert validate_email("test@example.com") == True
-        assert validate_email("user.name+tag@domain.co.uk") == True
+        assert validate_email("test@example.com")
+        assert validate_email("user.name+tag@domain.co.uk")
 
         # Invalid emails
         with pytest.raises(ValueError):
@@ -291,8 +291,8 @@ class TestValidationUtilities:
     def test_validate_url(self):
         """Test URL validation."""
         # Valid URLs
-        assert validate_url("https://example.com") == True
-        assert validate_url("http://subdomain.example.com/path") == True
+        assert validate_url("https://example.com")
+        assert validate_url("http://subdomain.example.com/path")
 
         # Invalid URLs
         with pytest.raises(ValueError):
@@ -304,9 +304,9 @@ class TestValidationUtilities:
     def test_validate_positive_number(self):
         """Test positive number validation."""
         # Valid positive numbers
-        assert validate_positive_number(5) == True
-        assert validate_positive_number(1.5) == True
-        assert validate_positive_number(0, allow_zero=True) == True
+        assert validate_positive_number(5)
+        assert validate_positive_number(1.5)
+        assert validate_positive_number(0, allow_zero=True)
 
         # Invalid numbers
         with pytest.raises(ValueError):
@@ -318,9 +318,9 @@ class TestValidationUtilities:
     def test_validate_memory_string(self):
         """Test memory string validation."""
         # Valid memory strings
-        assert validate_memory_string("256G") == True
-        assert validate_memory_string("4096M") == True
-        assert validate_memory_string("1024K") == True
+        assert validate_memory_string("256G")
+        assert validate_memory_string("4096M")
+        assert validate_memory_string("1024K")
 
         # Invalid memory strings
         with pytest.raises(ValueError):
@@ -332,9 +332,9 @@ class TestValidationUtilities:
     def test_validate_time_string(self):
         """Test time string validation."""
         # Valid time strings
-        assert validate_time_string("1-00:00:00") == True
-        assert validate_time_string("24:00:00") == True
-        assert validate_time_string("01:30:45") == True
+        assert validate_time_string("1-00:00:00")
+        assert validate_time_string("24:00:00")
+        assert validate_time_string("01:30:45")
 
         # Invalid time strings
         with pytest.raises(ValueError):
@@ -351,8 +351,8 @@ class TestDataStructures:
         """Test successful result."""
         result = success("test_value")
 
-        assert result.is_success == True
-        assert result.is_error == False
+        assert result.is_success
+        assert not result.is_error
         assert result.value == "test_value"
         assert result.unwrap() == "test_value"
         assert result.unwrap_or("default") == "test_value"
@@ -361,8 +361,8 @@ class TestDataStructures:
         """Test error result."""
         result = error("test_error")
 
-        assert result.is_success == False
-        assert result.is_error == True
+        assert not result.is_success
+        assert result.is_error
         assert result.error == "test_error"
         assert result.unwrap_or("default") == "default"
 
@@ -374,13 +374,13 @@ class TestDataStructures:
         success_result = success(5)
         mapped = success_result.map(lambda x: x * 2)
 
-        assert mapped.is_success == True
+        assert mapped.is_success
         assert mapped.value == 10
 
         error_result = error("error")
         mapped_error = error_result.map(lambda x: x * 2)
 
-        assert mapped_error.is_error == True
+        assert mapped_error.is_error
         assert mapped_error.error == "error"
 
     def test_result_map_error(self):
@@ -388,13 +388,13 @@ class TestDataStructures:
         error_result = error("original_error")
         mapped = error_result.map_error(lambda e: f"mapped_{e}")
 
-        assert mapped.is_error == True
+        assert mapped.is_error
         assert mapped.error == "mapped_original_error"
 
         success_result = success("value")
         mapped_success = success_result.map_error(lambda e: f"mapped_{e}")
 
-        assert mapped_success.is_success == True
+        assert mapped_success.is_success
         assert mapped_success.value == "value"
 
     def test_priority_enum(self):

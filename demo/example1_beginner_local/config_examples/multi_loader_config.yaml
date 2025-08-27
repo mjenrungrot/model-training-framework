@@ -1,0 +1,132 @@
+## Multi-DataLoader Configuration Examples (Beginner)
+# Updated to use train_loader_config/val_loader_config keys.
+
+# Example: Two DataLoaders with Round-Robin
+round_robin_config:
+  train_loader_config:
+    sampling_strategy: "round_robin"
+    epoch_length_policy: "sum_of_lengths"
+    dataloader_names: ["dataset_a", "dataset_b"]
+    cycle_short_loaders: true
+  val_loader_config:
+    sampling_strategy: "round_robin"
+    dataloader_names: ["val_a", "val_b"]
+  validation:
+    frequency: "per_epoch"
+    aggregation: "macro_avg_equal_loaders"
+
+# Example: Weighted Sampling (Imbalanced Datasets)
+weighted_sampling_config:
+  train_loader_config:
+    sampling_strategy: "weighted"
+    dataloader_weights: [0.7, 0.3]
+    epoch_length_policy: "fixed_num_steps"
+    steps_per_epoch: 200
+    dataloader_names: ["dataset_a", "dataset_b"]
+    choice_rng_seed: 42
+  validation:
+    frequency: "every_n_steps"
+    every_n_steps: 50
+    aggregation: "micro_avg_weighted_by_samples"
+    per_loader_metrics: true
+  logging:
+    log_loader_proportions: true
+
+  # Per-loader optimizer configuration
+  per_loader_optimizers:
+    dataset_a:
+      optimizer_idx: 0
+      loss_weight: 1.0
+    dataset_b:
+      optimizer_idx: 0
+      loss_weight: 0.8
+
+
+# ============================================================================
+# EXAMPLE 7: DDP Configuration with Multi-Loaders
+# ============================================================================
+ddp_multi_config:
+  multi:
+    sampling_strategy: "round_robin"
+    dataloader_names: ["shard_1", "shard_2"]
+    epoch_length_policy: "sum_of_lengths"
+
+  ddp:
+    backend: "nccl"
+    sync_schedules_across_ranks: true  # Ensure identical schedules
+    validate_schedule_consistency: true  # Runtime validation
+
+  fault_tolerance:
+    save_sampler_state: true  # For exact resume
+    save_dataset_state: true
+    verify_deterministic_resume: true
+
+
+# ============================================================================
+# EXAMPLE 8: Advanced Weighted with Monitoring
+# ============================================================================
+advanced_weighted_config:
+  multi:
+    sampling_strategy: "weighted"
+    dataloader_weights: [0.5, 0.2, 0.2, 0.1]
+    dataloader_names: ["main", "augmented", "hard_negatives", "synthetic"]
+    epoch_length_policy: "fixed_num_steps"
+    steps_per_epoch: 5000
+    choice_rng_seed: 123  # Reproducible sampling
+    prefetch_cap_total_batches: 100  # Prefetch limit
+
+  validation:
+    frequency: "every_n_steps"
+    every_n_steps: 500
+    aggregation: "micro_avg_weighted_by_samples"
+
+  logging:
+    logger_type: "composite"  # Multiple loggers
+    composite_loggers: ["console", "tensorboard", "wandb"]
+    log_per_loader_metrics: true
+    log_global_metrics: true
+    log_loader_proportions: true  # Monitor actual vs expected proportions
+    all_reduce_metrics: true  # DDP metric aggregation
+
+  hooks:
+    enable_early_stopping_hook: true
+    early_stopping_config:
+      monitor: "val/loss"
+      patience: 10
+      mode: "min"
+      # Early stopping considers aggregated metrics
+
+
+# ============================================================================
+# EXAMPLE 9: Curriculum Learning with Sequential + Transitions
+# ============================================================================
+curriculum_config:
+  multi:
+    sampling_strategy: "sequential"
+    dataloader_names: ["easy", "medium", "hard", "expert"]
+    epoch_length_policy: "sum_of_lengths"
+    # Process in order of difficulty
+
+  # Could use hooks to transition between datasets
+  hooks:
+    hook_classes: ["custom.CurriculumTransitionHook"]
+    hook_configs:
+      curriculum:
+        transition_epochs: [5, 10, 15]  # When to move to next dataset
+
+
+# ============================================================================
+# EXAMPLE 10: Validation-Only Multi-Loader
+# ============================================================================
+validation_only_config:
+  multi:
+    # Even for validation-only, need multi config
+    sampling_strategy: "sequential"
+    dataloader_names: ["val_iid", "val_ood", "val_adversarial"]
+    epoch_length_policy: "sum_of_lengths"
+
+  validation:
+    frequency: "per_epoch"
+    # Different aggregation for validation diversity
+    aggregation: "primary_metric_per_loader"
+    per_loader_metrics: true  # Track each validation set separately

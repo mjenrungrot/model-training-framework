@@ -8,6 +8,7 @@ from collections.abc import Generator
 from pathlib import Path
 import subprocess
 import tempfile
+from typing import Any, cast
 
 import pytest
 
@@ -89,16 +90,44 @@ def mock_git_repo(test_project_root: Path):
 
 
 class MockFabric:
-    """Mock Lightning Fabric for testing."""
+    """Mock Lightning Fabric for testing with DDP support."""
+
+    def __init__(self, rank: int = 0, world_size: int = 1):
+        """Initialize mock fabric with rank and world size."""
+        self.global_rank = rank
+        self.rank = rank
+        self.world_size = world_size
+        self.is_global_zero = rank == 0
 
     def setup(self, *args):
+        """Mock setup that returns args as-is or as tuple."""
+        if len(args) == 1:
+            return args[0]
         return args
 
     def setup_dataloaders(self, dataloader):
+        """Mock dataloader setup."""
         return dataloader
 
     def backward(self, loss):
-        loss.backward()
+        """Mock backward pass."""
+        if hasattr(loss, "backward"):
+            loss.backward()
+
+    def barrier(self):
+        """Mock barrier for synchronization."""
+
+    def broadcast(self, obj, src: int = 0):
+        """Mock broadcast that returns object unchanged."""
+        return obj
+
+    def all_gather(self, tensor):
+        """Mock all_gather that returns list with single tensor."""
+        return [tensor] * self.world_size
+
+    def all_reduce(self, tensor, op: str = "mean"):
+        """Mock all_reduce that returns tensor unchanged."""
+        return tensor
 
 
 class MockModel:
@@ -157,10 +186,7 @@ def mock_optimizer():
     return MockOptimizer()
 
 
-# Test markers for different types of tests
-pytest.mark.unit = pytest.mark.unit
-pytest.mark.integration = pytest.mark.integration
-pytest.mark.slow = pytest.mark.slow
+# Test markers are declared in pytest.ini; no reassignment needed here.
 
 
 # Skip tests if external dependencies are not available
@@ -173,6 +199,8 @@ def skip_if_no_slurm():
         return True
 
 
-pytest.mark.skipif_no_slurm = pytest.mark.skipif(
+# Provide a custom marker alias with a typing-safe cast for static checkers
+_mark = cast("Any", pytest.mark)
+_mark.skipif_no_slurm = pytest.mark.skipif(
     skip_if_no_slurm(), reason="SLURM not available"
 )

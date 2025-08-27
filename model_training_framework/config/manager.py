@@ -15,7 +15,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypeVar, cast, overload
 
 import yaml
 
@@ -36,6 +36,9 @@ from .schemas import (
 from .validators import ConfigValidator, ValidationResult
 
 logger = logging.getLogger(__name__)
+
+
+T = TypeVar("T")
 
 
 class ConfigurationManager:
@@ -80,7 +83,9 @@ class ConfigurationManager:
         config_data = self._load_config_file(resolved_path)
 
         # Perform environment variable substitution
-        config_data = self._substitute_environment_variables(config_data)
+        config_data = cast(
+            "dict[str, Any]", self._substitute_environment_variables(config_data)
+        )
 
         # Cache the loaded config
         if use_cache:
@@ -212,11 +217,11 @@ class ConfigurationManager:
 
         if suffix in [".yaml", ".yml"]:
             with config_path.open() as f:
-                return yaml.safe_load(f) or {}
+                return cast("dict[str, Any]", yaml.safe_load(f) or {})
 
         elif suffix == ".json":
             with config_path.open() as f:
-                return json.load(f)
+                return cast("dict[str, Any]", json.load(f))
 
         else:
             raise ValueError(f"Unsupported configuration file format: {suffix}")
@@ -284,8 +289,21 @@ class ConfigurationManager:
     ) -> ExperimentConfig:
         """Convert dictionary to ExperimentConfig with proper type handling."""
 
-        # Helper function to safely extract nested config
-        def extract_config(key: str, config_class, required: bool = True):
+        # Helper function to safely extract nested config with precise typing
+
+        @overload
+        def extract_config(
+            key: str, config_class: type[T], required: Literal[True] = ...
+        ) -> T: ...
+
+        @overload
+        def extract_config(
+            key: str, config_class: type[T], required: Literal[False]
+        ) -> T | None: ...
+
+        def extract_config(
+            key: str, config_class: type[T], required: bool = True
+        ) -> T | None:
             if key in config_data:
                 return config_class(**config_data[key])
             if required:

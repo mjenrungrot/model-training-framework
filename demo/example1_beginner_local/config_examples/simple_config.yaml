@@ -1,44 +1,32 @@
-# Simple Configuration for Beginner Local Training
-# This is the most basic configuration you need to get started
+# Simple configuration for a single DataLoader using the multi-dataloader API
 
-experiment_name: "my_first_experiment"
-description: "Learning the basics of the model training framework"
+# Multi-dataloader configs (split by phase)
+train_loader_config:
+  sampling_strategy: "sequential"        # For single loader
+  epoch_length_policy: "sum_of_lengths"  # Use all data
+  dataloader_names: ["main"]             # Single name in list
 
-# Model configuration - defines your neural network
-model:
-  name: "simple_mlp"
-  hidden_size: 128
-  input_size: 784    # 28x28 MNIST-like images flattened
-  num_classes: 10    # 10 digit classes (0-9)
+val_loader_config:
+  sampling_strategy: "sequential"
+  dataloader_names: ["main_val"]
 
-# Training parameters - how long and how fast to train
-training:
-  epochs: 5          # Start with fewer epochs for quick feedback
-  batch_size: 32     # Reasonable size for local development
-  learning_rate: 0.001  # Conservative learning rate
+# Validation behavior
+validation:
+  frequency: "per_epoch"
+  aggregation: "micro_avg_weighted_by_samples"
 
-# Data configuration - what data to use
-data:
-  dataset_name: "dummy_mnist"
-  train_batches: 50  # Small dataset for quick iteration
-  val_batches: 10    # Validation data for monitoring
-
-# Optimizer settings - how to update model weights
-optimizer:
-  name: "adam"       # Adam is generally a good default
-  weight_decay: 0.01 # Small regularization
-
-# Logging and monitoring - track your progress
+# Logging
 logging:
-  log_level: "INFO"
-  use_wandb: false   # Disabled for simplicity
+  logger_type: "console"
+  log_scalars_every_n_steps: 10
 
-# Checkpointing - save your progress
+# Checkpointing
 checkpoint:
   save_every_n_epochs: 2
-  checkpoint_dir: "./checkpoints"
+  max_checkpoints: 3
 
-# Optional: Preemption handling for local development
-preemption:
-  timeout_minutes: 10
-  grace_period_seconds: 30
+# Performance
+performance:
+  gradient_accumulation_steps: 1
+  use_amp: false
+  clip_grad_norm: 1.0

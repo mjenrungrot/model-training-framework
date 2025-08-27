@@ -32,8 +32,9 @@ class Result[T, E]:
         if value is None and error is None:
             raise ValueError("Result must have either value or error")
 
-        self._value = value
-        self._error = error
+        # Internal storage (optional until validated by accessors)
+        self._value: T | None = value
+        self._error: E | None = error
 
     @property
     def is_success(self) -> bool:
@@ -48,14 +49,14 @@ class Result[T, E]:
     @property
     def value(self) -> T:
         """Get the success value (raises if error)."""
-        if self.is_error:
+        if self.is_error or self._value is None:
             raise ValueError(f"Cannot get value from error result: {self._error}")
         return self._value
 
     @property
     def error(self) -> E:
         """Get the error value (raises if success)."""
-        if self.is_success:
+        if self.is_success or self._error is None:
             raise ValueError("Cannot get error from success result")
         return self._error
 
@@ -65,11 +66,15 @@ class Result[T, E]:
             if isinstance(self._error, Exception):
                 raise self._error
             raise RuntimeError(f"Result failed: {self._error}")
+        # At this point _value must be present
+        assert self._value is not None
         return self._value
 
     def unwrap_or(self, default: T) -> T:
         """Get value or return default."""
-        return self._value if self.is_success else default
+        if self.is_success and self._value is not None:
+            return self._value
+        return default
 
     def map(self, func) -> Result:
         """Apply function to value if success."""
