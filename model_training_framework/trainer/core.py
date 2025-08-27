@@ -13,6 +13,8 @@ This module provides the GenericTrainer class - the main training engine with:
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -334,6 +336,31 @@ class GenericTrainer:
 
         logger.info(f"Initialized GenericTrainer with {len(optimizers)} optimizer(s)")
 
+    def _maybe_requeue_job(self) -> None:
+        """Request Slurm to requeue the current job after preemption.
+
+        Respects config.preemption.requeue_job, only runs on primary rank,
+        and requires SLURM_JOB_ID in environment.
+        """
+        try:
+            requeue_enabled = getattr(self.config.preemption, "requeue_job", True)
+        except Exception:
+            requeue_enabled = True
+        if not requeue_enabled:
+            return
+
+        job_id = os.environ.get("SLURM_JOB_ID")
+        if not job_id:
+            return
+        if not ddp_is_primary(self.fabric):
+            return
+        try:
+            logger.info(f"Requesting Slurm requeue for job {job_id}")
+            subprocess.run(["scontrol", "requeue", job_id], check=True)
+            logger.info("Requeue request sent successfully")
+        except Exception:
+            logger.exception("Failed to requeue job: ")
+
     def set_training_step(self, training_step_fn: TrainingStep) -> None:
         """Set the training step function with multi-dataloader signature."""
         self.training_step_fn = training_step_fn
@@ -535,6 +562,8 @@ class GenericTrainer:
                 dt = time.time() - t0
                 logger.info(f"Preemption checkpoint saved in {dt:.2f}s")
                 self._was_preempted = True
+                # Ask Slurm to requeue this job before exiting
+                self._maybe_requeue_job()
                 return
 
             # Training epoch
@@ -726,6 +755,8 @@ class GenericTrainer:
                 # All ranks wait for checkpoint save
                 ddp_barrier(self.fabric)
                 self._was_preempted = True
+                # Ask Slurm to requeue this job before exiting
+                self._maybe_requeue_job()
                 assert self.metrics_manager is not None
                 return self.metrics_manager.get_train_metrics(
                     include_global=self.config.logging.log_global_metrics,

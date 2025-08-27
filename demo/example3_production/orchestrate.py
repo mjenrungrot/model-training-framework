@@ -30,9 +30,15 @@ def _write_min_template(path: Path) -> None:
 #SBATCH --cpus-per-task={{CPUS_PER_TASK}}
 #SBATCH --mem={{MEM}}
 #SBATCH --time={{TIME}}
+# Send SIGUSR1 N seconds before termination (for graceful checkpointing)
+# Adjust N as needed (e.g., 60 for 1 minute). For demo we use 30s.
+#SBATCH --signal=USR1@30
+# Ensure Slurm appends to existing output on requeue
+#SBATCH --open-mode=append
+#SBATCH --constraint={{CONSTRAINT}}
 #SBATCH --output={{OUTPUT_FILE}}
 #SBATCH --error={{ERROR_FILE}}
-#SBATCH --requeue={{REQUEUE}}
+#SBATCH --requeue
 
 echo "Job ID: $${SLURM_JOB_ID}"
 echo "Job Name: {{JOB_NAME}}"
@@ -40,7 +46,13 @@ echo "Job Name: {{JOB_NAME}}"
 mkdir -p experiments/{{EXPERIMENT_NAME}}
 export PYTHONPATH="$${PYTHONPATH}:$$(pwd)"
 
-{{PYTHON_EXECUTABLE}} {{SCRIPT_PATH}} {{CONFIG_NAME}}
+# Allow caller to tune demo pacing and preemption via env vars
+export EX3_SLEEP_SEC="$${EX3_SLEEP_SEC:-0.5}"
+export EX3_PREEMPT_SEC="$${EX3_PREEMPT_SEC:-30}"
+export EX3_DISABLE_PREEMPT="$${EX3_DISABLE_PREEMPT:-0}"
+
+# Use the project-local environment's Python
+./venv/bin/python {{SCRIPT_PATH}} {{CONFIG_NAME}}
 """
     path.write_text(content)
 

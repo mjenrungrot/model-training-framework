@@ -25,11 +25,28 @@ def build_base_config() -> dict[str, Any]:
     return {
         "experiment_name": DEFAULT_EXPERIMENT_NAME,
         "model": {"type": "mlp", "hidden_size": 128, "num_layers": 2},
-        # Target ~2-3 minutes with periodic pre-emption locally
-        "training": {"max_epochs": 5, "gradient_accumulation_steps": 2},
+        # Keep training short for demo; adjust as needed
+        "training": {"max_epochs": 2, "gradient_accumulation_steps": 2},
         "data": {"dataset_name": "synthetic", "batch_size": 16, "num_workers": 0},
         "optimizer": {"type": "adamw", "lr": 3e-4, "weight_decay": 0.01},
         "logging": {"use_wandb": False},
+        # SLURM defaults tuned for Hyak-like ckpt partitions
+        # Note: "realitylab-ckpt" is an account on the ckpt partition; the actual
+        # partition name is typically "ckpt" or "ckpt-all". We set conservative
+        # time/memory suitable for this demo; adjust if your site requires.
+        "slurm": {
+            # On this cluster, ckpt partition requires the -ckpt account variant
+            "account": "realitylab-ckpt",
+            "partition": "ckpt",
+            "nodes": 1,
+            "ntasks_per_node": 1,
+            "gpus_per_node": 1,
+            "cpus_per_task": 8,
+            "mem": "32G",
+            "time": "02:00:00",
+            "constraint": "a40|a100",
+            "requeue": True,
+        },
         # Demo multi-dataloader behavior via custom params
         "custom_params": {
             "multi_loader": {

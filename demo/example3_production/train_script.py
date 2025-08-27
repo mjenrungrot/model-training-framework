@@ -38,6 +38,27 @@ from model_training_framework.trainer.config import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def _setup_basic_logging() -> None:
+    """Ensure INFO logs are emitted to stdout in Slurm runs.
+
+    Local runs configure logging in orchestrate.py. For Slurm, configure
+    a simple root logger here so both framework and demo logs appear.
+    """
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    # Prevent duplicate handlers on re-entry
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    formatter = logging.Formatter(
+        fmt="[%(asctime)s] %(levelname)s: %(message)s", datefmt="%H:%M:%S"
+    )
+    stream = logging.StreamHandler(sys.stdout)
+    stream.setFormatter(formatter)
+    root.addHandler(stream)
+
+
 LOGGER = logging.getLogger("demo3")
 
 
@@ -105,11 +126,17 @@ def _build_trainer_config(exp: ExperimentConfig) -> GenericTrainerConfig:
 
 # Environment-tunable pacing and preemption for the demo
 SLEEP_PER_BATCH_SEC = float(os.environ.get("EX3_SLEEP_SEC", "0.5"))
-PREEMPT_TIMEOUT_SEC = (
-    None
-    if os.environ.get("EX3_DISABLE_PREEMPT", "0") == "1"
-    else float(os.environ.get("EX3_PREEMPT_SEC", "30.0"))
-)
+# Preemption control: allow demo to preempt once, then complete on requeue
+_disable = os.environ.get("EX3_DISABLE_PREEMPT", "0") == "1"
+_timeout = float(os.environ.get("EX3_PREEMPT_SEC", "30.0"))
+_restart_count = int(os.environ.get("SLURM_RESTART_COUNT", "0") or 0)
+if _disable:
+    PREEMPT_TIMEOUT_SEC = None
+elif _restart_count >= 1:
+    # After the first requeue, finish without further simulated preemption
+    PREEMPT_TIMEOUT_SEC = None
+else:
+    PREEMPT_TIMEOUT_SEC = _timeout
 
 
 def make_train_step(start_time: float, preempt_timeout: float | None):
@@ -310,6 +337,8 @@ def _val_step(
 
 
 def run_training_from_config(identifier: str) -> None:
+    # Configure logging for Slurm execution so INFO logs show in .out
+    _setup_basic_logging()
     cfg_path = PROJECT_ROOT / "experiments" / identifier / "config.json"
     cm = ConfigurationManager(project_root=PROJECT_ROOT)
     exp_dict = cm.load_config(cfg_path, validate=False)
