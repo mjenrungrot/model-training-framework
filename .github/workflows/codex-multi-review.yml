@@ -308,7 +308,7 @@ jobs:
         if: env.CLI_AVAILABLE == 'true'
         run: |
           if ! jq -e . A.json >/dev/null 2>&1; then
-            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose." >> _A.prompt
+            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders like 'number (0.0-1.0)'; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _A.prompt
             $CODEX_CMD exec < _A.prompt > A.out || true
             echo '::group::Retry Debug A.out (first 800 chars)'
             head -c 800 A.out || true; echo; echo '::endgroup::'
