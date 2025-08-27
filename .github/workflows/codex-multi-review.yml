@@ -25,6 +25,8 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      CODEX_REASONING_EFFORT: high
 
     steps:
       - name: Detect context (PR vs comment)
@@ -104,6 +106,7 @@ jobs:
           mkdir -p ~/.codex
           echo "${{ secrets.CODEX_AUTH_B64 }}" | base64 -d > ~/.codex/auth.json # pragma: allowlist secret
           printf 'preferred_auth_method = "chatgpt"\n' >> ~/.codex/config.toml
+          printf 'reasoning_effort = "high"\n' >> ~/.codex/config.toml
 
       # -------- Parse user commands (issue_comment) ----------
       - name: Parse commands (comment)
