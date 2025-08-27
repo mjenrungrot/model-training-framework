@@ -50,7 +50,7 @@ jobs:
 
       - name: Install Codex CLI
         run: |
-          npm i -g @openai/codex
+          npm i -g @openai/codex@^1
           codex --version || (echo "Codex CLI not found after install" && exit 1)
 
       - name: Secrets check
@@ -106,10 +106,15 @@ jobs:
               const s = body.match(/\b\/codex\s+scope\s+(.+)\b/i); if (s) { run=true; scope=s[1].trim(); }
               if (/@codex/i.test(body)) { run=true; hint = body.replace(/.*@codex/i,'').trim(); }
             }
+            core.setOutput('run', run ? 'true' : 'false');
+            core.setOutput('forceMeta', forceMeta ? 'true' : 'false');
+            core.setOutput('strict', strict ?? '');
+            core.setOutput('scope', scope);
+            core.setOutput('hint', hint);
             return { run, forceMeta, strict, scope, hint };
 
       - name: Skip if comment not a command
-        if: steps.ctx.outputs.is_comment == 'true' && fromJson(steps.cmd.outputs.result).run != true
+        if: steps.ctx.outputs.is_comment == 'true' && steps.cmd.outputs.run != 'true'
         run: echo "No codex command found; exiting."
 
       # -------- Establish PR context (works for both triggers) ----------
@@ -157,14 +162,17 @@ jobs:
         id: opts
         env:
           IS_COMMENT: ${{ steps.ctx.outputs.is_comment }}
-          CMD_JSON: ${{ steps.cmd.outputs.result }}
+          STRICT_OUT: ${{ steps.cmd.outputs.strict }}
+          SCOPE_OUT: ${{ steps.cmd.outputs.scope }}
+          HINT_OUT: ${{ steps.cmd.outputs.hint }}
+          FORCE_META_OUT: ${{ steps.cmd.outputs.forceMeta }}
         run: |
           strict=off; scope=""; hint=""; force=false
-          if [ "$IS_COMMENT" = "true" ] && [ -n "$CMD_JSON" ] && [ "$CMD_JSON" != "{}" ]; then
-            s=$(echo "$CMD_JSON" | jq -r '.strict // empty'); [ -n "$s" ] && strict="$s"
-            sc=$(echo "$CMD_JSON" | jq -r '.scope // empty'); [ -n "$sc" ] && scope="$sc"
-            h=$(echo "$CMD_JSON" | jq -r '.hint // empty'); [ -n "$h" ] && hint="$h"
-            fm=$(echo "$CMD_JSON" | jq -r '.forceMeta // empty'); [ "$fm" = "true" ] && force=true
+          if [ "$IS_COMMENT" = "true" ]; then
+            [ -n "$STRICT_OUT" ] && strict="$STRICT_OUT"
+            [ -n "$SCOPE_OUT" ] && scope="$SCOPE_OUT"
+            [ -n "$HINT_OUT" ] && hint="$HINT_OUT"
+            [ "$FORCE_META_OUT" = "true" ] && force=true
           fi
           echo "OPTS_STRICT=$strict" >> $GITHUB_ENV
           echo "OPTS_SCOPE=$scope" >> $GITHUB_ENV
@@ -349,8 +357,18 @@ jobs:
         id: select_comment
         run: |
           echo '${{ steps.comments.outputs.result }}' > comments.json
-          CANDIDATE_ID=$(jq -r '[.comments[] | select(.user.login=="github-actions[bot]") | select(.body | contains("<!-- codex-review -->"))] | sort_by(.created_at) | last?.id // empty' comments.json)
-          DEL_IDS=$(jq -r --arg cid "$CANDIDATE_ID" '[.comments[] | select(.user.login=="github-actions[bot]") | select(.body | contains("<!-- codex-review -->")) | select((.id|tostring) != $cid)] | map(.id) | @json' comments.json)
+          CANDIDATE_ID=$(jq -r '
+            (.comments
+             | map(select(.user.login=="github-actions[bot]") | select(.body | contains("<!-- codex-review -->")))
+             | sort_by(.created_at)
+             | (if length>0 then .[-1].id else "" end)
+            )' comments.json)
+          DEL_IDS=$(jq -r --arg cid "$CANDIDATE_ID" '
+            (.comments
+             | map(select(.user.login=="github-actions[bot]") | select(.body | contains("<!-- codex-review -->")))
+             | map(select((.id|tostring) != $cid))
+             | map(.id)
+            ) | @json' comments.json)
           echo "cid=${CANDIDATE_ID}" >> $GITHUB_OUTPUT
           echo "del=${DEL_IDS}" >> $GITHUB_OUTPUT
 
