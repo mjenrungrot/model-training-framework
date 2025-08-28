@@ -447,17 +447,9 @@ jobs:
 
           json_only_msg=$'\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {"APPROVE","REQUEST_CHANGES","COMMENT_ONLY"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY.'
 
-          # Cross-platform timeout wrappers (noop on hosts without GNU timeout)
-          if command -v timeout >/dev/null 2>&1; then
-            T420=(timeout -k 30s 420s)
-            T300=(timeout -k 30s 300s)
-          elif command -v gtimeout >/dev/null 2>&1; then
-            T420=(gtimeout -k 30s 420s)
-            T300=(gtimeout -k 30s 300s)
-          else
-            T420=()
-            T300=()
-          fi
+          # Cross-platform timeout wrappers that are safe under 'set -u'
+          maybe_timeout_420() { if command -v timeout >/dev/null 2>&1; then timeout -k 30s 420s "$@"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout -k 30s 420s "$@"; else "$@"; fi; }
+          maybe_timeout_300() { if command -v timeout >/dev/null 2>&1; then timeout -k 30s 300s "$@"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout -k 30s 300s "$@"; else "$@"; fi; }
 
           run_reviewer() {
             local id="$1"; shift
@@ -469,7 +461,7 @@ jobs:
 
             (
               set +e
-              "${T420[@]}" $CODEX_CMD exec < "$prompt_file" > "$out_file" 2>&1 || true
+              maybe_timeout_420 $CODEX_CMD exec < "$prompt_file" > "$out_file" 2>&1 || true
               echo "::group::Debug ${id}.out (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$out_file" || true; echo; echo '::endgroup::'
               python extract_json.py "$out_file" "$clean_file" || true
               echo "::group::Debug ${id}.clean (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$clean_file" || true; echo; echo '::endgroup::'
@@ -478,7 +470,7 @@ jobs:
               else
                 # Retry with JSON-only instruction
                 echo "$json_only_msg" >> "$prompt_file"
-                "${T300[@]}" $CODEX_CMD exec < "$prompt_file" > "$out_file" 2>&1 || true
+                maybe_timeout_300 $CODEX_CMD exec < "$prompt_file" > "$out_file" 2>&1 || true
                 echo "::group::Retry Debug ${id}.out (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$out_file" || true; echo; echo '::endgroup::'
                 python extract_json.py "$out_file" "$clean_file" || true
                 echo "::group::Retry Debug ${id}.clean (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$clean_file" || true; echo; echo '::endgroup::'
@@ -512,9 +504,15 @@ jobs:
           python - <<'PY'
           import os, json
           tmpl = open('.codex/meta_reviewer.md','r',encoding='utf-8').read()
-          r1 = open('A.json','r',encoding='utf-8').read().strip()
-          r2 = open('B.json','r',encoding='utf-8').read().strip()
-          r3 = open('C.json','r',encoding='utf-8').read().strip()
+          def read_or_default(path):
+              try:
+                  s = open(path,'r',encoding='utf-8').read().strip()
+                  return s if s else '{}'
+              except Exception:
+                  return '{}'
+          r1 = read_or_default('A.json')
+          r2 = read_or_default('B.json')
+          r3 = read_or_default('C.json')
           tmpl = (tmpl
             .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
             .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
@@ -523,8 +521,8 @@ jobs:
             .replace('<<R3_JSON>>', r3))
           open('_META.prompt','w',encoding='utf-8').write(tmpl)
           PY
-          if command -v timeout >/dev/null 2>&1; then T=(timeout -k 30s 420s); elif command -v gtimeout >/dev/null 2>&1; then T=(gtimeout -k 30s 420s); else T=(); fi
-          "${T[@]}" $CODEX_CMD exec < _META.prompt > META.out || true
+          maybe_timeout_420() { if command -v timeout >/dev/null 2>&1; then timeout -k 30s 420s "$@"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout -k 30s 420s "$@"; else "$@"; fi; }
+          maybe_timeout_420 $CODEX_CMD exec < _META.prompt > META.out || true
           echo '::group::Debug META.out (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} META.out || true; echo; echo '::endgroup::'
           python extract_json.py META.out META.clean || true
