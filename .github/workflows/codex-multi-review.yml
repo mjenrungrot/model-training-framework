@@ -462,23 +462,26 @@ jobs:
             local reviewer_key="$1"; shift # correctness | documentation | performance | alignment
             local prompt_file="_${id}.prompt"
             local out_file="${id}.out"
+            local last_file="${id}.last"
             local clean_file="${id}.clean"
             local json_file="${id}.json"
 
             (
               set +e
-              maybe_timeout_420 $CODEX_CMD exec < "$prompt_file" > "$out_file" 2>&1 || true
+              maybe_timeout_420 $CODEX_CMD exec --skip-git-repo-check --output-last-message "$last_file" < "$prompt_file" > "$out_file" 2>&1 || true
               echo "::group::Debug ${id}.out (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$out_file" || true; echo; echo '::endgroup::'
-              python extract_json.py "$out_file" "$clean_file" || true
+              echo "::group::Debug ${id}.last (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$last_file" || true; echo; echo '::endgroup::'
+              SRC="$last_file"; [ -s "$SRC" ] || SRC="$out_file"; python extract_json.py "$SRC" "$clean_file" || true
               echo "::group::Debug ${id}.clean (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$clean_file" || true; echo; echo '::endgroup::'
               if [ -s "$clean_file" ] && python json_minify.py "$clean_file" "$json_file" >/dev/null 2>&1; then
                 true
               else
                 # Retry with JSON-only instruction
                 echo "$json_only_msg" >> "$prompt_file"
-                maybe_timeout_300 $CODEX_CMD exec < "$prompt_file" > "$out_file" 2>&1 || true
+                maybe_timeout_300 $CODEX_CMD exec --skip-git-repo-check --output-last-message "$last_file" < "$prompt_file" > "$out_file" 2>&1 || true
                 echo "::group::Retry Debug ${id}.out (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$out_file" || true; echo; echo '::endgroup::'
-                python extract_json.py "$out_file" "$clean_file" || true
+                echo "::group::Retry Debug ${id}.last (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$last_file" || true; echo; echo '::endgroup::'
+                SRC="$last_file"; [ -s "$SRC" ] || SRC="$out_file"; python extract_json.py "$SRC" "$clean_file" || true
                 echo "::group::Retry Debug ${id}.clean (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$clean_file" || true; echo; echo '::endgroup::'
                 # For A, keep the extra parse stats for diagnostics
                 if [ "$id" = "A" ]; then
@@ -528,10 +531,12 @@ jobs:
           open('_META.prompt','w',encoding='utf-8').write(tmpl)
           PY
           maybe_timeout_420() { if command -v timeout >/dev/null 2>&1; then timeout -k 30s 420s "$@"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout -k 30s 420s "$@"; else "$@"; fi; }
-          maybe_timeout_420 $CODEX_CMD exec < _META.prompt > META.out || true
+          maybe_timeout_420 $CODEX_CMD exec --skip-git-repo-check --output-last-message META.last < _META.prompt > META.out || true
           echo '::group::Debug META.out (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} META.out || true; echo; echo '::endgroup::'
-          python extract_json.py META.out META.clean || true
+          echo '::group::Debug META.last (first chars)'
+          head -c ${DEBUG_SNIPPET_CHARS} META.last || true; echo; echo '::endgroup::'
+          SRC=META.last; [ -s "$SRC" ] || SRC=META.out; python extract_json.py "$SRC" META.clean || true
           echo '::group::Debug META.clean (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} META.clean || true; echo; echo '::endgroup::'
           if [ -s META.clean ] && python json_minify.py META.clean META.json >/dev/null 2>&1; then true; else echo '{}' > META.json; fi
