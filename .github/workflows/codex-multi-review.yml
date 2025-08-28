@@ -4,11 +4,16 @@ on:
   # Disabled automatic PR/comment triggers; keep manual trigger only.
   workflow_dispatch:
     inputs:
+      runner_labels:
+        description: "JSON array of runner labels (e.g., [\"self-hosted\", \"linux\"])"
+        type: string
+        required: false
+        default: "[\"self-hosted\"]"
       use_self_hosted:
-        description: "Run on a self-hosted runner"
+        description: "Run on self-hosted if no runner_labels provided"
         type: boolean
         required: false
-        default: false
+        default: true
 
 permissions:
   contents: write
@@ -22,7 +27,7 @@ concurrency:
 
 jobs:
   run:
-    runs-on: ${{ (inputs.use_self_hosted == true || inputs.use_self_hosted == 'true') && 'self-hosted' || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner_labels && fromJSON(inputs.runner_labels) || ((inputs.use_self_hosted == true || inputs.use_self_hosted == 'true') && 'self-hosted' || 'ubuntu-latest') }}
     timeout-minutes: 30
     env:
       CODEX_REASONING_EFFORT: high
@@ -56,7 +61,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-npm-cache-
 
-      # jq is preinstalled on ubuntu-latest; skip explicit install to save time
+      - name: Runner info
+        run: |
+          echo "Runner OS: ${{ runner.os }}"
+          echo "Runner Arch: $(uname -m 2>/dev/null || echo unknown)"
+          echo "Shell: $SHELL"
 
       - name: Install Codex CLI (prefer npx)
         run: |
@@ -442,6 +451,9 @@ jobs:
           if command -v timeout >/dev/null 2>&1; then
             T420=(timeout -k 30s 420s)
             T300=(timeout -k 30s 300s)
+          elif command -v gtimeout >/dev/null 2>&1; then
+            T420=(gtimeout -k 30s 420s)
+            T300=(gtimeout -k 30s 300s)
           else
             T420=()
             T300=()
@@ -511,7 +523,7 @@ jobs:
             .replace('<<R3_JSON>>', r3))
           open('_META.prompt','w',encoding='utf-8').write(tmpl)
           PY
-          if command -v timeout >/dev/null 2>&1; then T=(timeout -k 30s 420s); else T=(); fi
+          if command -v timeout >/dev/null 2>&1; then T=(timeout -k 30s 420s); elif command -v gtimeout >/dev/null 2>&1; then T=(gtimeout -k 30s 420s); else T=(); fi
           "${T[@]}" $CODEX_CMD exec < _META.prompt > META.out || true
           echo '::group::Debug META.out (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} META.out || true; echo; echo '::endgroup::'
