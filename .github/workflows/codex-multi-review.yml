@@ -5,15 +5,15 @@ on:
   workflow_dispatch:
     inputs:
       runner_labels:
-        description: "JSON array of runner labels (e.g., [\"self-hosted\", \"linux\"])"
+        description: "JSON array for runs-on. Examples: [\"ubuntu-latest\"] (GitHub-hosted), [\"self-hosted\",\"linux\"] (self-hosted Linux), [\"self-hosted\",\"macOS\"] (self-hosted macOS)"
         type: string
         required: false
-        default: "[\"self-hosted\"]"
+        default: "[\"ubuntu-latest\"]"
       use_self_hosted:
-        description: "Run on self-hosted if no runner_labels provided"
+        description: "If true and runner_labels empty, use 'self-hosted'"
         type: boolean
         required: false
-        default: true
+        default: false
 
 permissions:
   contents: write
