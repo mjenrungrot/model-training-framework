@@ -1,19 +1,22 @@
 name: codex-multi-review
 
 on:
-  # Disabled automatic PR/comment triggers; keep manual trigger only.
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
   workflow_dispatch:
     inputs:
       runner_labels:
         description: "JSON array for runs-on. Examples: [\"ubuntu-latest\"] (GitHub-hosted), [\"self-hosted\",\"linux\"] (self-hosted Linux), [\"self-hosted\",\"macOS\"] (self-hosted macOS)"
         type: string
         required: false
-        default: "[\"ubuntu-latest\"]"
+        default: "[\"self-hosted\"]"
       use_self_hosted:
         description: "If true and runner_labels empty, use 'self-hosted'"
         type: boolean
         required: false
-        default: false
+        default: true
 
 permissions:
   contents: write
@@ -27,12 +30,12 @@ concurrency:
 
 jobs:
   run:
-    runs-on: ${{ inputs.runner_labels && fromJSON(inputs.runner_labels) || ((inputs.use_self_hosted == true || inputs.use_self_hosted == 'true') && 'self-hosted' || 'ubuntu-latest') }}
+    runs-on: ${{ inputs.runner_labels && fromJSON(inputs.runner_labels) || 'self-hosted' }}
     timeout-minutes: 30
     env:
       CODEX_REASONING_EFFORT: high
       DEBUG_SNIPPET_CHARS: "4000"
-      IS_SELF_HOSTED: ${{ (inputs.runner_labels && contains(inputs.runner_labels, 'self-hosted')) || (inputs.use_self_hosted == true || inputs.use_self_hosted == 'true') }}
+      IS_SELF_HOSTED: ${{ github.event_name != 'workflow_dispatch' || (inputs.runner_labels && contains(fromJSON(inputs.runner_labels), 'self-hosted')) }}
 
     steps:
       - name: Detect context (PR vs comment)
