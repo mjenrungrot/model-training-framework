@@ -66,15 +66,19 @@ if TYPE_CHECKING:
     from torch.optim.lr_scheduler import _LRScheduler
     from torch.utils.data import DataLoader
 
-    from .states import ResumeState
+    # No direct import of ResumeState needed here; runtime-safe alias is used below
 
 logger = logging.getLogger(__name__)
 
 # Runtime reference to ResumeState for isinstance/attribute access without triggering import cycles
+# Use a module import to avoid assigning to a type alias
+_ResumeStateRuntime: Any | None = None
 try:  # Guard to avoid hard import issues in unusual import orders
-    from .states import ResumeState as _ResumeStateRuntime
+    from . import states as _states_mod
+
+    _ResumeStateRuntime = _states_mod.ResumeState
 except Exception:  # pragma: no cover - defensive fallback
-    _ResumeStateRuntime = None  # type: ignore[assignment]
+    _ResumeStateRuntime = None
 
 
 class TrainingStep(Protocol):
@@ -1306,7 +1310,7 @@ class GenericTrainer:
                     isinstance(self.resume_state, dict)
                     and _ResumeStateRuntime is not None
                 ):
-                    self.resume_state = _ResumeStateRuntime.from_dict(self.resume_state)  # type: ignore[assignment]
+                    self.resume_state = _ResumeStateRuntime.from_dict(self.resume_state)
             except Exception:
                 logger.debug(
                     "resume_state conversion prior to checkpoint save failed",
@@ -1315,22 +1319,20 @@ class GenericTrainer:
 
             # Update resume state with dataloader manager state
             if self.dataloader_manager:
-                rs_typed = cast("ResumeState", self.resume_state)
                 self.resume_state = update_resume_state(
-                    rs_typed,
-                    rs_typed.phase,
+                    self.resume_state,
+                    cast("Any", self.resume_state).phase,
                     dataloader_manager_state=self.dataloader_manager.get_state(),
                     save_rng=self.config.checkpoint.save_rng,
                     choice_rng=getattr(self.dataloader_manager, "choice_rng", None),
                 )
 
             # Save checkpoint with all optimizers and schedulers
-            rs_typed = cast("ResumeState", self.resume_state)
             checkpoint_path = self.checkpoint_manager.save_checkpoint(
                 model=self.model,
                 optimizers=self.optimizers,  # Save all optimizers
                 schedulers=self.schedulers,  # Save all schedulers
-                resume_state=rs_typed,
+                resume_state=self.resume_state,
                 epoch=self.current_epoch,
                 global_step=self.global_step,
                 metrics=metrics,
@@ -1427,9 +1429,8 @@ class GenericTrainer:
 
                     # Restore RNG state if available
                     try:
-                        rs_typed = cast("ResumeState", self.resume_state)
-                        if rs_typed.rng is not None:
-                            restore_rng_state(rs_typed.rng)
+                        if cast("Any", self.resume_state).rng is not None:
+                            restore_rng_state(cast("Any", self.resume_state).rng)
                     except Exception:
                         logger.debug("restore_rng_state failed", exc_info=True)
 
@@ -1453,8 +1454,7 @@ class GenericTrainer:
                     # State inside resume_state (from CheckpointManager)
                     assert self.dataloader_manager is not None
                     try:
-                        rs_typed = cast("ResumeState", self.resume_state)
-                        state = rs_typed.dataloader_manager_state
+                        state = cast("Any", self.resume_state).dataloader_manager_state
                         if state is not None:
                             self.dataloader_manager.load_state(
                                 state, skip_broadcast=True
@@ -1483,9 +1483,9 @@ class GenericTrainer:
                     assert self.dataloader_manager is not None
                     assert hasattr(self.dataloader_manager, "choice_rng")
                     try:
-                        rs_typed = cast("ResumeState", self.resume_state)
                         restore_choice_rng_state(
-                            rs_typed.choice_rng, self.dataloader_manager.choice_rng
+                            cast("Any", self.resume_state).choice_rng,
+                            self.dataloader_manager.choice_rng,
                         )
                     except Exception:
                         logger.debug(

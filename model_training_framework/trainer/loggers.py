@@ -24,8 +24,9 @@ wandb_mod: Any | None = None
 TB_SummaryWriter: Any = None
 
 try:
-    import wandb as wandb_mod
+    import wandb as _wandb
 
+    wandb_mod = _wandb
     WANDB_AVAILABLE = True
 except ImportError:
     WANDB_AVAILABLE = False

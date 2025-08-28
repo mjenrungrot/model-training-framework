@@ -31,10 +31,14 @@ from .utils import timeout
 logger = logging.getLogger(__name__)
 
 # Runtime reference to ResumeState for isinstance/attribute access in functions
+# Use a module import to avoid assigning to a type alias
+_ResumeStateRuntime: Any | None = None
 try:  # Guard to avoid hard import errors in unusual import orders
-    from .states import ResumeState as _ResumeStateRuntime
+    from . import states as _states_mod
+
+    _ResumeStateRuntime = _states_mod.ResumeState
 except Exception:  # pragma: no cover - defensive fallback
-    _ResumeStateRuntime = None  # type: ignore[assignment]
+    _ResumeStateRuntime = None
 
 
 @dataclass
