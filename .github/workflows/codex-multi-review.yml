@@ -31,7 +31,7 @@ concurrency:
 jobs:
   run:
     runs-on: ${{ inputs.runner_labels && fromJSON(inputs.runner_labels) || 'self-hosted' }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       CODEX_REASONING_EFFORT: high
       DEBUG_SNIPPET_CHARS: "4000"
@@ -456,9 +456,9 @@ jobs:
 
           json_only_msg=$'\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {"APPROVE","REQUEST_CHANGES","COMMENT_ONLY"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY.'
 
-          # Cross-platform timeout wrappers that are safe under 'set -u'
-          maybe_timeout_420() { if command -v timeout >/dev/null 2>&1; then timeout -k 30s 420s "$@"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout -k 30s 420s "$@"; else "$@"; fi; }
-          maybe_timeout_300() { if command -v timeout >/dev/null 2>&1; then timeout -k 30s 300s "$@"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout -k 30s 300s "$@"; else "$@"; fi; }
+          # Cross-platform timeout wrappers (900s) safe under 'set -u'
+          maybe_timeout_900() { if command -v timeout >/dev/null 2>&1; then timeout -k 30s 900s "$@"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout -k 30s 900s "$@"; else "$@"; fi; }
+          maybe_timeout_900_retry() { if command -v timeout >/dev/null 2>&1; then timeout -k 30s 900s "$@"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout -k 30s 900s "$@"; else "$@"; fi; }
 
           run_reviewer() {
             local id="$1"; shift
@@ -471,7 +471,7 @@ jobs:
 
             (
               set +e
-              maybe_timeout_420 $CODEX_CMD exec --skip-git-repo-check --output-last-message "$last_file" < "$prompt_file" > "$out_file" 2>&1 || true
+              maybe_timeout_900 $CODEX_CMD exec --skip-git-repo-check --output-last-message "$last_file" < "$prompt_file" > "$out_file" 2>&1 || true
               echo "::group::Debug ${id}.out (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$out_file" || true; echo; echo '::endgroup::'
               echo "::group::Debug ${id}.last (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$last_file" || true; echo; echo '::endgroup::'
               SRC="$last_file"; [ -s "$SRC" ] || SRC="$out_file"; python extract_json.py "$SRC" "$clean_file" || true
@@ -481,7 +481,7 @@ jobs:
               else
                 # Retry with JSON-only instruction
                 echo "$json_only_msg" >> "$prompt_file"
-                maybe_timeout_300 $CODEX_CMD exec --skip-git-repo-check --output-last-message "$last_file" < "$prompt_file" > "$out_file" 2>&1 || true
+                maybe_timeout_900_retry $CODEX_CMD exec --skip-git-repo-check --output-last-message "$last_file" < "$prompt_file" > "$out_file" 2>&1 || true
                 echo "::group::Retry Debug ${id}.out (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$out_file" || true; echo; echo '::endgroup::'
                 echo "::group::Retry Debug ${id}.last (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$last_file" || true; echo; echo '::endgroup::'
                 SRC="$last_file"; [ -s "$SRC" ] || SRC="$out_file"; python extract_json.py "$SRC" "$clean_file" || true
@@ -533,8 +533,8 @@ jobs:
             .replace('<<R3_JSON>>', r3))
           open('_META.prompt','w',encoding='utf-8').write(tmpl)
           PY
-          maybe_timeout_420() { if command -v timeout >/dev/null 2>&1; then timeout -k 30s 420s "$@"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout -k 30s 420s "$@"; else "$@"; fi; }
-          maybe_timeout_420 $CODEX_CMD exec --skip-git-repo-check --output-last-message META.last < _META.prompt > META.out || true
+          maybe_timeout_900() { if command -v timeout >/dev/null 2>&1; then timeout -k 30s 900s "$@"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout -k 30s 900s "$@"; else "$@"; fi; }
+          maybe_timeout_900 $CODEX_CMD exec --skip-git-repo-check --output-last-message META.last < _META.prompt > META.out || true
           echo '::group::Debug META.out (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} META.out || true; echo; echo '::endgroup::'
           echo '::group::Debug META.last (first chars)'
