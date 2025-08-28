@@ -207,15 +207,33 @@ jobs:
     - name: Run Bandit security linter
       run: |
         echo "::group::Security Scan (Bandit)"
+        set +e
         bandit -r model_training_framework/ -f json -o bandit-report.json
-        bandit -r model_training_framework/ -f txt
+        BANDIT_STATUS=$?
+        bandit -r model_training_framework/ -f txt > bandit-report.txt || true
+        echo "Bandit exit status: ${BANDIT_STATUS}"
+        set -e
+        if [ ${BANDIT_STATUS} -ne 0 ]; then
+          echo "::error::Bandit found issues (exit ${BANDIT_STATUS})"
+          echo "::endgroup::"
+          exit ${BANDIT_STATUS}
+        fi
         echo "::endgroup::"
 
     - name: Run Safety check
       run: |
         echo "::group::Dependency Security Check (Safety)"
+        set +e
         safety check --json --output safety-report.json
-        safety check
+        SAFETY_STATUS=$?
+        safety check || true
+        echo "Safety exit status: ${SAFETY_STATUS}"
+        set -e
+        if [ ${SAFETY_STATUS} -ne 0 ]; then
+          echo "::error::Safety found vulnerable dependencies (exit ${SAFETY_STATUS})"
+          echo "::endgroup::"
+          exit ${SAFETY_STATUS}
+        fi
         echo "::endgroup::"
 
     - name: Upload security reports
@@ -225,6 +243,7 @@ jobs:
         name: security-reports
         path: |
           bandit-report.json
+          bandit-report.txt
           safety-report.json
 
   # ===== Package Build =====
