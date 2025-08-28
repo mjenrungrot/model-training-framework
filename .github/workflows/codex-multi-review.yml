@@ -1,11 +1,14 @@
 name: codex-multi-review
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  issue_comment:
-    types: [created]
+  # Disabled automatic PR/comment triggers; keep manual trigger only.
   workflow_dispatch:
+    inputs:
+      use_self_hosted:
+        description: "Run on a self-hosted runner"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -19,7 +22,7 @@ concurrency:
 
 jobs:
   run:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (inputs.use_self_hosted == true || inputs.use_self_hosted == 'true') && 'self-hosted' || 'ubuntu-latest' }}
     timeout-minutes: 30
     env:
       CODEX_REASONING_EFFORT: high
@@ -46,6 +49,7 @@ jobs:
 
       - name: Cache npm
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: ~/.npm
           key: ${{ runner.os }}-npm-cache-codex-cli-v1
@@ -83,20 +87,32 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const isPR = !!context.payload.pull_request || !!context.payload.issue?.pull_request;
-            if (!isPR) return;
-            const issue_number = context.payload.pull_request?.number ?? context.payload.issue.number;
-            await github.rest.issues.createComment({
-              owner: context.repo.owner, repo: context.repo.repo,
-              issue_number,
-              body: "Codex review skipped: missing `CODEX_AUTH_B64` (likely a fork). A maintainer can run via **Actions → codex-multi-review → Run workflow**."
-            });
+            try {
+              const isPR = !!context.payload.pull_request || !!context.payload.issue?.pull_request;
+              if (!isPR) return;
+              const issue_number = context.payload.pull_request?.number ?? context.payload.issue.number;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number,
+                body: "Codex review skipped: missing `CODEX_AUTH_B64` (likely a fork). A maintainer can run via **Actions → codex-multi-review → Run workflow**."
+              });
+            } catch (e) {
+              core.warning(`Skip notice failed: ${e.status || ''} ${e.message}`);
+            }
 
       - name: Prepare Codex
         if: steps.secrets_check.outputs.has_secrets == 'true' # pragma: allowlist secret
+        env:
+          CODEX_AUTH_B64: ${{ secrets.CODEX_AUTH_B64 }}
         run: |
           mkdir -p ~/.codex
-          echo "${{ secrets.CODEX_AUTH_B64 }}" | base64 -d > ~/.codex/auth.json # pragma: allowlist secret
+          python - <<'PY'
+          import os, base64
+          data = base64.b64decode(os.environ['CODEX_AUTH_B64'])
+          p = os.path.expanduser('~/.codex/auth.json')
+          with open(p,'wb') as f:
+              f.write(data)
+          PY
           printf 'preferred_auth_method = "chatgpt"\n' >> ~/.codex/config.toml
           printf 'reasoning_effort = "high"\n' >> ~/.codex/config.toml
 
@@ -223,9 +239,14 @@ jobs:
             const fs = require('fs');
             const prNumber = Number(process.env.PR_NUMBER);
             if (!prNumber) { core.setOutput('written','false'); return; }
-            const { data: pr } = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber });
-            const title = pr.title || '';
-            const body = pr.body || '';
+            let pr, title='', body='';
+            try {
+              ({ data: pr } = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber }));
+              title = pr.title || '';
+              body = pr.body || '';
+            } catch (e) {
+              core.warning(`PR details fetch failed: ${e.status || ''} ${e.message}`);
+            }
             const issues = new Map();
             const add = (m)=>{ const n = Number(m[1]); if (Number.isInteger(n)) issues.set(n, true); };
             const re1 = /(close[sd]?|resolve[sd]?|fix(?:e[sd])?)\s+#(\d+)/ig;
@@ -302,6 +323,21 @@ jobs:
           with open(dst, 'w', encoding='utf-8') as f:
               f.write(best)
           PY
+          cat > json_minify.py << 'PY'
+          import sys, json
+          if len(sys.argv) != 3:
+              print("usage: json_minify.py <in> <out>", file=sys.stderr)
+              sys.exit(2)
+          src, dst = sys.argv[1], sys.argv[2]
+          try:
+              with open(src, 'r', encoding='utf-8') as f:
+                  data = json.load(f)
+          except Exception as e:
+              print(f"invalid json: {e}", file=sys.stderr)
+              sys.exit(1)
+          with open(dst, 'w', encoding='utf-8') as f:
+              json.dump(data, f, separators=(',',':'))
+          PY
           cat > parse_stats.py << 'PY'
           import sys, json
           src = sys.argv[1] if len(sys.argv) > 1 else 'A.out'
@@ -333,8 +369,8 @@ jobs:
               print("clean_json_valid=false", str(e))
           PY
 
-      # -------- Run 3 reviewers (sequential) ----------
-      - name: Reviewer A — Correctness
+      # -------- Run reviewers in parallel ----------
+      - name: Reviewers A–D (parallel)
         if: env.CLI_AVAILABLE == 'true'
         env:
           BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
@@ -342,183 +378,118 @@ jobs:
           STRICT: ${{ env.OPTS_STRICT }}
           HINT:   ${{ env.OPTS_HINT }}
         run: |
+          set -euo pipefail
+          # Build prompts for all reviewers first
           python - <<'PY'
           import os
-          tmpl = open('.codex/reviewer_correctness.md','r',encoding='utf-8').read()
           diff = open('pr.diff.limited','r',encoding='utf-8').read()
           files = open('changed_files.txt','r',encoding='utf-8').read()
-          tmpl = (tmpl
-            .replace('<<PR_DIFF>>', diff)
-            .replace('<<CHANGED_FILES>>', files)
-            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
-            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
-            .replace('<<STRICT>>', os.environ.get('STRICT','off') or 'off')
-            .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
-          open('_A.prompt','w',encoding='utf-8').write(tmpl)
-          PY
-          timeout -k 30s 420s $CODEX_CMD exec < _A.prompt > A.out || true
-          echo '::group::Debug A.out (first chars)'
-          head -c ${DEBUG_SNIPPET_CHARS} A.out || true; echo; echo '::endgroup::'
-          python extract_json.py A.out A.clean || true
-          echo '::group::Debug A.clean (first chars)'
-          head -c ${DEBUG_SNIPPET_CHARS} A.clean || true; echo; echo '::endgroup::'
-          if [ -s A.clean ] && jq -e . A.clean >/dev/null 2>&1; then jq -c . A.clean > A.json; else printf '{"reviewer":"correctness","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > A.json; fi
+          base = os.environ.get('BASE_SHA','')
+          head = os.environ.get('HEAD_SHA','')
+          strict = os.environ.get('STRICT','off') or 'off'
+          hint = os.environ.get('HINT','')
 
-      - name: Validate A.json / Retry JSON-only
-        if: env.CLI_AVAILABLE == 'true'
-        run: |
-          if ! jq -e . A.json >/dev/null 2>&1; then
-            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders like 'number (0.0-1.0)'; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _A.prompt
-            timeout -k 30s 300s $CODEX_CMD exec < _A.prompt > A.out || true
-            echo '::group::Retry Debug A.out (first chars)'
-            head -c ${DEBUG_SNIPPET_CHARS} A.out || true; echo; echo '::endgroup::'
-            python extract_json.py A.out A.clean || true
-            echo '::group::Retry Debug A.clean (first chars)'
-            head -c ${DEBUG_SNIPPET_CHARS} A.clean || true; echo; echo '::endgroup::'
-            # Additional parse stats for A
-            echo '::group::A.parse stats'
-            python parse_stats.py A.out A.clean || true
-            echo '::endgroup::'
-            if [ -s A.clean ] && jq -e . A.clean >/dev/null 2>&1; then jq -c . A.clean > A.json; else printf '{"reviewer":"correctness","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > A.json; fi
-          fi
+          # A — Correctness
+          a = open('.codex/reviewer_correctness.md','r',encoding='utf-8').read()
+          a = (a.replace('<<PR_DIFF>>', diff)
+                 .replace('<<CHANGED_FILES>>', files)
+                 .replace('<<BASE_SHA>>', base)
+                 .replace('<<HEAD_SHA>>', head)
+                 .replace('<<STRICT>>', strict)
+                 .replace('<<FOCUS_HINT>>', hint))
+          open('_A.prompt','w',encoding='utf-8').write(a)
 
-      - name: Reviewer B — Documentation
-        if: env.CLI_AVAILABLE == 'true'
-        env:
-          BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
-          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
-          STRICT: ${{ env.OPTS_STRICT }}
-          HINT:   ${{ env.OPTS_HINT }}
-        run: |
-          python - <<'PY'
-          import os
-          tmpl = open('.codex/reviewer_documentation.md','r',encoding='utf-8').read()
-          diff = open('pr.diff.limited','r',encoding='utf-8').read()
-          files = open('changed_files.txt','r',encoding='utf-8').read()
-          tmpl = (tmpl
-            .replace('<<PR_DIFF>>', diff)
-            .replace('<<CHANGED_FILES>>', files)
-            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
-            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
-            .replace('<<STRICT>>', os.environ.get('STRICT','off') or 'off')
-            .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
-          open('_B.prompt','w',encoding='utf-8').write(tmpl)
-          PY
-          timeout -k 30s 420s $CODEX_CMD exec < _B.prompt > B.out || true
-          echo '::group::Debug B.out (first chars)'
-          head -c ${DEBUG_SNIPPET_CHARS} B.out || true; echo; echo '::endgroup::'
-          python extract_json.py B.out B.clean || true
-          echo '::group::Debug B.clean (first chars)'
-          head -c ${DEBUG_SNIPPET_CHARS} B.clean || true; echo; echo '::endgroup::'
-          if [ -s B.clean ] && jq -e . B.clean >/dev/null 2>&1; then jq -c . B.clean > B.json; else printf '{"reviewer":"documentation","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > B.json; fi
+          # B — Documentation
+          b = open('.codex/reviewer_documentation.md','r',encoding='utf-8').read()
+          b = (b.replace('<<PR_DIFF>>', diff)
+                 .replace('<<CHANGED_FILES>>', files)
+                 .replace('<<BASE_SHA>>', base)
+                 .replace('<<HEAD_SHA>>', head)
+                 .replace('<<STRICT>>', strict)
+                 .replace('<<FOCUS_HINT>>', hint))
+          open('_B.prompt','w',encoding='utf-8').write(b)
 
-      - name: Validate B.json / Retry JSON-only
-        if: env.CLI_AVAILABLE == 'true'
-        run: |
-          if ! jq -e . B.json >/dev/null 2>&1; then
-            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _B.prompt
-            timeout -k 30s 300s $CODEX_CMD exec < _B.prompt > B.out || true
-            echo '::group::Retry Debug B.out (first chars)'
-            head -c ${DEBUG_SNIPPET_CHARS} B.out || true; echo; echo '::endgroup::'
-            python extract_json.py B.out B.clean || true
-            echo '::group::Retry Debug B.clean (first chars)'
-            head -c ${DEBUG_SNIPPET_CHARS} B.clean || true; echo; echo '::endgroup::'
-            if [ -s B.clean ] && jq -e . B.clean >/dev/null 2>&1; then jq -c . B.clean > B.json; else printf '{"reviewer":"documentation","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > B.json; fi
-          fi
+          # C — Performance
+          c = open('.codex/reviewer_performance.md','r',encoding='utf-8').read()
+          c = (c.replace('<<PR_DIFF>>', diff)
+                 .replace('<<CHANGED_FILES>>', files)
+                 .replace('<<BASE_SHA>>', base)
+                 .replace('<<HEAD_SHA>>', head)
+                 .replace('<<STRICT>>', strict)
+                 .replace('<<FOCUS_HINT>>', hint))
+          open('_C.prompt','w',encoding='utf-8').write(c)
 
-      - name: Reviewer C — Performance
-        if: env.CLI_AVAILABLE == 'true'
-        env:
-          BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
-          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
-          STRICT: ${{ env.OPTS_STRICT }}
-          HINT:   ${{ env.OPTS_HINT }}
-        run: |
-          python - <<'PY'
-          import os
-          tmpl = open('.codex/reviewer_performance.md','r',encoding='utf-8').read()
-          diff = open('pr.diff.limited','r',encoding='utf-8').read()
-          files = open('changed_files.txt','r',encoding='utf-8').read()
-          tmpl = (tmpl
-            .replace('<<PR_DIFF>>', diff)
-            .replace('<<CHANGED_FILES>>', files)
-            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
-            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
-            .replace('<<STRICT>>', os.environ.get('STRICT','off') or 'off')
-            .replace('<<FOCUS_HINT>>', os.environ.get('HINT','')))
-          open('_C.prompt','w',encoding='utf-8').write(tmpl)
-          PY
-          timeout -k 30s 420s $CODEX_CMD exec < _C.prompt > C.out || true
-          echo '::group::Debug C.out (first chars)'
-          head -c ${DEBUG_SNIPPET_CHARS} C.out || true; echo; echo '::endgroup::'
-          python extract_json.py C.out C.clean || true
-          echo '::group::Debug C.clean (first chars)'
-          head -c ${DEBUG_SNIPPET_CHARS} C.clean || true; echo; echo '::endgroup::'
-          if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else printf '{"reviewer":"performance","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > C.json; fi
-
-      - name: Validate C.json / Retry JSON-only
-        if: env.CLI_AVAILABLE == 'true'
-        run: |
-          if ! jq -e . C.json >/dev/null 2>&1; then
-            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _C.prompt
-            timeout -k 30s 300s $CODEX_CMD exec < _C.prompt > C.out || true
-            echo '::group::Retry Debug C.out (first chars)'
-            head -c ${DEBUG_SNIPPET_CHARS} C.out || true; echo; echo '::endgroup::'
-            python extract_json.py C.out C.clean || true
-            echo '::group::Retry Debug C.clean (first chars)'
-            head -c ${DEBUG_SNIPPET_CHARS} C.clean || true; echo; echo '::endgroup::'
-            if [ -s C.clean ] && jq -e . C.clean >/dev/null 2>&1; then jq -c . C.clean > C.json; else printf '{"reviewer":"performance","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > C.json; fi
-          fi
-
-      - name: Reviewer D — Spec Alignment
-        if: env.CLI_AVAILABLE == 'true'
-        env:
-          BASE_SHA: ${{ steps.prctx.outputs.baseSha }}
-          HEAD_SHA: ${{ steps.prctx.outputs.headSha }}
-          STRICT: ${{ env.OPTS_STRICT }}
-          HINT:   ${{ env.OPTS_HINT }}
-        run: |
-          python - <<'PY'
-          import os
-          tmpl = open('.codex/reviewer_alignment.md','r',encoding='utf-8').read()
-          diff = open('pr.diff.limited','r',encoding='utf-8').read()
-          files = open('changed_files.txt','r',encoding='utf-8').read()
+          # D — Alignment (needs PR metadata)
           pr_title = open('pr_title.txt','r',encoding='utf-8').read() if os.path.exists('pr_title.txt') else ''
           pr_body  = open('pr_body.txt','r',encoding='utf-8').read() if os.path.exists('pr_body.txt') else ''
           linked   = open('linked_issues.json','r',encoding='utf-8').read() if os.path.exists('linked_issues.json') else '[]'
-          tmpl = (tmpl
-            .replace('<<PR_DIFF>>', diff)
-            .replace('<<CHANGED_FILES>>', files)
-            .replace('<<BASE_SHA>>', os.environ.get('BASE_SHA',''))
-            .replace('<<HEAD_SHA>>', os.environ.get('HEAD_SHA',''))
-            .replace('<<STRICT>>', os.environ.get('STRICT','off') or 'off')
-            .replace('<<FOCUS_HINT>>', os.environ.get('HINT',''))
-            .replace('<<PR_TITLE>>', pr_title)
-            .replace('<<PR_BODY>>', pr_body)
-            .replace('<<LINKED_ISSUES_JSON>>', linked))
-          open('_D.prompt','w',encoding='utf-8').write(tmpl)
+          d = open('.codex/reviewer_alignment.md','r',encoding='utf-8').read()
+          d = (d.replace('<<PR_DIFF>>', diff)
+                 .replace('<<CHANGED_FILES>>', files)
+                 .replace('<<BASE_SHA>>', base)
+                 .replace('<<HEAD_SHA>>', head)
+                 .replace('<<STRICT>>', strict)
+                 .replace('<<FOCUS_HINT>>', hint)
+                 .replace('<<PR_TITLE>>', pr_title)
+                 .replace('<<PR_BODY>>', pr_body)
+                 .replace('<<LINKED_ISSUES_JSON>>', linked))
+          open('_D.prompt','w',encoding='utf-8').write(d)
           PY
-          timeout -k 30s 420s $CODEX_CMD exec < _D.prompt > D.out || true
-          echo '::group::Debug D.out (first chars)'
-          head -c ${DEBUG_SNIPPET_CHARS} D.out || true; echo; echo '::endgroup::'
-          python extract_json.py D.out D.clean || true
-          echo '::group::Debug D.clean (first chars)'
-          head -c ${DEBUG_SNIPPET_CHARS} D.clean || true; echo; echo '::endgroup::'
-          if [ -s D.clean ] && jq -e . D.clean >/dev/null 2>&1; then jq -c . D.clean > D.json; else printf '{"reviewer":"alignment","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > D.json; fi
 
-      - name: Validate D.json / Retry JSON-only
-        if: env.CLI_AVAILABLE == 'true'
-        run: |
-          if ! jq -e . D.json >/dev/null 2>&1; then
-            echo -e "\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {\"APPROVE\",\"REQUEST_CHANGES\",\"COMMENT_ONLY\"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY." >> _D.prompt
-            timeout -k 30s 300s $CODEX_CMD exec < _D.prompt > D.out || true
-            echo '::group::Retry Debug D.out (first chars)'
-            head -c ${DEBUG_SNIPPET_CHARS} D.out || true; echo; echo '::endgroup::'
-            python extract_json.py D.out D.clean || true
-            echo '::group::Retry Debug D.clean (first chars)'
-            head -c ${DEBUG_SNIPPET_CHARS} D.clean || true; echo; echo '::endgroup::'
-            if [ -s D.clean ] && jq -e . D.clean >/dev/null 2>&1; then jq -c . D.clean > D.json; else printf '{"reviewer":"alignment","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' > D.json; fi
+          json_only_msg=$'\nReturn ONLY a single JSON object matching the required schema. No prose. Do NOT include code fences. Strict JSON: decision ∈ {"APPROVE","REQUEST_CHANGES","COMMENT_ONLY"}; confidence is a number 0..1 (e.g., 0.85); all arrays contain strings; no placeholders; no trailing commas; no comments. If uncertain, choose COMMENT_ONLY.'
+
+          # Cross-platform timeout wrappers (noop on hosts without GNU timeout)
+          if command -v timeout >/dev/null 2>&1; then
+            T420=(timeout -k 30s 420s)
+            T300=(timeout -k 30s 300s)
+          else
+            T420=()
+            T300=()
           fi
+
+          run_reviewer() {
+            local id="$1"; shift
+            local reviewer_key="$1"; shift # correctness | documentation | performance | alignment
+            local prompt_file="_${id}.prompt"
+            local out_file="${id}.out"
+            local clean_file="${id}.clean"
+            local json_file="${id}.json"
+
+            (
+              set +e
+              "${T420[@]}" $CODEX_CMD exec < "$prompt_file" > "$out_file" 2>&1 || true
+              echo "::group::Debug ${id}.out (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$out_file" || true; echo; echo '::endgroup::'
+              python extract_json.py "$out_file" "$clean_file" || true
+              echo "::group::Debug ${id}.clean (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$clean_file" || true; echo; echo '::endgroup::'
+              if [ -s "$clean_file" ] && python json_minify.py "$clean_file" "$json_file" >/dev/null 2>&1; then
+                true
+              else
+                # Retry with JSON-only instruction
+                echo "$json_only_msg" >> "$prompt_file"
+                "${T300[@]}" $CODEX_CMD exec < "$prompt_file" > "$out_file" 2>&1 || true
+                echo "::group::Retry Debug ${id}.out (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$out_file" || true; echo; echo '::endgroup::'
+                python extract_json.py "$out_file" "$clean_file" || true
+                echo "::group::Retry Debug ${id}.clean (first chars)"; head -c ${DEBUG_SNIPPET_CHARS} "$clean_file" || true; echo; echo '::endgroup::'
+                # For A, keep the extra parse stats for diagnostics
+                if [ "$id" = "A" ]; then
+                  echo '::group::A.parse stats'
+                  python parse_stats.py "$out_file" "$clean_file" || true
+                  echo '::endgroup::'
+                fi
+                if [ -s "$clean_file" ] && python json_minify.py "$clean_file" "$json_file" >/dev/null 2>&1; then
+                  true
+                else
+                  printf '{"reviewer":"%s","decision":"COMMENT_ONLY","confidence":0.5,"summary":"Model returned no valid JSON; defaulting to COMMENT_ONLY.","strengths":[],"weaknesses":[],"required_changes":[],"suggested_changes":[],"inline_suggestions":[],"citations":[]}' "$reviewer_key" > "$json_file"
+                fi
+              fi
+            ) &
+          }
+
+          run_reviewer A correctness
+          run_reviewer B documentation
+          run_reviewer C performance
+          run_reviewer D alignment
+          wait
 
       - name: Meta Reviewer
         if: env.CLI_AVAILABLE == 'true'
@@ -540,13 +511,14 @@ jobs:
             .replace('<<R3_JSON>>', r3))
           open('_META.prompt','w',encoding='utf-8').write(tmpl)
           PY
-          timeout -k 30s 420s $CODEX_CMD exec < _META.prompt > META.out || true
+          if command -v timeout >/dev/null 2>&1; then T=(timeout -k 30s 420s); else T=(); fi
+          "${T[@]}" $CODEX_CMD exec < _META.prompt > META.out || true
           echo '::group::Debug META.out (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} META.out || true; echo; echo '::endgroup::'
           python extract_json.py META.out META.clean || true
           echo '::group::Debug META.clean (first chars)'
           head -c ${DEBUG_SNIPPET_CHARS} META.clean || true; echo; echo '::endgroup::'
-          if [ -s META.clean ] && jq -e . META.clean >/dev/null 2>&1; then jq -c . META.clean > META.json; else echo '{}' > META.json; fi
+          if [ -s META.clean ] && python json_minify.py META.clean META.json >/dev/null 2>&1; then true; else echo '{}' > META.json; fi
 
       # -------- Find (or create) our comment; delete older Codex comments only ----------
       - name: List comments
@@ -557,8 +529,13 @@ jobs:
         with:
           script: |
             const prNumber = Number(process.env.PR_NUMBER);
-            const { data } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, per_page: 100 });
-            return { comments: data };
+            try {
+              const { data } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, per_page: 100 });
+              return { comments: data };
+            } catch (e) {
+              core.warning(`List comments failed: ${e.status || ''} ${e.message}`);
+              return { comments: [] };
+            }
 
       - name: Select comment to update and cleanup IDs
         id: select_comment
@@ -567,20 +544,20 @@ jobs:
           cat > comments.json <<'JSON'
           ${{ steps.comments.outputs.result }}
           JSON
-          CANDIDATE_ID=$(jq -r '
-            (.comments
-             | map(select(.user.login=="github-actions[bot]") | select(.body | contains("<!-- codex-review -->")))
-             | sort_by(.created_at)
-             | (if length>0 then .[-1].id else "" end)
-            )' comments.json)
-          DEL_IDS=$(jq -r --arg cid "$CANDIDATE_ID" '
-            (.comments
-             | map(select(.user.login=="github-actions[bot]") | select(.body | contains("<!-- codex-review -->")))
-             | map(select((.id|tostring) != $cid))
-             | map(.id)
-            ) | @json' comments.json)
-          echo "cid=${CANDIDATE_ID}" >> $GITHUB_OUTPUT
-          echo "del=${DEL_IDS}" >> $GITHUB_OUTPUT
+          python - <<'PY'
+          import json, os
+          data = json.load(open('comments.json','r',encoding='utf-8'))
+          comments = data.get('comments', []) or []
+          bots = [c for c in comments if c.get('user',{}).get('login') == 'github-actions[bot]']
+          mine = [c for c in bots if '<!-- codex-review -->' in (c.get('body') or '')]
+          mine.sort(key=lambda c: c.get('created_at',''))
+          cid = str(mine[-1]['id']) if mine else ''
+          del_ids = [c['id'] for c in mine if str(c.get('id')) != cid]
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as f:
+              f.write(f"cid={cid}\n")
+              import json as _j
+              f.write(f"del={_j.dumps(del_ids)}\n")
+          PY
 
       - name: Compose body
         if: env.CLI_AVAILABLE == 'true'
@@ -590,70 +567,132 @@ jobs:
           STRICT: ${{ env.OPTS_STRICT }}
           SCOPE:  ${{ env.OPTS_SCOPE }}
         run: |
-          SHORT=$(echo "${HEAD_SHA}" | cut -c1-7)
-          if [ -n "$TRUNCATED" ]; then
-            TRUNC_NOTE=$'\n> 🔎 Diff truncated for context. Use `/codex scope <glob>` to focus.'
-          else
-            TRUNC_NOTE=""
-          fi
+          python - <<'PY'
+          import os, json, sys
+          def short_sha(s):
+              return (s or '')[:7]
+          def bullets(arr):
+              arr = arr or []
+              if not arr:
+                  return "_none_"
+              return "\n".join(f"- {x}" for x in arr)
+          def cites(cites):
+              cites = cites or []
+              if not cites:
+                  return "_none_"
+              def one(c):
+                  file = c.get('file') or '?'
+                  lines = c.get('lines')
+                  suffix = f":{lines}" if lines else ''
+                  reason = c.get('reason') or ''
+                  return f"- {file}{suffix} — {reason}"
+              return "\n".join(one(c) for c in cites)
+          def inline_suggestions(sugs):
+              sugs = sugs or []
+              md = "\n\n".join([ (s.get('suggestion_markdown') or '') for s in sugs ])
+              return md if md.strip() else "_none_"
+          def make_md(title, path):
+              try:
+                  with open(path,'r',encoding='utf-8') as f:
+                      d = json.load(f)
+              except Exception:
+                  d = {}
+              lines = []
+              lines.append(f"#### {title}")
+              lines.append(f"*Decision:* {d.get('decision','N/A')}  ")
+              lines.append(f"*Confidence:* {d.get('confidence','N/A')}")
+              lines.append("")
+              lines.append("**Summary**")
+              lines.append(d.get('summary') or "_none_")
+              lines.append("")
+              lines.append("**Strengths**")
+              lines.append(bullets(d.get('strengths')))
+              lines.append("")
+              lines.append("**Weaknesses**")
+              lines.append(bullets(d.get('weaknesses')))
+              lines.append("")
+              lines.append("**Required changes**")
+              lines.append(bullets(d.get('required_changes')))
+              lines.append("")
+              lines.append("**Suggested changes**")
+              lines.append(bullets(d.get('suggested_changes')))
+              lines.append("")
+              lines.append("**Inline suggestions (selected)**")
+              lines.append(inline_suggestions(d.get('inline_suggestions')))
+              lines.append("")
+              lines.append("**Citations**")
+              lines.append(cites(d.get('citations')))
+              return "\n".join(lines)
 
-          make_md () {
-            local title="$1"; local f="$2"
-            jq -r '
-              def bullets($k): ( .[$k] // [] ) | if length>0 then (map("- " + .) | join("\n")) else "_none_" end;
-              def cites: ( .citations // [] ) | if length>0 then (map("- " + (.file // "?") + (if .lines then ":" + .lines else "" end) + " — " + (.reason // "")) | join("\n")) else "_none_" end;
-              "#### \(env.title)\n" +
-              "*Decision:* \(.decision // "N/A")  \n*Confidence:* \(.confidence // "N/A")\n\n" +
-              "**Summary**\n\(.summary // "_none_")\n\n" +
-              "**Strengths**\n" + bullets("strengths") + "\n\n" +
-              "**Weaknesses**\n" + bullets("weaknesses") + "\n\n" +
-              "**Required changes**\n" + bullets("required_changes") + "\n\n" +
-              "**Suggested changes**\n" + bullets("suggested_changes") + "\n\n" +
-              "**Inline suggestions (selected)**\n" + ( .inline_suggestions // [] | map(.suggestion_markdown) | join("\n\n") | if .=="" then "_none_" else . end ) + "\n\n" +
-              "**Citations**\n" + cites
-            ' "$f"
-          }
+          head = os.environ.get('HEAD_SHA','')
+          strict = os.environ.get('STRICT','off') or 'off'
+          scope = os.environ.get('SCOPE','')
+          header = "<!-- codex-review -->\n" + f"[# codex-review | Commit: {short_sha(head)} | strict:{strict} | scope:\"{scope}\" ]\n\n"
+          body = [header]
+          body.append(make_md('Reviewer A — Correctness & Safety', 'A.json'))
+          body.append("")
+          body.append(make_md('Reviewer B — Documentation & DX', 'B.json'))
+          body.append("")
+          body.append(make_md('Reviewer C — Performance & Architecture', 'C.json'))
+          body.append("")
+          body.append(make_md('Reviewer D — Spec Alignment & Traceability', 'D.json'))
+          body.append("")
 
-          HEADER="<!-- codex-review -->"$'\n'"[# codex-review | Commit: ${SHORT} | strict:${STRICT:-off} | scope:\"${SCOPE}\" ]"$'\n\n'
-          BODY="${HEADER}"
-          title='Reviewer A — Correctness & Safety'; export title; ct=$(make_md "$title" A.json); BODY+="$ct"$'\n\n'
-          title='Reviewer B — Documentation & DX'; export title; ct=$(make_md "$title" B.json); BODY+="$ct"$'\n\n'
-          title='Reviewer C — Performance & Architecture'; export title; ct=$(make_md "$title" C.json); BODY+="$ct"$'\n\n'
-          title='Reviewer D — Spec Alignment & Traceability'; export title; ct=$(make_md "$title" D.json); BODY+="$ct"$'\n\n'
+          meta = None
+          if os.path.exists('META.json'):
+              try:
+                  with open('META.json','r',encoding='utf-8') as f:
+                      meta = json.load(f)
+              except Exception:
+                  meta = None
+          if meta and str(meta.get('overall_score','')) != '':
+              body.append('---\n\n**Meta Reviewer Scorecard**\n')
+              r = meta.get('rubric') or {}
+              table = [
+                  "| Category | Score |",
+                  "|---|---|",
+                  f"| Correctness | {r.get('correctness','')} |",
+                  f"| Clarity/Docs | {r.get('clarity_docs','')} |",
+                  f"| Reproducibility | {r.get('reproducibility','')} |",
+                  f"| Performance/Scalability | {r.get('performance_scalability','')} |",
+                  f"| Security/Privacy | {r.get('security_privacy','')} |",
+                  "",
+                  f"**Overall:** {meta.get('overall_score','')} / 10  ",
+                  f"*Meta decision:* {meta.get('meta_decision','')}  ",
+                  f"*Confidence:* {meta.get('confidence','')}",
+                  "",
+                  "**Summary**",
+                  meta.get('summary','')
+              ]
+              body.append("\n".join(table))
+              tb = meta.get('top_blockers') or []
+              if tb:
+                  body.append("\n**Top blockers**\n" + "\n".join(f"- {x}" for x in tb))
 
-          if [ -f META.json ] && [ "$(jq -r '.overall_score // empty' META.json)" != "" ]; then
-            BODY+=$'---\n\n**Meta Reviewer Scorecard**\n\n'
-            BODY+="$(jq -r '
-              "| Category | Score |\n|---|---|\n" +
-              "| Correctness | \(.rubric.correctness) |\n" +
-              "| Clarity/Docs | \(.rubric.clarity_docs) |\n" +
-              "| Reproducibility | \(.rubric.reproducibility) |\n" +
-              "| Performance/Scalability | \(.rubric.performance_scalability) |\n" +
-              "| Security/Privacy | \(.rubric.security_privacy) |\n" +
-              "\n**Overall:** \(.overall_score) / 10  \n*Meta decision:* \(.meta_decision)  \n*Confidence:* \(.confidence)\n\n**Summary**\n\(.summary)\n" ' META.json)
-            )"
-            TB=$(jq -r '( .top_blockers // [] ) | if length>0 then (["\n**Top blockers**", (map("- " + .) | join("\n"))] | join("\n")) else "" end' META.json)
-            BODY+="$TB"
-          fi
+          if os.environ.get('TRUNCATED'):
+              body.append('\n> 🔎 Diff truncated for context. Use `/codex scope <glob>` to focus.')
 
-          BODY+="$TRUNC_NOTE"
-          {
-            echo "body<<__CODEX_EOF__"
-            printf "%s" "$BODY"
-            echo
-            echo "__CODEX_EOF__"
-          } >> $GITHUB_OUTPUT
+          out = "\n".join(body)
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as f:
+              f.write('body<<__CODEX_EOF__\n')
+              f.write(out)
+              f.write('\n__CODEX_EOF__\n')
+          PY
 
       - name: Delete older Codex comments (safe)
         if: steps.select_comment.outputs.del != '[]'
         uses: actions/github-script@v7
         with:
           script: |
-            const ids = JSON.parse(`${{ steps.select_comment.outputs.del }}`);
-            for (const id of ids) {
-              try {
-                await github.rest.issues.deleteComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: id });
-              } catch (e) { core.warning(`Cleanup failed for ${id}: ${e.message}`); }
+            try {
+              const ids = JSON.parse(`${{ steps.select_comment.outputs.del }}`);
+              for (const id of ids) {
+                try {
+                  await github.rest.issues.deleteComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: id });
+                } catch (e) { core.warning(`Cleanup failed for ${id}: ${e.message}`); }
+              }
+            } catch (e) {
+              core.warning(`Comment cleanup list parse failed: ${e.status || ''} ${e.message}`);
             }
 
       - name: Upsert Codex comment
@@ -663,12 +702,16 @@ jobs:
           PR_NUMBER: ${{ steps.prctx.outputs.prNumber }}
         with:
           script: |
-            const prNumber = Number(process.env.PR_NUMBER);
-            const cid = `${{ steps.select_comment.outputs.cid }}`;
-            if (cid) {
-              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: ${{ toJSON(steps.compose.outputs.body) }} });
-            } else {
-              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: ${{ toJSON(steps.compose.outputs.body) }} });
+            try {
+              const prNumber = Number(process.env.PR_NUMBER);
+              const cid = `${{ steps.select_comment.outputs.cid }}`;
+              if (cid) {
+                await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: ${{ toJSON(steps.compose.outputs.body) }} });
+              } else {
+                await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: ${{ toJSON(steps.compose.outputs.body) }} });
+              }
+            } catch (e) {
+              core.warning(`Upsert comment failed: ${e.status || ''} ${e.message}`);
             }
 
       - name: Compose skip body (CLI unavailable)
@@ -696,28 +739,37 @@ jobs:
           PR_NUMBER: ${{ steps.prctx.outputs.prNumber }}
         with:
           script: |
-            const prNumber = Number(process.env.PR_NUMBER);
-            const cid = `${{ steps.select_comment.outputs.cid }}`;
-            if (cid) {
-              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: ${{ toJSON(steps.compose_skip.outputs.body) }} });
-            } else {
-              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: ${{ toJSON(steps.compose_skip.outputs.body) }} });
+            try {
+              const prNumber = Number(process.env.PR_NUMBER);
+              const cid = `${{ steps.select_comment.outputs.cid }}`;
+              if (cid) {
+                await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: Number(cid), body: ${{ toJSON(steps.compose_skip.outputs.body) }} });
+              } else {
+                await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: ${{ toJSON(steps.compose_skip.outputs.body) }} });
+              }
+            } catch (e) {
+              core.warning(`Upsert comment (skip) failed: ${e.status || ''} ${e.message}`);
             }
 
       - name: Commit status (neutral visibility)
         uses: actions/github-script@v7
         with:
           script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner, repo: context.repo.repo,
-              sha: `${{ steps.prctx.outputs.headSha }}`,
-              state: 'success', context: 'codex/review',
-              description: 'Codex review posted'
-            });
+            try {
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner, repo: context.repo.repo,
+                sha: `${{ steps.prctx.outputs.headSha }}`,
+                state: 'success', context: 'codex/review',
+                description: 'Codex review posted'
+              });
+            } catch (e) {
+              core.warning(`Commit status failed: ${e.status || ''} ${e.message}`);
+            }
 
       - name: Upload artifacts
         if: env.CLI_AVAILABLE == 'true'
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: codex-multi-review-${{ github.sha }}
           path: |

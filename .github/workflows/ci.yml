@@ -1,10 +1,8 @@
 name: CI/CD Pipeline
 
 on:
-  push:
-    branches: [ "main", "master", "develop" ]
-  pull_request:
-    branches: [ "main", "master" ]
+  # Disabled automatic triggers in favor of CircleCI.
+  # This workflow can still be run manually from the Actions tab.
   workflow_dispatch:
     inputs:
       debug_enabled:
