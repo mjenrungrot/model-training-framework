@@ -1,0 +1,356 @@
+version: 2.1
+
+executors:
+  python_312:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: medium
+
+commands:
+  setup-pip-cache:
+    description: Restore and save pip cache
+    steps:
+      - restore_cache:
+          name: Restore pip cache
+          keys:
+            - v1-pip-{{ arch }}-python-3.12-{{ checksum "pyproject.toml" }}
+            - v1-pip-{{ arch }}-python-3.12-
+      - save_cache:
+          name: Save pip cache
+          key: v1-pip-{{ arch }}-python-3.12-{{ checksum "pyproject.toml" }}
+          paths:
+            - ~/.cache/pip
+
+  setup-ruff-cache:
+    description: Restore and save ruff cache
+    steps:
+      - restore_cache:
+          name: Restore ruff cache
+          keys:
+            - v1-ruff-{{ arch }}-{{ checksum "pyproject.toml" }}
+            - v1-ruff-{{ arch }}-
+      - save_cache:
+          name: Save ruff cache
+          key: v1-ruff-{{ arch }}-{{ checksum "pyproject.toml" }}
+          paths:
+            - ~/.cache/ruff
+
+  setup-mypy-cache:
+    description: Restore and save mypy cache
+    steps:
+      - restore_cache:
+          name: Restore mypy cache
+          keys:
+            - v1-mypy-{{ arch }}-python-3.12-{{ checksum "pyproject.toml" }}
+            - v1-mypy-{{ arch }}-python-3.12-
+      - save_cache:
+          name: Save mypy cache
+          key: v1-mypy-{{ arch }}-python-3.12-{{ checksum "pyproject.toml" }}
+          paths:
+            - .mypy_cache
+
+  setup-pytest-cache:
+    description: Restore and save pytest cache
+    steps:
+      - restore_cache:
+          name: Restore pytest cache
+          keys:
+            - v1-pytest-{{ arch }}-python-3.12-{{ checksum "pyproject.toml" }}
+            - v1-pytest-{{ arch }}-python-3.12-
+      - save_cache:
+          name: Save pytest cache
+          key: v1-pytest-{{ arch }}-python-3.12-{{ checksum "pyproject.toml" }}
+          paths:
+            - .pytest_cache
+
+jobs:
+  code_quality:
+    executor: python_312
+    steps:
+      - checkout
+      - setup-ruff-cache
+      - run:
+          name: Set up Python & install ruff
+          command: |
+            python -m pip install --upgrade pip
+            # Pin Ruff to match GitHub Actions
+            pip install "ruff==0.12.10"
+      - run:
+          name: Ruff check
+          command: |
+            echo "Ruff Check"
+            ruff check . --output-format=github
+      - run:
+          name: Ruff format (check only)
+          command: |
+            echo "Ruff Format Check"
+            ruff format . --check --diff
+
+  type_check:
+    executor: python_312
+    steps:
+      - checkout
+      - setup-pip-cache
+      - setup-mypy-cache
+      - run:
+          name: Install dev deps
+          command: |
+            python -m pip install --upgrade pip
+            pip install -e ".[dev]"
+      - run:
+          name: Run mypy
+          command: |
+            mypy model_training_framework/ --install-types --non-interactive
+
+  tests:
+    executor: python_312
+    steps:
+      - checkout
+      - setup-pip-cache
+      - setup-pytest-cache
+      - run:
+          name: Install dependencies
+          command: |
+            echo "Installing Dependencies"
+            python -m pip install --upgrade pip
+            python --version
+            pip --version
+            pip install -e ".[dev]" -vv
+            pip list
+      - run:
+          name: Debug test environment
+          command: |
+            echo "Current directory:" && pwd
+            echo "Directory structure:" && ls -la
+            echo "Model training framework directory:" && ls -la model_training_framework/
+            echo "Tests directory:" && ls -la model_training_framework/tests/
+            echo "Test files found:" && find model_training_framework/tests -name "test_*.py" -type f
+            echo "Python path:" && python -c "import sys; print('\n'.join(sys.path))"
+            echo "Can import package?" && python -c "import model_training_framework; print('Success'); print('Package location:', model_training_framework.__file__)"
+            echo "Pytest version:" && python -m pytest --version
+      - run:
+          name: Run tests with coverage
+          command: |
+            mkdir -p test-results/pytest
+            echo "Collecting tests..."
+            python -m pytest model_training_framework/tests --collect-only -q | head -20 || true
+            echo "Running tests..."
+            python -m pytest model_training_framework/tests -vv --tb=short \
+              --cov=model_training_framework --cov-report=xml --cov-report=term-missing \
+              --log-cli-level=DEBUG --junitxml=test-results/pytest/results.xml
+      - store_test_results:
+          path: test-results
+      - store_artifacts:
+          path: coverage.xml
+          destination: coverage.xml
+      - run:
+          name: Upload coverage to Codecov (if token present)
+          command: |
+            set +e
+            if [ -n "$CODECOV_TOKEN" ]; then
+              curl -Os https://uploader.codecov.io/latest/linux/codecov
+              chmod +x codecov
+              ./codecov -f coverage.xml || true
+            else
+              echo "CODECOV_TOKEN not set; skipping Codecov upload."
+            fi
+
+  security:
+    executor: python_312
+    steps:
+      - checkout
+      - setup-pip-cache
+      - run:
+          name: Install security tools
+          command: |
+            python -m pip install --upgrade pip
+            pip install bandit[toml] safety
+      - run:
+          name: Bandit scan (high severity, baseline-aware)
+          command: |
+            set +e
+            ARGS=( -r model_training_framework/ --severity-level high --confidence-level high )
+            # Generate baseline if missing (captures current issues so only new ones fail subsequently)
+            if [ ! -f .bandit-baseline.json ]; then
+              echo "No .bandit-baseline.json found; generating baseline from current code..."
+              bandit "${ARGS[@]}" -f json -o .bandit-baseline.json || true
+            fi
+            BASE=(-b .bandit-baseline.json)
+            # Delta (new issues vs baseline)
+            bandit "${ARGS[@]}" "${BASE[@]}" -f json -o bandit-report.json
+            BANDIT_STATUS=$?
+            bandit "${ARGS[@]}" "${BASE[@]}" -f txt > bandit-report.txt || true
+            # Full reports (for visibility)
+            bandit "${ARGS[@]}" -f json -o bandit-report.full.json || true
+            bandit "${ARGS[@]}" -f txt > bandit-report.full.txt || true
+            echo "Bandit exit status (delta vs baseline): ${BANDIT_STATUS}"
+            set -e
+            [ ${BANDIT_STATUS} -eq 0 ] || exit ${BANDIT_STATUS}
+      - run:
+          name: Safety check (non-interactive, deprecated 'check')
+          command: |
+            # Use legacy 'check' to avoid interactive login required by 'scan'.
+            # Capture JSON to file via stdout redirection; also print full text report.
+            set +e
+            safety check --json > safety-report.json
+            SAFETY_STATUS=$?
+            safety check --full-report || true
+            echo "Safety exit status: ${SAFETY_STATUS}"
+            set -e
+            [ ${SAFETY_STATUS} -eq 0 ] || exit ${SAFETY_STATUS}
+      - store_artifacts:
+          path: bandit-report.json
+          destination: bandit-report.json
+      - store_artifacts:
+          path: bandit-report.txt
+          destination: bandit-report.txt
+      - store_artifacts:
+          path: bandit-report.full.json
+          destination: bandit-report.full.json
+      - store_artifacts:
+          path: bandit-report.full.txt
+          destination: bandit-report.full.txt
+      - store_artifacts:
+          path: safety-report.json
+          destination: safety-report.json
+
+  build_pkg:
+    executor: python_312
+    steps:
+      - checkout
+      - setup-pip-cache
+      - run:
+          name: Install build tooling
+          command: |
+            python -m pip install --upgrade pip
+            pip install build twine setuptools-scm
+      - run:
+          name: Build package
+          command: python -m build
+      - run:
+          name: Check package
+          command: python -m twine check dist/*
+      - run:
+          name: Test wheel installation
+          command: |
+            pip install dist/*.whl
+            python -c "import model_training_framework; print('Package imported successfully')"
+      - persist_to_workspace:
+          root: .
+          paths:
+            - dist
+      - store_artifacts:
+          path: dist
+          destination: dist
+
+  docs:
+    executor: python_312
+    steps:
+      - checkout
+      - setup-pip-cache
+      - run:
+          name: Install docs deps
+          command: |
+            python -m pip install --upgrade pip
+            pip install -e ".[docs]"
+      - run:
+          name: Build docs (placeholder)
+          command: |
+            echo "Documentation build placeholder - add sphinx-build when docs are ready"
+
+  integration:
+    executor: python_312
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - setup-pip-cache
+      - run:
+          name: Install from wheel and test
+          command: |
+            pip install dist/*.whl
+            pip install pytest pytest-cov
+            python - \<<'PY'
+            import sys
+            import traceback
+
+            def test_imports():
+                print('Testing package imports...')
+                import model_training_framework
+                print('✓ Main package imports successfully')
+
+                from model_training_framework.config import ConfigurationManager
+                print('✓ Config module imports successfully')
+
+                from model_training_framework.trainer import GenericTrainerConfig
+                print('✓ Trainer module imports successfully')
+
+                from model_training_framework.slurm import SLURMLauncher
+                print('✓ SLURM module imports successfully')
+
+                from model_training_framework.utils import get_project_root
+                print('✓ Utils module imports successfully')
+
+                return True
+
+            def test_basic_functionality():
+                print('\nTesting basic functionality...')
+                from model_training_framework.config.schemas import ModelConfig
+                config = ModelConfig(type='transformer', hidden_size=768, num_layers=12, dropout=0.1)
+                print(f'✓ Created ModelConfig: {config.type}')
+
+                from model_training_framework.utils.data_structures import success, error
+                result = success('test_value')
+                print(f'✓ Created successful Result: {result.is_success}')
+
+                result = error('test_error')
+                print(f'✓ Created error Result: {result.is_error}')
+
+                return True
+
+            try:
+                if test_imports() and test_basic_functionality():
+                    print('\n✅ All integration tests passed!')
+                    sys.exit(0)
+            except Exception as e:
+                print(f'\n❌ Integration test failed: {e}')
+                traceback.print_exc()
+                sys.exit(1)
+            PY
+
+  ci_success:
+    executor: python_312
+    steps:
+      - run:
+          name: All checks passed
+          command: |
+            echo "✅ All CI checks passed!"
+
+workflows:
+  ci:
+    jobs:
+      - code_quality
+      - type_check
+      - tests
+      - security
+      - build_pkg:
+          requires:
+            - code_quality
+            - tests
+      - docs
+      - integration:
+          requires:
+            - code_quality
+            - type_check
+            - tests
+            - security
+            - build_pkg
+      - ci_success:
+          requires:
+            - code_quality
+            - type_check
+            - tests
+            - security
+            - build_pkg
+            - docs
+            - integration

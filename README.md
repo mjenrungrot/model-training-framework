@@ -33,6 +33,28 @@ pip install -e ".[wandb]"         # Weights & Biases integration
 pip install -e ".[docs]"          # Documentation tools
 ```
 
+## CI & Local Development
+
+- Primary CI: CircleCI runs lint, type-checks, tests, security, build, docs placeholder, and integration. GitHub Actions workflows are manual-only (for tooling and ad-hoc runs).
+- Local dev quickstart:
+
+  ```bash
+  python -m venv .venv
+  source .venv/bin/activate   # Windows: .venv\\Scripts\\activate
+  pip install -U pip
+  pip install -e ".[dev]"
+
+  # Run checks
+  ruff check . && ruff format --check .
+  mypy model_training_framework/
+  pytest -vv --maxfail=1
+  ```
+
+- Coverage / Codecov: CI produces `coverage.xml`. To upload from CircleCI, add `CODECOV_TOKEN` in your CircleCI project settings (Project → Environment Variables). Upload is skipped if the token is absent.
+- Codex multi-review: A manual GitHub Actions workflow posts multi-perspective PR reviews. Maintainers: set `CODEX_AUTH_B64` (see docs/codex-multi-review.md), then run via GitHub → Actions → “codex-multi-review” → Run workflow.
+- Docs build: The CI docs step is a placeholder. When you’re ready, wire up Sphinx/MkDocs and add the build command to `.circleci/config.yml` and `.github/workflows/ci.yml`.
+- Maintainers: Be sure to enable this repository in CircleCI so PRs/branches execute the CircleCI pipeline.
+
 ### Core Dependencies
 
 - `torch>=2.0.0` - PyTorch framework
