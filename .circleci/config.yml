@@ -187,13 +187,14 @@ jobs:
             set -e
             [ ${BANDIT_STATUS} -eq 0 ] || exit ${BANDIT_STATUS}
       - run:
-          name: Safety check
+          name: Safety check (non-interactive, deprecated 'check')
           command: |
+            # Use legacy 'check' to avoid interactive login required by 'scan'.
+            # Capture JSON to file via stdout redirection; also print full text report.
             set +e
-            # Use Safety v3 'scan' command; write JSON to file and print text to console
-            safety scan -o json --file safety-report.json
+            safety check --json > safety-report.json
             SAFETY_STATUS=$?
-            safety scan -o text || true
+            safety check --full-report || true
             echo "Safety exit status: ${SAFETY_STATUS}"
             set -e
             [ ${SAFETY_STATUS} -eq 0 ] || exit ${SAFETY_STATUS}
