@@ -32,6 +32,7 @@ jobs:
     env:
       CODEX_REASONING_EFFORT: high
       DEBUG_SNIPPET_CHARS: "4000"
+      IS_SELF_HOSTED: ${{ (inputs.runner_labels && contains(inputs.runner_labels, 'self-hosted')) || (inputs.use_self_hosted == true || inputs.use_self_hosted == 'true') }}
 
     steps:
       - name: Detect context (PR vs comment)
@@ -67,10 +68,14 @@ jobs:
           echo "Runner Arch: $(uname -m 2>/dev/null || echo unknown)"
           echo "Shell: $SHELL"
 
-      - name: Install Codex CLI (prefer npx)
+      - name: Install Codex CLI (prefer local 'codex')
         run: |
           set -e
-          CODEX_CMD="npx -y @openai/codex"
+          if command -v codex >/dev/null 2>&1; then
+            CODEX_CMD="codex"
+          else
+            CODEX_CMD="npx -y @openai/codex"
+          fi
           if $CODEX_CMD --version >/dev/null 2>&1; then
             echo "CLI_AVAILABLE=true" >> $GITHUB_ENV
             echo "CODEX_CMD=$CODEX_CMD" >> $GITHUB_ENV
@@ -110,7 +115,7 @@ jobs:
             }
 
       - name: Prepare Codex
-        if: steps.secrets_check.outputs.has_secrets == 'true' # pragma: allowlist secret
+        if: steps.secrets_check.outputs.has_secrets == 'true' && env.IS_SELF_HOSTED != 'true' # pragma: allowlist secret
         env:
           CODEX_AUTH_B64: ${{ secrets.CODEX_AUTH_B64 }}
         run: |
