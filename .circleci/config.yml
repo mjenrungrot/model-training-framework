@@ -190,10 +190,10 @@ jobs:
           name: Safety check
           command: |
             set +e
-            safety check --json --output safety-report.json
+            # Use Safety v3 'scan' command; write JSON to file and print text to console
+            safety scan -o json --file safety-report.json
             SAFETY_STATUS=$?
-            # Also emit console output for logs
-            safety check || true
+            safety scan -o text || true
             echo "Safety exit status: ${SAFETY_STATUS}"
             set -e
             [ ${SAFETY_STATUS} -eq 0 ] || exit ${SAFETY_STATUS}
