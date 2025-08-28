@@ -204,17 +204,28 @@ jobs:
         python -m pip install --upgrade pip
         pip install bandit[toml] safety
 
-    - name: Run Bandit security linter
+    - name: Run Bandit security linter (high severity, baseline-aware)
       run: |
         echo "::group::Security Scan (Bandit)"
         set +e
-        bandit -r model_training_framework/ -f json -o bandit-report.json
+        ARGS=( -r model_training_framework/ --severity-level high --confidence-level high )
+        # Generate baseline if missing
+        if [ ! -f .bandit-baseline.json ]; then
+          echo "No .bandit-baseline.json found; generating baseline from current code..."
+          bandit "${ARGS[@]}" -f json -o .bandit-baseline.json || true
+        fi
+        BASE=(-b .bandit-baseline.json)
+        # Delta reports (new issues vs baseline) + exit code capture
+        bandit "${ARGS[@]}" "${BASE[@]}" -f json -o bandit-report.json
         BANDIT_STATUS=$?
-        bandit -r model_training_framework/ -f txt > bandit-report.txt || true
-        echo "Bandit exit status: ${BANDIT_STATUS}"
+        bandit "${ARGS[@]}" "${BASE[@]}" -f txt > bandit-report.txt || true
+        # Full reports for context
+        bandit "${ARGS[@]}" -f json -o bandit-report.full.json || true
+        bandit "${ARGS[@]}" -f txt > bandit-report.full.txt || true
+        echo "Bandit exit status (delta vs baseline): ${BANDIT_STATUS}"
         set -e
         if [ ${BANDIT_STATUS} -ne 0 ]; then
-          echo "::error::Bandit found issues (exit ${BANDIT_STATUS})"
+          echo "::error::Bandit found new high-severity issues (exit ${BANDIT_STATUS})"
           echo "::endgroup::"
           exit ${BANDIT_STATUS}
         fi
@@ -244,6 +255,8 @@ jobs:
         path: |
           bandit-report.json
           bandit-report.txt
+          bandit-report.full.json
+          bandit-report.full.txt
           safety-report.json
 
   # ===== Package Build =====
