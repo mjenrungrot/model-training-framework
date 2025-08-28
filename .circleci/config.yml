@@ -238,7 +238,7 @@ jobs:
           command: |
             pip install dist/*.whl
             pip install pytest pytest-cov
-            python - <<'PY'
+            python - \<<'PY'
             import sys
             import traceback
 
@@ -322,4 +322,3 @@ workflows:
             - build_pkg
             - docs
             - integration
-
