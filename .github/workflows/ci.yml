@@ -92,7 +92,7 @@ jobs:
     - name: Run MyPy
       run: |
         echo "::group::Type Checking"
-        mypy model_training_framework/ --install-types --non-interactive || true
+        mypy model_training_framework/ --install-types --non-interactive
         echo "::endgroup::"
 
   # ===== Testing =====
@@ -207,15 +207,15 @@ jobs:
     - name: Run Bandit security linter
       run: |
         echo "::group::Security Scan (Bandit)"
-        bandit -r model_training_framework/ -f json -o bandit-report.json || true
-        bandit -r model_training_framework/ -f txt || true
+        bandit -r model_training_framework/ -f json -o bandit-report.json
+        bandit -r model_training_framework/ -f txt
         echo "::endgroup::"
 
     - name: Run Safety check
       run: |
         echo "::group::Dependency Security Check (Safety)"
-        safety check --json --output safety-report.json || true
-        safety check || true
+        safety check --json --output safety-report.json
+        safety check
         echo "::endgroup::"
 
     - name: Upload security reports

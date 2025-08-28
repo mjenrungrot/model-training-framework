@@ -100,7 +100,7 @@ jobs:
       - run:
           name: Run mypy
           command: |
-            mypy model_training_framework/ --install-types --non-interactive || true
+            mypy model_training_framework/ --install-types --non-interactive
 
   tests:
     executor: python_312
@@ -168,13 +168,13 @@ jobs:
       - run:
           name: Bandit scan
           command: |
-            bandit -r model_training_framework/ -f json -o bandit-report.json || true
-            bandit -r model_training_framework/ -f txt || true
+            bandit -r model_training_framework/ -f json -o bandit-report.json
+            bandit -r model_training_framework/ -f txt
       - run:
           name: Safety check
           command: |
-            safety check --json --output safety-report.json || true
-            safety check || true
+            safety check --json --output safety-report.json
+            safety check
       - store_artifacts:
           path: bandit-report.json
           destination: bandit-report.json
@@ -238,7 +238,7 @@ jobs:
           command: |
             pip install dist/*.whl
             pip install pytest pytest-cov
-            python - \<<'PY'
+            python - <<'PY'
             import sys
             import traceback
 
