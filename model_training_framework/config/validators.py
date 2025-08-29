@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from .schemas import (
-        DataConfig,
         ExperimentConfig,
         ModelConfig,
         OptimizerConfig,
@@ -97,50 +96,12 @@ class ValidationResult:
         self.issues.append(ValidationIssue("info", component, message, field))
 
 
-@dataclass
-class ResourceCheck:
-    """Result of resource requirement validation."""
-
-    is_feasible: bool
-    estimated_memory_gb: float
-    estimated_time_hours: float
-    recommended_partition: str | None = None
-    issues: list[str] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-
-
 class ConfigValidator:
     """Validates experiment configurations against schema and resource constraints."""
 
     # Constants for validation limits
     MAX_EXPERIMENT_NAME_LENGTH = 200
     MAX_EFFECTIVE_BATCH_SIZE = 10000
-    PARTITION_LONG_HOURS = 72
-    PARTITION_HIGH_MEM_GB = 500
-    PARTITION_HIGH_MEM_GPUS = 4
-    PARTITION_STANDARD_HOURS = 24
-
-    # Constants for time parsing
-    TIME_PARTS_HMS = 3  # Hours:Minutes:Seconds
-    TIME_PARTS_HM = 2  # Hours:Minutes
-    MINUTES_PER_HOUR = 60
-    SECONDS_PER_HOUR = 3600
-    HOURS_PER_DAY = 24
-
-    # Known model types and their approximate memory requirements (GB)
-    MODEL_MEMORY_ESTIMATES: ClassVar[dict[str, float]] = {
-        "resnet18": 0.5,
-        "resnet50": 1.0,
-        "resnet101": 2.0,
-        "bert-base": 1.5,
-        "bert-large": 3.0,
-        "gpt2": 2.0,
-        "gpt2-medium": 4.0,
-        "gpt2-large": 6.0,
-        "t5-small": 1.0,
-        "t5-base": 2.0,
-        "t5-large": 3.0,
-    }
 
     # Valid optimizer types
     VALID_OPTIMIZERS: ClassVar[set[str]] = {
@@ -549,134 +510,3 @@ class ConfigValidator:
                 "Early stopping patience < validation frequency",
                 suggestion="Early stopping may trigger before seeing enough validation results",
             )
-
-    @staticmethod
-    def check_resource_requirements(config: ExperimentConfig) -> ResourceCheck:
-        """Validate SLURM resource requirements and provide recommendations."""
-        check = ResourceCheck(
-            is_feasible=True, estimated_memory_gb=0.0, estimated_time_hours=0.0
-        )
-
-        if not config.slurm:
-            check.issues.append("No SLURM configuration provided")
-            check.is_feasible = False
-            return check
-
-        # Estimate memory requirements
-        model_memory = ConfigValidator._estimate_model_memory(config.model)
-        batch_memory = ConfigValidator._estimate_batch_memory(config.data, config.model)
-        overhead_memory = 2.0  # OS and framework overhead
-
-        check.estimated_memory_gb = model_memory + batch_memory + overhead_memory
-
-        # Parse requested memory
-        requested_memory = ConfigValidator._parse_memory_string(config.slurm.mem)
-
-        if check.estimated_memory_gb > requested_memory:
-            check.is_feasible = False
-            check.issues.append(
-                f"Estimated memory ({check.estimated_memory_gb:.1f}GB) > "
-                f"requested memory ({requested_memory:.1f}GB)"
-            )
-        elif check.estimated_memory_gb > requested_memory * 0.8:
-            check.warnings.append(
-                f"Memory usage may be tight: {check.estimated_memory_gb:.1f}GB / "
-                f"{requested_memory:.1f}GB requested"
-            )
-
-        # Training time estimation removed - too model-specific to generalize
-        check.estimated_time_hours = 1.0  # Default placeholder
-
-        # Parse requested time
-        requested_time_hours = ConfigValidator._parse_time_string(config.slurm.time)
-
-        if check.estimated_time_hours > requested_time_hours:
-            check.warnings.append(
-                f"Estimated time ({check.estimated_time_hours:.1f}h) > "
-                f"requested time ({requested_time_hours:.1f}h)"
-            )
-
-        # Recommend partition based on requirements
-        check.recommended_partition = ConfigValidator._recommend_partition(
-            check.estimated_memory_gb,
-            check.estimated_time_hours,
-            config.slurm.gpus_per_node,
-        )
-
-        return check
-
-    @staticmethod
-    def _estimate_model_memory(model: ModelConfig) -> float:
-        """Estimate model memory requirements in GB."""
-        base_memory = ConfigValidator.MODEL_MEMORY_ESTIMATES.get(model.type, 2.0)
-
-        # Scale by model size parameters if available
-        size_factor = 1.0
-        if hasattr(model, "hidden_size") and hasattr(model, "num_layers"):
-            size_factor = (model.hidden_size / 512) * (model.num_layers / 6)
-
-        return base_memory * size_factor
-
-    @staticmethod
-    def _estimate_batch_memory(data: DataConfig, model: ModelConfig) -> float:
-        """Estimate batch memory requirements in GB."""
-        # Very rough estimate based on batch size and model complexity
-        base_per_sample = 0.01  # 10MB per sample
-
-        # Use default values if fields don't exist
-        batch_size = data.batch_size if hasattr(data, "batch_size") else 32
-        complexity_factor = 1.0
-        if hasattr(model, "hidden_size"):
-            complexity_factor = model.hidden_size / 512
-
-        return batch_size * base_per_sample * complexity_factor
-
-    @staticmethod
-    def _parse_memory_string(mem_str: str) -> float:
-        """Parse memory string to GB."""
-        if mem_str.endswith("G"):
-            return float(mem_str[:-1])
-        if mem_str.endswith("M"):
-            return float(mem_str[:-1]) / 1024
-        if mem_str.endswith("K"):
-            return float(mem_str[:-1]) / (1024 * 1024)
-        return float(mem_str) / (1024 * 1024 * 1024)  # Assume bytes
-
-    @staticmethod
-    def _parse_time_string(time_str: str) -> float:
-        """Parse time string to hours."""
-        # Handle format like "1-00:00:00" or "24:00:00"
-        if "-" in time_str:
-            days, time_part = time_str.split("-")
-            hours_from_days = int(days) * ConfigValidator.HOURS_PER_DAY
-        else:
-            hours_from_days = 0
-            time_part = time_str
-
-        time_parts = time_part.split(":")
-        if len(time_parts) == ConfigValidator.TIME_PARTS_HMS:
-            hours, minutes, seconds = map(int, time_parts)
-            return (
-                hours_from_days
-                + hours
-                + minutes / ConfigValidator.MINUTES_PER_HOUR
-                + seconds / ConfigValidator.SECONDS_PER_HOUR
-            )
-        if len(time_parts) == ConfigValidator.TIME_PARTS_HM:
-            hours, minutes = map(int, time_parts)
-            return hours_from_days + hours + minutes / ConfigValidator.MINUTES_PER_HOUR
-        return hours_from_days + int(time_parts[0])
-
-    @staticmethod
-    def _recommend_partition(memory_gb: float, time_hours: float, gpus: int) -> str:
-        """Recommend SLURM partition based on requirements."""
-        if time_hours > ConfigValidator.PARTITION_LONG_HOURS:
-            return "gpu-long"
-        if (
-            memory_gb > ConfigValidator.PARTITION_HIGH_MEM_GB
-            or gpus > ConfigValidator.PARTITION_HIGH_MEM_GPUS
-        ):
-            return "gpu-high-mem"
-        if time_hours > ConfigValidator.PARTITION_STANDARD_HOURS:
-            return "gpu"
-        return "ckpt-all"
