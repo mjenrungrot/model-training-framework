@@ -12,6 +12,7 @@ import signal
 import sys
 import threading
 import time
+from typing import TypedDict
 
 from data import create_loaders
 from model import SmallMLP
@@ -139,10 +140,17 @@ else:
     PREEMPT_TIMEOUT_SEC = _timeout
 
 
+class _TrainState(TypedDict):
+    last_time: float
+    durations: list[float]
+    counts: dict[str, int]
+    counter: int
+
+
 def make_train_step(start_time: float, preempt_timeout: float | None):
     # Use a mutable holder to track last observed global_step and recent timings
     last_global_step_holder = [-1]
-    state = {
+    state: _TrainState = {
         "last_time": start_time,
         "durations": [],  # rolling batch times
         "counts": {},  # per-loader batch counts
@@ -199,9 +207,7 @@ def make_train_step(start_time: float, preempt_timeout: float | None):
             sps = 0.0
 
         # Accumulation index [i/Y]
-        gas = max(
-            1, getattr(trainer.config.performance, "gradient_accumulation_steps", 1)
-        )
+        gas = max(1, trainer.config.performance.gradient_accumulation_steps)
         state["counter"] += 1
         micro = ((state["counter"] - 1) % gas) + 1
 

@@ -371,9 +371,7 @@ logs/
 
 # Local development scripts
 dev_*.py
-test_*.py
 debug_*.py
-!model_training_framework/tests/test_*.py  # Keep actual test files
 
 # Local notebooks for experimentation
 scratch.ipynb
