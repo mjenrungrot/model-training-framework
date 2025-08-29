@@ -127,9 +127,6 @@ class ConfigValidator:
     SECONDS_PER_HOUR = 3600
     HOURS_PER_DAY = 24
 
-    # Constants for training time estimation
-    BASE_TIME_PER_EPOCH = 0.5  # 30 minutes per epoch
-
     # Known model types and their approximate memory requirements (GB)
     MODEL_MEMORY_ESTIMATES: ClassVar[dict[str, float]] = {
         "resnet18": 0.5,
@@ -587,8 +584,8 @@ class ConfigValidator:
                 f"{requested_memory:.1f}GB requested"
             )
 
-        # Estimate training time
-        check.estimated_time_hours = ConfigValidator._estimate_training_time(config)
+        # Training time estimation removed - too model-specific to generalize
+        check.estimated_time_hours = 1.0  # Default placeholder
 
         # Parse requested time
         requested_time_hours = ConfigValidator._parse_time_string(config.slurm.time)
@@ -669,27 +666,6 @@ class ConfigValidator:
             hours, minutes = map(int, time_parts)
             return hours_from_days + hours + minutes / ConfigValidator.MINUTES_PER_HOUR
         return hours_from_days + int(time_parts[0])
-
-    @staticmethod
-    def _estimate_training_time(config: ExperimentConfig) -> float:
-        """Estimate training time in hours."""
-        # Very rough estimate - in practice this would need more sophisticated modeling
-        base_time_per_epoch = ConfigValidator.BASE_TIME_PER_EPOCH
-
-        # Scale by model complexity
-        complexity_factor = (config.model.hidden_size / 512) * (
-            config.model.num_layers / 6
-        )
-
-        # Scale by batch size (inversely)
-        batch_factor = 64 / config.data.batch_size
-
-        return (
-            config.training.max_epochs
-            * base_time_per_epoch
-            * complexity_factor
-            * batch_factor
-        )
 
     @staticmethod
     def _recommend_partition(memory_gb: float, time_hours: float, gpus: int) -> str:

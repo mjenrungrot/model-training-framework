@@ -307,12 +307,12 @@ class ConfigurationManager:
             if key in config_data:
                 # Use from_dict for flexible configs if available
                 if hasattr(config_class, "from_dict"):
-                    return config_class.from_dict(config_data[key])
+                    return config_class.from_dict(config_data[key])  # type: ignore[attr-defined, no-any-return]
                 return config_class(**config_data[key])
             if required:
                 # Use from_dict for empty dict if available
                 if hasattr(config_class, "from_dict"):
-                    return config_class.from_dict({})
+                    return config_class.from_dict({})  # type: ignore[attr-defined, no-any-return]
                 return config_class()
             return None
 
