@@ -41,6 +41,14 @@ class ModelConfig:
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+    def __str__(self) -> str:
+        output_str = "ModelConfig("
+        output_str += ", ".join(
+            f"{key}={value}" for key, value in self.__dict__.items()
+        )
+        output_str += ")"
+        return output_str
+
 
 @dataclass
 class OptimizerConfig:
@@ -77,6 +85,14 @@ class DataConfig:
         self.dataset_name = dataset_name
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+    def __str__(self) -> str:
+        output_str = "DataConfig("
+        output_str += ", ".join(
+            f"{key}={value}" for key, value in self.__dict__.items()
+        )
+        output_str += ")"
+        return output_str
 
 
 @dataclass
