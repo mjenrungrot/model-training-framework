@@ -759,24 +759,28 @@ def on_epoch_end(trainer, epoch, metrics):
 Multiple logging backends with unified interface:
 
 ```python
-from model_training_framework.trainer import (
-    WandBLogger, TensorBoardLogger, ConsoleLogger, CompositeLogger
+from model_training_framework.trainer.config import LoggingConfig, GenericTrainerConfig
+
+# Single logger (W&B)
+cfg = GenericTrainerConfig(
+    logging=LoggingConfig(
+        logger_type="wandb",
+        wandb_project="my_project",
+        wandb_entity="my_team",
+        log_scalars_every_n_steps=10,
+        log_loader_proportions=True,
+    )
 )
 
-# Single logger
-logger = TensorBoardLogger(log_dir="./tb_logs")
-
-# Multiple loggers
-loggers = CompositeLogger([
-    ConsoleLogger(log_level="INFO"),
-    TensorBoardLogger(log_dir="./tb_logs"),
-    WandBLogger(project="my_project", entity="my_team")
-])
-
-config = GenericTrainerConfig(
+# Multiple loggers (console + tensorboard + wandb)
+cfg = GenericTrainerConfig(
     logging=LoggingConfig(
-        logger=loggers,
-        log_every_n_steps=10,
+        logger_type="composite",
+        composite_loggers=["console", "tensorboard", "wandb"],
+        wandb_project="my_project",
+        wandb_entity="my_team",
+        tensorboard_dir="./tb_logs",
+        log_scalars_every_n_steps=10,
         log_loader_proportions=True,
     )
 )

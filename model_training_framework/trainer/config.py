@@ -317,6 +317,21 @@ class LoggingConfig:
     log_model_parameters: bool = False  # Whether to log model parameter statistics
     log_system_metrics: bool = True  # Whether to log system metrics (GPU, memory, etc.)
 
+    def __post_init__(self) -> None:
+        """Validate WandB-related fields for early, actionable errors."""
+        if self.wandb_mode is not None:
+            valid_modes = {"online", "offline", "disabled"}
+            if self.wandb_mode not in valid_modes:
+                raise ValueError(
+                    f"wandb_mode must be one of {valid_modes}, got {self.wandb_mode!r}"
+                )
+        if self.wandb_resume is not None:
+            valid_resume = {"allow", "must", "never"}
+            if self.wandb_resume not in valid_resume:
+                raise ValueError(
+                    f"wandb_resume must be one of {valid_resume}, got {self.wandb_resume!r}"
+                )
+
 
 @dataclass
 class HooksConfig:
