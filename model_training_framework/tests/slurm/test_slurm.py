@@ -326,6 +326,172 @@ echo "Running {{EXPERIMENT_NAME}}"
         assert "#SBATCH --account={{ACCOUNT}}" in template
         assert "{{SCRIPT_PATH}}" in template
 
+    def test_init_with_template_string(self):
+        """Test initializing engine with template string."""
+        template_string = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "Test template"
+"""
+        engine = SBATCHTemplateEngine(template_string=template_string)
+
+        assert engine.template_string == template_string
+        assert "__string_template__" in engine.template_cache
+        assert engine.template_cache["__string_template__"] == template_string
+
+    def test_load_template_from_string(self):
+        """Test loading template from string."""
+        engine = SBATCHTemplateEngine()
+
+        template_string = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "String template: {{EXPERIMENT_NAME}}"
+"""
+
+        loaded = engine.load_template_from_string(template_string)
+
+        assert loaded == template_string
+        assert engine.template_string == template_string
+        assert "__string_template__" in engine.template_cache
+
+    def test_set_template_string(self):
+        """Test setting template string after initialization."""
+        engine = SBATCHTemplateEngine()
+
+        template_string = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "Updated template"
+"""
+
+        engine.set_template_string(template_string)
+
+        assert engine.template_string == template_string
+        assert "__string_template__" in engine.template_cache
+
+    def test_generate_sbatch_with_string_template(self):
+        """Test generating SBATCH script with string template."""
+        template_string = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "Job: {{JOB_NAME}}"
+echo "Experiment: {{EXPERIMENT_NAME}}"
+"""
+
+        engine = SBATCHTemplateEngine()
+
+        context = TemplateContext(
+            job_name="string_test_job",
+            experiment_name="string_test_exp",
+            script_path="train.py",
+            config_name="config.yaml",
+            account="test_account",
+            partition="test_partition",
+        )
+
+        # Generate with string template passed directly
+        rendered = engine.generate_sbatch_script(
+            context, template_string=template_string
+        )
+
+        assert "#SBATCH --job-name=string_test_job" in rendered
+        assert "#SBATCH --account=test_account" in rendered
+        assert "#SBATCH --partition=test_partition" in rendered
+        assert 'echo "Job: string_test_job"' in rendered
+        assert 'echo "Experiment: string_test_exp"' in rendered
+
+    def test_generate_sbatch_with_default_string_template(self):
+        """Test generating SBATCH script with default string template."""
+        template_string = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "Default string template"
+"""
+
+        # Initialize with default string template
+        engine = SBATCHTemplateEngine(template_string=template_string)
+
+        context = TemplateContext(
+            job_name="default_string_job",
+            experiment_name="default_string_exp",
+            script_path="train.py",
+            config_name="config.yaml",
+        )
+
+        # Generate using default string template
+        rendered = engine.generate_sbatch_script(context)
+
+        assert "#SBATCH --job-name=default_string_job" in rendered
+        assert 'echo "Default string template"' in rendered
+
+    def test_preview_with_string_template(self):
+        """Test preview with string template."""
+        engine = SBATCHTemplateEngine()
+
+        template_string = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "Preview: {{JOB_NAME}}"
+"""
+
+        context = TemplateContext(
+            job_name="preview_job",
+            experiment_name="preview_exp",
+            script_path="train.py",
+            config_name="config.yaml",
+        )
+
+        preview = engine.preview_rendered_script(
+            context, template_string=template_string
+        )
+
+        assert "#SBATCH --job-name=preview_job" in preview
+        assert 'echo "Preview: preview_job"' in preview
+
+    def test_string_template_precedence(self):
+        """Test that string template takes precedence over file template."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            file_template = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "File template"
+"""
+            f.write(file_template)
+            f.flush()
+
+            string_template = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "String template"
+"""
+
+            # Initialize with both file and string
+            engine = SBATCHTemplateEngine(
+                template_path=Path(f.name), template_string=string_template
+            )
+
+            context = TemplateContext(
+                job_name="precedence_job",
+                experiment_name="precedence_exp",
+                script_path="train.py",
+                config_name="config.yaml",
+            )
+
+            # Should use string template
+            rendered = engine.generate_sbatch_script(context)
+
+            assert 'echo "String template"' in rendered
+            assert 'echo "File template"' not in rendered
+
 
 class TestTemplateContext:
     """Test template context functionality."""

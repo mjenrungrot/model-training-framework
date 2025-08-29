@@ -105,17 +105,24 @@ class TemplateContext:
 class SBATCHTemplateEngine:
     """Template engine for generating SBATCH scripts."""
 
-    def __init__(self, template_path: Path | None = None):
+    def __init__(
+        self, template_path: Path | None = None, template_string: str | None = None
+    ):
         """
         Initialize template engine.
 
         Args:
             template_path: Path to default template file
+            template_string: Template content as string (takes precedence over template_path)
         """
         self.template_path = template_path
+        self.template_string = template_string
         self.template_cache: dict[str, str] = {}
 
-        if template_path and template_path.exists():
+        # Load template string if provided (takes precedence)
+        if template_string:
+            self.load_template_from_string(template_string)
+        elif template_path and template_path.exists():
             self.load_template(template_path)
 
     def load_template(self, template_path: Path) -> str:
@@ -143,6 +150,47 @@ class SBATCHTemplateEngine:
 
         except Exception as e:
             raise TemplateError(f"Failed to load template {template_path}: {e}") from e
+
+    def load_template_from_string(self, template_string: str) -> str:
+        """
+        Load template from string content.
+
+        Args:
+            template_string: Template content as string
+
+        Returns:
+            Template content as string
+
+        Raises:
+            TemplateError: If template string is empty or invalid
+        """
+        if not template_string:
+            raise TemplateError("Template string cannot be empty")
+
+        try:
+            # Cache template with special key for string templates
+            cache_key = "__string_template__"
+            self.template_cache[cache_key] = template_string
+            self.template_string = template_string
+
+            logger.debug("Loaded template from string")
+            return template_string
+
+        except Exception as e:
+            raise TemplateError(f"Failed to load template from string: {e}") from e
+
+    def set_template_string(self, template_string: str) -> None:
+        """
+        Set or update the default template string.
+
+        Args:
+            template_string: Template content as string
+
+        Raises:
+            TemplateError: If template string is empty or invalid
+        """
+        self.load_template_from_string(template_string)
+        logger.debug("Updated default template string")
 
     def validate_template(self, template_content: str) -> list[str]:
         """
@@ -270,6 +318,7 @@ class SBATCHTemplateEngine:
         self,
         context: TemplateContext | dict[str, Any],
         template_path: Path | None = None,
+        template_string: str | None = None,
         output_path: Path | None = None,
     ) -> str:
         """
@@ -278,6 +327,7 @@ class SBATCHTemplateEngine:
         Args:
             context: Template context
             template_path: Optional template path (uses default if None)
+            template_string: Optional template string (takes precedence over template_path)
             output_path: Optional output path to save script
 
         Returns:
@@ -286,13 +336,17 @@ class SBATCHTemplateEngine:
         Raises:
             TemplateError: If script generation fails
         """
-        # Load template
-        if template_path:
+        # Load template (string takes precedence over path)
+        if template_string:
+            template_content = template_string
+        elif template_path:
             template_content = self.load_template(template_path)
+        elif self.template_string:
+            template_content = self.template_string
         elif self.template_path:
             template_content = self.load_template(self.template_path)
         else:
-            raise TemplateError("No template path provided")
+            raise TemplateError("No template path or string provided")
 
         # Validate template
         issues = self.validate_template(template_content)
@@ -401,6 +455,7 @@ echo "Job completed at $(date)"
         self,
         context: TemplateContext | dict[str, Any],
         template_path: Path | None = None,
+        template_string: str | None = None,
     ) -> str:
         """
         Preview rendered script without saving.
@@ -408,11 +463,14 @@ echo "Job completed at $(date)"
         Args:
             context: Template context
             template_path: Optional template path
+            template_string: Optional template string (takes precedence over template_path)
 
         Returns:
             Rendered script preview
         """
-        return self.generate_sbatch_script(context, template_path, output_path=None)
+        return self.generate_sbatch_script(
+            context, template_path, template_string, output_path=None
+        )
 
 
 def create_template_context_from_config(
