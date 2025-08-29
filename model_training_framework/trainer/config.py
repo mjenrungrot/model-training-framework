@@ -276,6 +276,10 @@ class LoggingConfig:
     wandb_entity: str | None = None  # W&B entity/team name
     wandb_tags: list[str] = field(default_factory=list)  # Tags for W&B experiment
     wandb_notes: str | None = None  # Notes for W&B experiment
+    wandb_name: str | None = None  # Run name for W&B
+    wandb_mode: str | None = None  # W&B mode (online, offline, disabled)
+    wandb_id: str | None = None  # Unique run ID for W&B
+    wandb_resume: str | None = None  # W&B resume strategy
 
     # TensorBoard configuration
     use_tensorboard: bool = False  # Whether to use TensorBoard logging
@@ -312,6 +316,21 @@ class LoggingConfig:
     log_gradients: bool = False  # Whether to log gradient statistics
     log_model_parameters: bool = False  # Whether to log model parameter statistics
     log_system_metrics: bool = True  # Whether to log system metrics (GPU, memory, etc.)
+
+    def __post_init__(self) -> None:
+        """Validate WandB-related fields for early, actionable errors."""
+        if self.wandb_mode is not None:
+            valid_modes = {"online", "offline", "disabled"}
+            if self.wandb_mode not in valid_modes:
+                raise ValueError(
+                    f"wandb_mode must be one of {valid_modes}, got {self.wandb_mode!r}"
+                )
+        if self.wandb_resume is not None:
+            valid_resume = {"allow", "must", "never"}
+            if self.wandb_resume not in valid_resume:
+                raise ValueError(
+                    f"wandb_resume must be one of {valid_resume}, got {self.wandb_resume!r}"
+                )
 
 
 @dataclass

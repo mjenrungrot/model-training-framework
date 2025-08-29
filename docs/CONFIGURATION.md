@@ -113,15 +113,16 @@ slurm:
 
 # Logging configuration
 logging:
-  log_level: "INFO"
-  log_file: "training.log"
-  console_log: true
   use_wandb: true
   wandb_project: "my_project"
   wandb_entity: "my_team"
   wandb_tags: ["experiment", "baseline"]
-  log_every_n_steps: 10
-  save_code: true
+  wandb_name: "experiment-1"
+  wandb_mode: "online"      # one of: online|offline|disabled
+  wandb_id: "run-123"        # stable unique run id
+  wandb_resume: "allow"      # one of: allow|must|never
+  log_scalars_every_n_steps: 10
+  log_images_every_n_steps: 500
 
 # Checkpoint configuration
 checkpoint:
@@ -418,6 +419,9 @@ data:
 logging:
   wandb_project: "${WANDB_PROJECT}"
   wandb_entity: "${WANDB_ENTITY}"
+  wandb_mode: "${WANDB_MODE}"       # online|offline|disabled
+  wandb_id: "${WANDB_RUN_ID}"
+  wandb_resume: "${WANDB_RESUME}"   # allow|must|never
 
 slurm:
   account: "${SLURM_ACCOUNT}"
@@ -447,11 +451,19 @@ ${BASE_DIR}/${SUB_DIR}
 # In your shell or job script
 export DATA_ROOT="/scratch/datasets"
 export WANDB_PROJECT="my_experiments"
+export WANDB_ENTITY="my_team"
+export WANDB_MODE="online"          # or offline|disabled
+export WANDB_RUN_ID="run-123"
+export WANDB_RESUME="allow"          # or must|never
 export SLURM_ACCOUNT="research_group"
 
 # Or in a .env file (if using python-dotenv)
 DATA_ROOT=/scratch/datasets
 WANDB_PROJECT=my_experiments
+WANDB_ENTITY=my_team
+WANDB_MODE=online
+WANDB_RUN_ID=run-123
+WANDB_RESUME=allow
 SLURM_ACCOUNT=research_group
 ```
 

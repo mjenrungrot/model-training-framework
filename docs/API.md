@@ -698,11 +698,11 @@ slurm:
   additional_args: []
 
 logging:
-  log_level: "INFO"
   use_wandb: true
   wandb_project: "my_project"
   wandb_entity: "my_team"
-  log_every_n_steps: 10
+  log_scalars_every_n_steps: 10
+  log_images_every_n_steps: 500
 
 checkpoint:
   save_every_n_epochs: 5

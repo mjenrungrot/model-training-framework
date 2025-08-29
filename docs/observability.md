@@ -29,7 +29,11 @@ from model_training_framework.trainer.config import LoggingConfig
 config = LoggingConfig(
     logger_type="wandb",
     wandb_project="my-project",
-    wandb_entity="my-team"
+    wandb_entity="my-team",
+    wandb_name="run-name",
+    wandb_mode="online",
+    wandb_id="abc123",
+    wandb_resume="allow",
 )
 
 # Composite logger with explicit list
@@ -40,6 +44,15 @@ config = LoggingConfig(
     tensorboard_dir="./tb_logs"
 )
 ```
+
+Field semantics:
+
+- wandb_mode: one of "online", "offline", "disabled". If omitted, honors the WANDB_MODE environment variable.
+- wandb_resume: one of "allow", "must", "never". Use together with wandb_id to continue a previous run.
+- wandb_id: stable unique run ID to resume or de-duplicate runs.
+- wandb_name: human-readable run display name (does not affect resume).
+
+Note: WandB runs are created only on the primary rank when using DDP. If wandb_mode is not set in the config, the WANDB_MODE environment variable (if present) is respected.
 
 ### Composite Logger
 

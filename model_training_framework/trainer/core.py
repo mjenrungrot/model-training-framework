@@ -12,6 +12,8 @@ This module provides the GenericTrainer class - the main training engine with:
 
 from __future__ import annotations
 
+from dataclasses import asdict
+from enum import Enum
 import logging
 import os
 from pathlib import Path
@@ -69,6 +71,35 @@ if TYPE_CHECKING:
     # No direct import of ResumeState needed here; runtime-safe alias is used below
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe(obj: Any) -> Any:
+    """Convert objects to JSON-serializable structures.
+
+    - Enum -> value
+    - Path -> str
+    - dict/list/tuple/set -> recursively converted containers
+    - int/float/str/bool/None -> unchanged
+    - other -> str(obj)
+    """
+    result: Any
+    match obj:
+        case None:
+            result = None
+        case int() | float() | str() | bool():
+            result = obj
+        case Enum():
+            result = obj.value
+        case Path():
+            result = str(obj)
+        case dict():
+            result = {k: _json_safe(v) for k, v in obj.items()}
+        case list() | tuple() | set():
+            result = [_json_safe(v) for v in obj]
+        case _:
+            result = str(obj)
+    return result
+
 
 # Runtime reference to ResumeState for isinstance/attribute access without triggering import cycles
 # Use a module import to avoid assigning to a type alias
@@ -287,6 +318,11 @@ class GenericTrainer:
                 entity=config.logging.wandb_entity,
                 tags=config.logging.wandb_tags,
                 notes=config.logging.wandb_notes,
+                run_name=config.logging.wandb_name,
+                mode=config.logging.wandb_mode,
+                id=config.logging.wandb_id,
+                resume=config.logging.wandb_resume,
+                config=_json_safe(asdict(config)),
                 loggers_list=config.logging.composite_loggers,
             )
 
