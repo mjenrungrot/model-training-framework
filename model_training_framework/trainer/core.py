@@ -12,10 +12,10 @@ This module provides the GenericTrainer class - the main training engine with:
 
 from __future__ import annotations
 
+from dataclasses import asdict
 import logging
 import os
 from pathlib import Path
-from dataclasses import asdict
 import subprocess
 import time
 from typing import TYPE_CHECKING, Any, Protocol, cast
