@@ -9,7 +9,6 @@ This module provides comprehensive configuration management for the training fra
 """
 
 from .grid_search import (
-    GridSearchExecutor,
     GridSearchResult,
     ParameterGrid,
     ParameterGridSearch,
@@ -48,7 +47,6 @@ __all__ = [
     "ExperimentConfig",
     # Naming
     "ExperimentNaming",
-    "GridSearchExecutor",
     "GridSearchResult",
     "LoggingConfig",
     "ModelConfig",

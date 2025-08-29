@@ -10,20 +10,19 @@ This module provides sophisticated parameter grid search capabilities:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 import itertools
 import json
 import logging
 from pathlib import Path
-import time
 from typing import TYPE_CHECKING, Any
 
 from .naming import ExperimentNaming
 from .schemas import (
     CheckpointConfig,
     DataConfig,
-    ExecutionMode,
     ExperimentConfig,
     GridSearchConfig,
     LoggingConfig,
@@ -48,33 +47,80 @@ MAX_GRID_COMBINATIONS = 10000
 
 @dataclass
 class ParameterGrid:
-    """Defines a parameter search space."""
+    """Defines a parameter search space with improved API.
+
+    Attributes:
+        name: Name of the parameter grid
+        description: Optional description of what this grid explores
+        parameters: Dictionary mapping parameter paths to lists of values
+    """
 
     name: str
     description: str = ""
     parameters: dict[str, list[Any]] = field(default_factory=dict)
 
-    def add_parameter(self, key: str, values: list[Any]) -> None:
-        """Add a parameter with possible values."""
+    def add_parameter(
+        self, key: str, values: list[Any], validate: Callable[[Any], bool] | None = None
+    ) -> ParameterGrid:
+        """Add a parameter with possible values.
+
+        Args:
+            key: Parameter path (e.g., 'model.lr' or 'training.batch_size')
+            values: List of possible values for this parameter
+            validate: Optional validation function for values
+
+        Returns:
+            Self for method chaining
+
+        Raises:
+            ValueError: If values is empty or validation fails
+        """
         if not values:
             raise ValueError(f"Parameter '{key}' must have at least one value")
+
+        if validate:
+            invalid_values = [v for v in values if not validate(v)]
+            if invalid_values:
+                raise ValueError(f"Invalid values for '{key}': {invalid_values}")
+
         self.parameters[key] = values
         logger.debug(
             f"Added parameter '{key}' with {len(values)} values to grid '{self.name}'"
         )
+        return self
 
-    def add_nested_parameter(self, key_path: str, values: list[Any]) -> None:
-        """Add nested parameter (e.g., 'model.lr', 'optimizer.weight_decay')."""
-        self.add_parameter(key_path, values)
+    def add_nested_parameter(self, key_path: str, values: list[Any]) -> ParameterGrid:
+        """Add nested parameter (e.g., 'model.lr', 'optimizer.weight_decay').
 
-    def remove_parameter(self, key: str) -> None:
-        """Remove a parameter from the grid."""
+        Args:
+            key_path: Dot-separated path to parameter
+            values: List of possible values
+
+        Returns:
+            Self for method chaining
+        """
+        return self.add_parameter(key_path, values)
+
+    def remove_parameter(self, key: str) -> ParameterGrid:
+        """Remove a parameter from the grid.
+
+        Args:
+            key: Parameter key to remove
+
+        Returns:
+            Self for method chaining
+        """
         if key in self.parameters:
             del self.parameters[key]
             logger.debug(f"Removed parameter '{key}' from grid '{self.name}'")
+        return self
 
     def get_parameter_count(self) -> int:
-        """Get total number of parameter combinations."""
+        """Get total number of parameter combinations.
+
+        Returns:
+            Number of unique parameter combinations
+        """
         if not self.parameters:
             return 0
 
@@ -84,11 +130,19 @@ class ParameterGrid:
         return count
 
     def get_parameter_names(self) -> set[str]:
-        """Get set of all parameter names."""
+        """Get set of all parameter names.
+
+        Returns:
+            Set of parameter keys
+        """
         return set(self.parameters.keys())
 
     def generate_permutations(self) -> Iterator[dict[str, Any]]:
-        """Generate all parameter combinations."""
+        """Generate all parameter combinations.
+
+        Yields:
+            Dictionary mapping parameter keys to values
+        """
         if not self.parameters:
             yield {}
             return
@@ -100,7 +154,11 @@ class ParameterGrid:
             yield dict(zip(keys, combination))
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
+        """Convert to dictionary for serialization.
+
+        Returns:
+            Dictionary representation
+        """
         return {
             "name": self.name,
             "description": self.description,
@@ -109,35 +167,98 @@ class ParameterGrid:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ParameterGrid:
-        """Create from dictionary."""
-        grid = cls(name=data["name"], description=data.get("description", ""))
-        grid.parameters = data.get("parameters", {})
-        return grid
+        """Create from dictionary.
+
+        Args:
+            data: Dictionary containing grid configuration
+
+        Returns:
+            ParameterGrid instance
+        """
+        return cls(
+            name=data["name"],
+            description=data.get("description", ""),
+            parameters=data.get("parameters", {}),
+        )
+
+    def validate(self) -> list[str]:
+        """Validate the parameter grid.
+
+        Returns:
+            List of validation issues (empty if valid)
+        """
+        issues = []
+
+        if not self.name:
+            issues.append("Grid name is required")
+
+        if self.get_parameter_count() == 0:
+            issues.append(f"Grid '{self.name}' has no parameter combinations")
+        elif self.get_parameter_count() > MAX_GRID_COMBINATIONS:
+            issues.append(
+                f"Grid '{self.name}' has too many combinations: {self.get_parameter_count()}"
+            )
+
+        return issues
 
 
 @dataclass
 class GridSearchResult:
-    """Result of a parameter grid search execution."""
+    """Result of a parameter grid search execution with improved API.
+
+    Attributes:
+        grid_config: Configuration used for the grid search
+        total_experiments: Total number of experiments generated
+        generated_experiments: List of generated experiment configurations
+        submitted_jobs: List of successfully submitted job IDs
+        failed_submissions: List of (experiment_name, error) tuples
+        execution_time: Total execution time in seconds
+        output_directory: Directory where results are stored
+    """
 
     grid_config: GridSearchConfig
     total_experiments: int
     generated_experiments: list[ExperimentConfig] = field(default_factory=list)
     submitted_jobs: list[str] = field(default_factory=list)
-    failed_submissions: list[tuple[str, str]] = field(
-        default_factory=list
-    )  # (experiment_name, error)
+    failed_submissions: list[tuple[str, str]] = field(default_factory=list)
     execution_time: float = 0.0
     output_directory: Path | None = None
 
     @property
     def success_rate(self) -> float:
-        """Calculate submission success rate."""
+        """Calculate submission success rate.
+
+        Returns:
+            Success rate as a fraction (0.0 to 1.0)
+        """
         if self.total_experiments == 0:
             return 1.0
         return len(self.submitted_jobs) / self.total_experiments
 
+    @property
+    def failure_rate(self) -> float:
+        """Calculate submission failure rate.
+
+        Returns:
+            Failure rate as a fraction (0.0 to 1.0)
+        """
+        return 1.0 - self.success_rate
+
+    @property
+    def is_complete(self) -> bool:
+        """Check if all experiments were submitted successfully.
+
+        Returns:
+            True if all experiments succeeded
+        """
+        return len(self.failed_submissions) == 0
+
     def get_summary(self) -> dict[str, Any]:
-        """Get execution summary."""
+        """Get execution summary.
+
+        Returns:
+            Dictionary with summary statistics
+        """
         return {
             "grid_name": self.grid_config.name,
             "total_experiments": self.total_experiments,
@@ -150,48 +271,133 @@ class GridSearchResult:
             else None,
         }
 
+    def save_summary(self, path: Path | None = None) -> Path:
+        """Save summary to JSON file.
+
+        Args:
+            path: Optional path for summary file. If None, saves to output_directory.
+
+        Returns:
+            Path where summary was saved
+
+        Raises:
+            ValueError: If no path provided and no output_directory set
+        """
+        if path is None:
+            if self.output_directory is None:
+                raise ValueError("No path provided and output_directory not set")
+            path = self.output_directory / "execution_summary.json"
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w") as f:
+            json.dump(self.get_summary(), f, indent=2)
+
+        logger.info(f"Saved grid search summary to {path}")
+        return path
+
 
 class ParameterGridSearch:
-    """Handles parameter permutation and experiment naming."""
+    """Handles parameter permutation and experiment naming with improved API."""
 
-    def __init__(self, base_config: dict[str, Any]):
-        """Initialize with base configuration."""
-        # Deep copy to avoid shared nested structures across experiments
-        self.base_config = deepcopy(base_config)
+    def __init__(self, base_config: ExperimentConfig | dict[str, Any]):
+        """Initialize with base configuration.
+
+        Args:
+            base_config: Either an ExperimentConfig object or a dictionary
+        """
+        # Convert ExperimentConfig to dict if needed, then deep copy
+        if isinstance(base_config, ExperimentConfig):
+            self.base_config = deepcopy(self._experiment_config_to_dict(base_config))
+            self._base_experiment_config = base_config
+        else:
+            self.base_config = deepcopy(base_config)
+            self._base_experiment_config = None
+
         self.parameter_grids: list[ParameterGrid] = []
         self.naming_strategy = NamingStrategy.HASH_BASED
 
-    def add_grid(self, grid: ParameterGrid) -> None:
-        """Add a parameter grid for exploration."""
+    def add_grid(self, grid: ParameterGrid) -> ParameterGridSearch:
+        """Add a parameter grid for exploration.
+
+        Args:
+            grid: ParameterGrid to add
+
+        Returns:
+            Self for method chaining
+        """
+        # Validate the grid first
+        issues = grid.validate()
+        if issues:
+            logger.warning(f"Grid '{grid.name}' has validation issues: {issues}")
+
         self.parameter_grids.append(grid)
         logger.info(
             f"Added parameter grid '{grid.name}' with {grid.get_parameter_count()} combinations"
         )
+        return self
 
     def create_grid(self, name: str, description: str = "") -> ParameterGrid:
-        """Create and add a new parameter grid."""
+        """Create and add a new parameter grid.
+
+        Args:
+            name: Name for the new grid
+            description: Optional description
+
+        Returns:
+            The created ParameterGrid
+        """
         grid = ParameterGrid(name=name, description=description)
         self.add_grid(grid)
         return grid
 
-    def set_naming_strategy(self, strategy: NamingStrategy) -> None:
-        """Set the experiment naming strategy."""
+    def remove_grid(self, name: str) -> ParameterGridSearch:
+        """Remove a parameter grid by name.
+
+        Args:
+            name: Name of grid to remove
+
+        Returns:
+            Self for method chaining
+        """
+        self.parameter_grids = [g for g in self.parameter_grids if g.name != name]
+        return self
+
+    def set_naming_strategy(self, strategy: NamingStrategy) -> ParameterGridSearch:
+        """Set the experiment naming strategy.
+
+        Args:
+            strategy: NamingStrategy to use
+
+        Returns:
+            Self for method chaining
+        """
         self.naming_strategy = strategy
         logger.debug(f"Set naming strategy to {strategy.value}")
+        return self
 
     def get_total_experiments(self) -> int:
-        """Get total number of experiments across all grids."""
-        total = 0
-        for grid in self.parameter_grids:
-            total += grid.get_parameter_count()
-        return total
+        """Get total number of experiments across all grids.
+
+        Returns:
+            Total number of experiments that will be generated
+        """
+        return sum(grid.get_parameter_count() for grid in self.parameter_grids)
 
     def validate_grids(self) -> list[str]:
-        """Validate parameter grids and return any issues."""
+        """Validate all parameter grids and check for conflicts.
+
+        Returns:
+            List of validation issues (empty if valid)
+        """
         issues = []
 
         if not self.parameter_grids:
             issues.append("No parameter grids defined")
+
+        # Check each grid individually
+        for grid in self.parameter_grids:
+            grid_issues = grid.validate()
+            issues.extend(f"Grid '{grid.name}': {issue}" for issue in grid_issues)
 
         # Check for conflicting parameter paths
         all_params: set[str] = set()
@@ -202,21 +408,27 @@ class ParameterGridSearch:
                 issues.append(f"Parameter conflicts between grids: {conflicts}")
             all_params.update(grid_params)
 
-        # Check grid sizes
-        for grid in self.parameter_grids:
-            if grid.get_parameter_count() == 0:
-                issues.append(f"Grid '{grid.name}' has no parameter combinations")
-            elif grid.get_parameter_count() > MAX_GRID_COMBINATIONS:
-                issues.append(
-                    f"Grid '{grid.name}' has too many combinations: {grid.get_parameter_count()}"
-                )
+        # Check total experiment count
+        total = self.get_total_experiments()
+        if total > MAX_GRID_COMBINATIONS:
+            issues.append(
+                f"Total experiments ({total}) exceeds maximum ({MAX_GRID_COMBINATIONS})"
+            )
 
         return issues
 
     def _apply_parameters_to_config(
         self, config: dict[str, Any], parameters: dict[str, Any]
     ) -> dict[str, Any]:
-        """Apply parameter overrides to config using nested key paths."""
+        """Apply parameter overrides to config using nested key paths.
+
+        Args:
+            config: Base configuration dictionary
+            parameters: Parameters to apply
+
+        Returns:
+            New configuration with parameters applied
+        """
         # Deep copy to isolate nested structures for each experiment
         result = deepcopy(config)
 
@@ -228,7 +440,13 @@ class ParameterGridSearch:
     def _set_nested_value(
         self, config: dict[str, Any], key_path: str, value: Any
     ) -> None:
-        """Set a nested value in config using dot notation."""
+        """Set a nested value in config using dot notation.
+
+        Args:
+            config: Configuration dictionary to modify
+            key_path: Dot-separated path to value
+            value: Value to set
+        """
         keys = key_path.split(".")
         current = config
 
@@ -245,7 +463,11 @@ class ParameterGridSearch:
         current[keys[-1]] = value
 
     def generate_experiments(self) -> Iterator[ExperimentConfig]:
-        """Generate all experiment configurations."""
+        """Generate all experiment configurations.
+
+        Yields:
+            ExperimentConfig for each parameter combination
+        """
         for grid in self.parameter_grids:
             for parameters in grid.generate_permutations():
                 # Apply parameters to base config
@@ -265,7 +487,6 @@ class ParameterGridSearch:
 
                 # Convert to ExperimentConfig
                 try:
-                    # This is a simplified conversion - in practice, you'd want more robust config parsing
                     experiment_config = self._dict_to_experiment_config(
                         experiment_config_dict
                     )
@@ -281,6 +502,9 @@ class ParameterGridSearch:
 
         Useful when callers want to handle ExperimentConfig conversion
         themselves (e.g., via ConfigurationManager) or serialize raw dicts.
+
+        Yields:
+            Dictionary for each parameter combination
         """
         for grid in self.parameter_grids:
             for parameters in grid.generate_permutations():
@@ -294,6 +518,65 @@ class ParameterGridSearch:
                 )
                 yield cfg
 
+    def _experiment_config_to_dict(self, config: ExperimentConfig) -> dict[str, Any]:
+        """Convert ExperimentConfig to dictionary.
+
+        Args:
+            config: ExperimentConfig to convert
+
+        Returns:
+            Dictionary representation of the config
+        """
+        # Use asdict but handle custom configs specially
+        result = {}
+
+        # Required fields
+        result["experiment_name"] = config.experiment_name
+
+        # Convert each config component
+        result["model"] = (
+            config.model.to_dict()
+            if hasattr(config.model, "to_dict")
+            else asdict(config.model)
+        )
+        result["data"] = (
+            config.data.to_dict()
+            if hasattr(config.data, "to_dict")
+            else asdict(config.data)
+        )
+        result["training"] = asdict(config.training)
+        result["optimizer"] = asdict(config.optimizer)
+
+        # Optional fields
+        if config.scheduler:
+            result["scheduler"] = asdict(config.scheduler)
+        if config.slurm:
+            result["slurm"] = asdict(config.slurm)
+
+        result["logging"] = asdict(config.logging)
+        result["checkpoint"] = asdict(config.checkpoint)
+        result["preemption"] = asdict(config.preemption)
+        result["performance"] = asdict(config.performance)
+
+        # Metadata
+        if config.description:
+            result["description"] = config.description
+        result["tags"] = config.tags
+        if config.created_by:
+            result["created_by"] = config.created_by
+        if config.created_at:
+            result["created_at"] = config.created_at
+        result["version"] = config.version
+
+        # Runtime settings
+        if config.seed is not None:
+            result["seed"] = config.seed
+        result["deterministic"] = config.deterministic
+        result["benchmark"] = config.benchmark
+        result["custom_params"] = config.custom_params
+
+        return result
+
     def _dict_to_experiment_config(
         self, config_dict: dict[str, Any]
     ) -> ExperimentConfig:
@@ -301,6 +584,12 @@ class ParameterGridSearch:
 
         Mirrors ConfigurationManager's conversion so all sections are preserved
         (checkpoint, preemption, performance, slurm, custom_params, etc.).
+
+        Args:
+            config_dict: Dictionary to convert
+
+        Returns:
+            ExperimentConfig instance
         """
         # Nested configs (safe defaults when missing)
         # Use from_dict for flexible configs, direct instantiation for others
@@ -347,7 +636,11 @@ class ParameterGridSearch:
         )
 
     def save_grid_config(self, output_path: Path) -> None:
-        """Save grid search configuration to file."""
+        """Save grid search configuration to file.
+
+        Args:
+            output_path: Path where to save configuration
+        """
         config_data = {
             "base_config": self.base_config,
             "naming_strategy": self.naming_strategy.value,
@@ -362,7 +655,14 @@ class ParameterGridSearch:
 
     @classmethod
     def load_grid_config(cls, config_path: Path) -> ParameterGridSearch:
-        """Load grid search configuration from file."""
+        """Load grid search configuration from file.
+
+        Args:
+            config_path: Path to configuration file
+
+        Returns:
+            ParameterGridSearch instance
+        """
         with config_path.open() as f:
             config_data = json.load(f)
 
@@ -377,95 +677,3 @@ class ParameterGridSearch:
 
         logger.info(f"Loaded grid search configuration from {config_path}")
         return grid_search
-
-
-class GridSearchExecutor:
-    """Orchestrates parameter grid search execution."""
-
-    def __init__(self, launcher=None, config_manager=None):
-        """Initialize with launcher and config manager."""
-        self.launcher = launcher
-        self.config_manager = config_manager
-
-    def execute_grid_search(
-        self,
-        grid_search: ParameterGridSearch,
-        execution_mode: ExecutionMode = ExecutionMode.SLURM,
-        output_dir: Path | None = None,
-        max_concurrent_jobs: int | None = None,
-    ) -> GridSearchResult:
-        """Execute parameter grid search."""
-        start_time = time.time()
-
-        # Validate grids
-        issues = grid_search.validate_grids()
-        if issues:
-            raise ValueError(f"Grid validation failed: {issues}")
-
-        # Setup output directory
-        if output_dir is None:
-            output_dir = Path(f"grid_search_{int(start_time)}")
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Save grid configuration
-        grid_search.save_grid_config(output_dir / "grid_config.json")
-
-        # Generate experiments
-        experiments = list(grid_search.generate_experiments())
-        total_experiments = len(experiments)
-
-        logger.info(f"Generated {total_experiments} experiments for grid search")
-
-        # Create result object
-        grid_config = GridSearchConfig(
-            name=f"grid_search_{int(start_time)}",
-            base_config=grid_search.base_config,
-            execution_mode=execution_mode,
-            output_dir=str(output_dir),
-        )
-
-        result = GridSearchResult(
-            grid_config=grid_config,
-            total_experiments=total_experiments,
-            output_directory=output_dir,
-            generated_experiments=experiments,
-        )
-
-        # Execute based on mode
-        if execution_mode == ExecutionMode.DRY_RUN:
-            logger.info("Dry run mode - not executing experiments")
-            result.submitted_jobs = [exp.experiment_name for exp in experiments]
-
-        elif execution_mode == ExecutionMode.LOCAL:
-            logger.info("Local execution not yet implemented")
-            # TODO: Implement local execution
-
-        elif execution_mode == ExecutionMode.SLURM:
-            if self.launcher is None:
-                raise ValueError("SLURM launcher required for SLURM execution mode")
-
-            # Submit experiments to SLURM
-            try:
-                submission_result = self.launcher.submit_experiment_batch(experiments)
-                result.submitted_jobs = submission_result.successful_jobs
-                result.failed_submissions = [
-                    (exp_name, error)
-                    for exp_name, error in submission_result.failed_jobs.items()
-                ]
-            except Exception as e:
-                logger.exception("Failed to submit experiments")
-                result.failed_submissions = [
-                    (exp.experiment_name, str(e)) for exp in experiments
-                ]
-
-        result.execution_time = time.time() - start_time
-
-        # Save result summary
-        summary_path = output_dir / "execution_summary.json"
-        with summary_path.open("w") as f:
-            json.dump(result.get_summary(), f, indent=2)
-
-        logger.info(f"Grid search completed in {result.execution_time:.2f}s")
-        logger.info(f"Success rate: {result.success_rate:.2%}")
-
-        return result
