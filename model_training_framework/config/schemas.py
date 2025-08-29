@@ -756,8 +756,11 @@ class GenericTrainerConfig:
                 "clip_grad_norm": self.performance.clip_grad_norm,
             },
             "logging": {
+                "logger_type": self.logging.logger_type,
                 "use_wandb": self.logging.use_wandb,
                 "wandb_project": self.logging.wandb_project,
+                "use_tensorboard": self.logging.use_tensorboard,
+                "use_csv": self.logging.use_csv,
                 "log_scalars_every_n_steps": self.logging.log_scalars_every_n_steps,
             },
             "training": {
