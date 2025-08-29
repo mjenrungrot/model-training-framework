@@ -306,12 +306,13 @@ class ParameterGridSearch:
             base_config: Either an ExperimentConfig object or a dictionary
         """
         # Convert ExperimentConfig to dict if needed, then deep copy
+        self._base_experiment_config: ExperimentConfig | None
         if isinstance(base_config, ExperimentConfig):
             self.base_config = deepcopy(self._experiment_config_to_dict(base_config))
-            self._base_experiment_config: ExperimentConfig | None = base_config
+            self._base_experiment_config = base_config
         else:
             self.base_config = deepcopy(base_config)
-            self._base_experiment_config: ExperimentConfig | None = None
+            self._base_experiment_config = None
 
         self.parameter_grids: list[ParameterGrid] = []
         self.naming_strategy = NamingStrategy.HASH_BASED
