@@ -851,7 +851,7 @@ def on_epoch_end(trainer, epoch, metrics):
 Multiple logging backends with unified interface:
 
 ```python
-from model_training_framework.trainer.config import LoggingConfig, GenericTrainerConfig
+from model_training_framework.config.schemas import LoggingConfig, GenericTrainerConfig
 
 # Single logger (W&B)
 cfg = GenericTrainerConfig(

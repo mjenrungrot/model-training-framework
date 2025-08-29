@@ -5,7 +5,7 @@ This test file documents the gaps between configuration and implementation
 for metrics aggregation that need to be fixed.
 """
 
-from model_training_framework.trainer.config import ValAggregation, ValidationConfig
+from model_training_framework.config.schemas import ValAggregation, ValidationConfig
 from model_training_framework.trainer.metrics import AggregationStrategy, MetricsManager
 
 

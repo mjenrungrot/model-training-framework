@@ -16,9 +16,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, Dataset, DistributedSampler
 
-from model_training_framework.tests.conftest import MockFabric
-from model_training_framework.trainer.checkpoints import CheckpointPayload
-from model_training_framework.trainer.config import (
+from model_training_framework.config.schemas import (
     CheckpointConfig,
     EpochLengthPolicy,
     GenericTrainerConfig,
@@ -29,6 +27,8 @@ from model_training_framework.trainer.config import (
     ValidationConfig,
     ValidationFrequency,
 )
+from model_training_framework.tests.conftest import MockFabric
+from model_training_framework.trainer.checkpoints import CheckpointPayload
 from model_training_framework.trainer.core import GenericTrainer
 from model_training_framework.trainer.multi_dataloader import DataLoaderManager
 from model_training_framework.trainer.utils import (

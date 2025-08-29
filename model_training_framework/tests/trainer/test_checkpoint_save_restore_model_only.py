@@ -16,13 +16,13 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from model_training_framework.trainer.checkpoints import CheckpointManager
-from model_training_framework.trainer.config import (
+from model_training_framework.config.schemas import (
     CheckpointConfig,
     EpochLengthPolicy,
     MultiDataLoaderConfig,
     SamplingStrategy,
 )
+from model_training_framework.trainer.checkpoints import CheckpointManager
 from model_training_framework.trainer.multi_dataloader import DataLoaderManager
 from model_training_framework.trainer.states import create_initial_resume_state
 

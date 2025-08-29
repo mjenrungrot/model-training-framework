@@ -19,6 +19,12 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
 from model_training_framework.config import ConfigurationManager, ExperimentConfig
+from model_training_framework.config.schemas import (
+    EpochLengthPolicy,
+    SamplingStrategy,
+    ValAggregation,
+    ValidationFrequency,
+)
 from model_training_framework.trainer import (
     CheckpointConfig,
     DDPConfig,
@@ -29,12 +35,6 @@ from model_training_framework.trainer import (
     MultiDataLoaderConfig,
     PerformanceConfig,
     ValidationConfig,
-)
-from model_training_framework.trainer.config import (
-    EpochLengthPolicy,
-    SamplingStrategy,
-    ValAggregation,
-    ValidationFrequency,
 )
 
 # Treat this demo folder as the project root
