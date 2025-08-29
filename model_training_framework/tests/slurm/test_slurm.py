@@ -37,6 +37,7 @@ from model_training_framework.slurm.git_ops import (
 from model_training_framework.slurm.templates import (
     SBATCHTemplateEngine,
     TemplateContext,
+    TemplateError,
     create_template_context_from_config,
 )
 
@@ -325,6 +326,260 @@ echo "Running {{EXPERIMENT_NAME}}"
         assert "#SBATCH --job-name={{JOB_NAME}}" in template
         assert "#SBATCH --account={{ACCOUNT}}" in template
         assert "{{SCRIPT_PATH}}" in template
+
+    def test_init_with_template_string(self):
+        """Test initializing engine with template string."""
+        template_string = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "Test template"
+"""
+        engine = SBATCHTemplateEngine(template_string=template_string)
+
+        assert engine.template_string == template_string
+        # Check that a content-hashed key exists in cache
+        cache_keys = list(engine.template_cache.keys())
+        assert any("string_template_" in key for key in cache_keys)
+        # Verify the template is cached
+        assert template_string in engine.template_cache.values()
+
+    def test_load_template_from_string(self):
+        """Test loading template from string."""
+        engine = SBATCHTemplateEngine()
+
+        template_string = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "String template: {{EXPERIMENT_NAME}}"
+"""
+
+        loaded = engine.load_template_from_string(template_string)
+
+        assert loaded == template_string
+        assert engine.template_string == template_string
+        # Check that a content-hashed key exists in cache
+        cache_keys = list(engine.template_cache.keys())
+        assert any("string_template_" in key for key in cache_keys)
+
+    def test_set_template_string(self):
+        """Test setting template string after initialization."""
+        engine = SBATCHTemplateEngine()
+
+        template_string = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "Updated template"
+"""
+
+        engine.set_template_string(template_string)
+
+        assert engine.template_string == template_string
+        # Check that a content-hashed key exists in cache
+        cache_keys = list(engine.template_cache.keys())
+        assert any("string_template_" in key for key in cache_keys)
+
+    def test_generate_sbatch_with_string_template(self):
+        """Test generating SBATCH script with string template."""
+        template_string = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "Job: {{JOB_NAME}}"
+echo "Experiment: {{EXPERIMENT_NAME}}"
+"""
+
+        engine = SBATCHTemplateEngine()
+
+        context = TemplateContext(
+            job_name="string_test_job",
+            experiment_name="string_test_exp",
+            script_path="train.py",
+            config_name="config.yaml",
+            account="test_account",
+            partition="test_partition",
+        )
+
+        # Generate with string template passed directly
+        rendered = engine.generate_sbatch_script(
+            context, template_string=template_string
+        )
+
+        assert "#SBATCH --job-name=string_test_job" in rendered
+        assert "#SBATCH --account=test_account" in rendered
+        assert "#SBATCH --partition=test_partition" in rendered
+        assert 'echo "Job: string_test_job"' in rendered
+        assert 'echo "Experiment: string_test_exp"' in rendered
+
+    def test_generate_sbatch_with_default_string_template(self):
+        """Test generating SBATCH script with default string template."""
+        template_string = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "Default string template"
+"""
+
+        # Initialize with default string template
+        engine = SBATCHTemplateEngine(template_string=template_string)
+
+        context = TemplateContext(
+            job_name="default_string_job",
+            experiment_name="default_string_exp",
+            script_path="train.py",
+            config_name="config.yaml",
+        )
+
+        # Generate using default string template
+        rendered = engine.generate_sbatch_script(context)
+
+        assert "#SBATCH --job-name=default_string_job" in rendered
+        assert 'echo "Default string template"' in rendered
+
+    def test_preview_with_string_template(self):
+        """Test preview with string template."""
+        engine = SBATCHTemplateEngine()
+
+        template_string = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "Preview: {{JOB_NAME}}"
+"""
+
+        context = TemplateContext(
+            job_name="preview_job",
+            experiment_name="preview_exp",
+            script_path="train.py",
+            config_name="config.yaml",
+        )
+
+        preview = engine.preview_rendered_script(
+            context, template_string=template_string
+        )
+
+        assert "#SBATCH --job-name=preview_job" in preview
+        assert 'echo "Preview: preview_job"' in preview
+
+    def test_string_template_precedence(self):
+        """Test that string template takes precedence over file template."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            file_template = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "File template"
+"""
+            f.write(file_template)
+            f.flush()
+
+            string_template = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "String template"
+"""
+
+            # Initialize with both file and string
+            engine = SBATCHTemplateEngine(
+                template_path=Path(f.name), template_string=string_template
+            )
+
+            context = TemplateContext(
+                job_name="precedence_job",
+                experiment_name="precedence_exp",
+                script_path="train.py",
+                config_name="config.yaml",
+            )
+
+            # Should use string template
+            rendered = engine.generate_sbatch_script(context)
+
+            assert 'echo "String template"' in rendered
+            assert 'echo "File template"' not in rendered
+
+    def test_jinja_block_detection(self):
+        """Test that Jinja control blocks are detected and rejected."""
+        engine = SBATCHTemplateEngine()
+
+        # Template with Jinja if block
+        jinja_template = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+{% if CONSTRAINT %}
+#SBATCH --constraint={{CONSTRAINT}}
+{% endif %}
+echo "This has Jinja blocks"
+"""
+
+        # Validation should detect Jinja blocks
+        issues = engine.validate_template(jinja_template)
+        assert any("Unsupported Jinja" in issue for issue in issues)
+
+        # Generation should fail with Jinja blocks
+        context = TemplateContext(
+            job_name="jinja_test",
+            experiment_name="jinja_exp",
+            script_path="train.py",
+            config_name="config.yaml",
+        )
+
+        with pytest.raises(TemplateError) as exc_info:
+            engine.generate_sbatch_script(context, template_string=jinja_template)
+
+        assert "unsupported Jinja control blocks" in str(exc_info.value)
+
+    def test_content_hashed_caching(self):
+        """Test that string templates are cached with content-based keys."""
+        engine = SBATCHTemplateEngine()
+
+        template1 = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "Template 1"
+"""
+
+        template2 = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "Template 2"
+"""
+
+        # Load both templates
+        engine.load_template_from_string(template1)
+        engine.load_template_from_string(template2)
+
+        # Both should be in cache with different keys
+        assert len(engine.template_cache) >= 2
+
+        # Cache keys should be content-based (contain hash)
+        cache_keys = list(engine.template_cache.keys())
+        assert any("string_template_" in key for key in cache_keys)
+
+    def test_default_template_has_scalable_launch(self):
+        """Test that default template includes scalable launch logic."""
+        engine = SBATCHTemplateEngine()
+        template = engine.create_default_template()
+
+        # Check for multi-task launch logic
+        assert 'if [ "$NTASKS_PER_NODE" -gt 1 ]' in template
+        assert "srun --ntasks-per-node=$NTASKS_PER_NODE" in template
+
+        # Check for thread exports
+        assert "export OMP_NUM_THREADS={{CPUS_PER_TASK}}" in template
+        assert "export MKL_NUM_THREADS={{CPUS_PER_TASK}}" in template
+
+        # Check for NCCL settings
+        assert "export NCCL_ASYNC_ERROR_HANDLING=1" in template
+
+        # Check that Jinja blocks are NOT present
+        assert "{% if" not in template
+        assert "{% endif" not in template
 
 
 class TestTemplateContext:
