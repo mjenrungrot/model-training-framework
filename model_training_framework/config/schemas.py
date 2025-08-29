@@ -90,6 +90,7 @@ class DataConfig:
     drop_last: bool = True
     preprocessing: dict[str, Any] = field(default_factory=dict)
     augmentations: dict[str, Any] = field(default_factory=dict)
+    custom_params: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
