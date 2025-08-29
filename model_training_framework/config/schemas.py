@@ -49,6 +49,9 @@ class ModelConfig:
         output_str += ")"
         return output_str
 
+    def __repr__(self) -> str:
+        return str(self)
+
 
 @dataclass
 class OptimizerConfig:
@@ -93,6 +96,9 @@ class DataConfig:
         )
         output_str += ")"
         return output_str
+
+    def __repr__(self) -> str:
+        return str(self)
 
 
 @dataclass
