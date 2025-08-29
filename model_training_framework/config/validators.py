@@ -126,18 +126,6 @@ class ConfigValidator:
         "cosine_annealing_warm_restarts",
     }
 
-    # Valid activation functions
-    VALID_ACTIVATIONS: ClassVar[set[str]] = {
-        "relu",
-        "gelu",
-        "swish",
-        "tanh",
-        "sigmoid",
-        "leaky_relu",
-        "elu",
-        "selu",
-    }
-
     @staticmethod
     def validate_config(config: ExperimentConfig) -> ValidationResult:
         """Comprehensive configuration validation."""
@@ -145,6 +133,9 @@ class ConfigValidator:
 
         # Validate basic required fields
         ConfigValidator._validate_basic_fields(config, result)
+
+        # Validate data configuration
+        ConfigValidator._validate_data_config(config.data, result)
 
         # Validate model configuration
         ConfigValidator._validate_model_config(config.model, result)
@@ -181,60 +172,41 @@ class ConfigValidator:
                 f"Experiment name too long (max {ConfigValidator.MAX_EXPERIMENT_NAME_LENGTH} characters)",
             )
 
-        if not config.data.dataset_name:
-            result.add_error("basic", "Dataset name is required", "data.dataset_name")
-
         # Validate seed if provided
         if config.seed is not None and (config.seed < 0 or config.seed > 2**32 - 1):
             result.add_error("basic", "Seed must be between 0 and 2^32-1", "seed")
 
     @staticmethod
+    def _validate_data_config(data, result: ValidationResult) -> None:
+        """Minimal validation for flexible data configurations.
+
+        Only validates the required dataset_name field and delegates to custom validation
+        if available. This allows users to define their own data configurations
+        with arbitrary fields without framework-imposed constraints.
+        """
+        if not data.dataset_name:
+            result.add_error("data", "Dataset name is required", "data.dataset_name")
+
+        # Call custom validation if available
+        # This allows users to implement their own validation logic
+        if hasattr(data, "validate") and callable(data.validate):
+            custom_errors = data.validate()
+            for error in custom_errors:
+                result.add_error("data", error)
+
+    @staticmethod
     def _validate_model_config(model: ModelConfig, result: ValidationResult) -> None:
-        """Validate model configuration with support for dynamic configs."""
+        """Minimal validation for flexible model configurations.
+
+        Only validates the required type field and delegates to custom validation
+        if available. This allows users to define their own model configurations
+        with arbitrary fields without framework-imposed constraints.
+        """
         if not model.type:
             result.add_error("model", "Model type is required", "model.type")
 
-        # Check for common optional fields without requiring them
-        # Use hasattr to support flexible configs
-        if hasattr(model, "hidden_size") and model.hidden_size <= 0:
-            result.add_error(
-                "model", "Hidden size must be positive", "model.hidden_size"
-            )
-
-        if hasattr(model, "num_layers") and model.num_layers <= 0:
-            result.add_error(
-                "model", "Number of layers must be positive", "model.num_layers"
-            )
-
-        # Validate dropout if present
-        if hasattr(model, "dropout") and not 0.0 <= model.dropout <= 1.0:
-            result.add_error(
-                "model", "Dropout must be between 0.0 and 1.0", "model.dropout"
-            )
-
-        # Validate activation if present
-        if (
-            hasattr(model, "activation")
-            and model.activation not in ConfigValidator.VALID_ACTIVATIONS
-        ):
-            result.add_warning(
-                "model",
-                f"Unknown activation function: {model.activation}",
-                "model.activation",
-                f"Consider using one of: {', '.join(ConfigValidator.VALID_ACTIVATIONS)}",
-            )
-
-        # Validate num_classes if provided
-        if (
-            hasattr(model, "num_classes")
-            and model.num_classes is not None
-            and model.num_classes <= 0
-        ):
-            result.add_error(
-                "model", "Number of classes must be positive", "model.num_classes"
-            )
-
         # Call custom validation if available
+        # This allows users to implement their own validation logic
         if hasattr(model, "validate") and callable(model.validate):
             custom_errors = model.validate()
             for error in custom_errors:
