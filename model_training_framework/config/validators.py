@@ -232,29 +232,33 @@ class ConfigValidator:
 
     @staticmethod
     def _validate_model_config(model: ModelConfig, result: ValidationResult) -> None:
-        """Validate model configuration."""
+        """Validate model configuration with support for dynamic configs."""
         if not model.type:
             result.add_error("model", "Model type is required", "model.type")
 
-        # Validate dimensions
-        if model.hidden_size <= 0:
+        # Check for common optional fields without requiring them
+        # Use hasattr to support flexible configs
+        if hasattr(model, "hidden_size") and model.hidden_size <= 0:
             result.add_error(
                 "model", "Hidden size must be positive", "model.hidden_size"
             )
 
-        if model.num_layers <= 0:
+        if hasattr(model, "num_layers") and model.num_layers <= 0:
             result.add_error(
                 "model", "Number of layers must be positive", "model.num_layers"
             )
 
-        # Validate dropout
-        if not 0.0 <= model.dropout <= 1.0:
+        # Validate dropout if present
+        if hasattr(model, "dropout") and not 0.0 <= model.dropout <= 1.0:
             result.add_error(
                 "model", "Dropout must be between 0.0 and 1.0", "model.dropout"
             )
 
-        # Validate activation
-        if model.activation not in ConfigValidator.VALID_ACTIVATIONS:
+        # Validate activation if present
+        if (
+            hasattr(model, "activation")
+            and model.activation not in ConfigValidator.VALID_ACTIVATIONS
+        ):
             result.add_warning(
                 "model",
                 f"Unknown activation function: {model.activation}",
@@ -263,10 +267,20 @@ class ConfigValidator:
             )
 
         # Validate num_classes if provided
-        if model.num_classes is not None and model.num_classes <= 0:
+        if (
+            hasattr(model, "num_classes")
+            and model.num_classes is not None
+            and model.num_classes <= 0
+        ):
             result.add_error(
                 "model", "Number of classes must be positive", "model.num_classes"
             )
+
+        # Call custom validation if available
+        if hasattr(model, "validate") and callable(model.validate):
+            custom_errors = model.validate()
+            for error in custom_errors:
+                result.add_error("model", error)
 
     @staticmethod
     def _validate_training_config(
@@ -491,19 +505,22 @@ class ConfigValidator:
         config: ExperimentConfig, result: ValidationResult
     ) -> None:
         """Validate parameter compatibility across components."""
-        # Check batch size vs gradient accumulation
-        effective_batch_size = (
-            config.data.batch_size * config.training.gradient_accumulation_steps
-        )
-        if config.slurm:
-            effective_batch_size *= config.slurm.nodes * config.slurm.ntasks_per_node
-
-        if effective_batch_size > ConfigValidator.MAX_EFFECTIVE_BATCH_SIZE:
-            result.add_warning(
-                "compatibility",
-                f"Very large effective batch size: {effective_batch_size}",
-                suggestion="Consider reducing batch_size or gradient_accumulation_steps",
+        # Check batch size vs gradient accumulation (only if batch_size exists)
+        if hasattr(config.data, "batch_size"):
+            effective_batch_size = (
+                config.data.batch_size * config.training.gradient_accumulation_steps
             )
+            if config.slurm:
+                effective_batch_size *= (
+                    config.slurm.nodes * config.slurm.ntasks_per_node
+                )
+
+            if effective_batch_size > ConfigValidator.MAX_EFFECTIVE_BATCH_SIZE:
+                result.add_warning(
+                    "compatibility",
+                    f"Very large effective batch size: {effective_batch_size}",
+                    suggestion="Consider reducing batch_size or gradient_accumulation_steps",
+                )
 
         # Check scheduler warmup vs total steps
         if config.scheduler and config.scheduler.warmup_steps > 0:
@@ -596,8 +613,10 @@ class ConfigValidator:
         """Estimate model memory requirements in GB."""
         base_memory = ConfigValidator.MODEL_MEMORY_ESTIMATES.get(model.type, 2.0)
 
-        # Scale by model size parameters
-        size_factor = (model.hidden_size / 512) * (model.num_layers / 6)
+        # Scale by model size parameters if available
+        size_factor = 1.0
+        if hasattr(model, "hidden_size") and hasattr(model, "num_layers"):
+            size_factor = (model.hidden_size / 512) * (model.num_layers / 6)
 
         return base_memory * size_factor
 
@@ -606,9 +625,14 @@ class ConfigValidator:
         """Estimate batch memory requirements in GB."""
         # Very rough estimate based on batch size and model complexity
         base_per_sample = 0.01  # 10MB per sample
-        complexity_factor = model.hidden_size / 512
 
-        return data.batch_size * base_per_sample * complexity_factor
+        # Use default values if fields don't exist
+        batch_size = data.batch_size if hasattr(data, "batch_size") else 32
+        complexity_factor = 1.0
+        if hasattr(model, "hidden_size"):
+            complexity_factor = model.hidden_size / 512
+
+        return batch_size * base_per_sample * complexity_factor
 
     @staticmethod
     def _parse_memory_string(mem_str: str) -> float:

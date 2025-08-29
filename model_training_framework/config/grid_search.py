@@ -303,9 +303,10 @@ class ParameterGridSearch:
         (checkpoint, preemption, performance, slurm, custom_params, etc.).
         """
         # Nested configs (safe defaults when missing)
-        model_config = ModelConfig(**config_dict.get("model", {}))
+        # Use from_dict for flexible configs, direct instantiation for others
+        model_config = ModelConfig.from_dict(config_dict.get("model", {}))
         training_config = TrainingConfig(**config_dict.get("training", {}))
-        data_config = DataConfig(**config_dict.get("data", {}))
+        data_config = DataConfig.from_dict(config_dict.get("data", {}))
         optimizer_config = OptimizerConfig(**config_dict.get("optimizer", {}))
         scheduler_config = (
             SchedulerConfig(**config_dict["scheduler"])
