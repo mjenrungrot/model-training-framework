@@ -16,6 +16,11 @@ from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
+from model_training_framework.config.schemas import (
+    EpochLengthPolicy,
+    SamplingStrategy,
+    ValAggregation,
+)
 from model_training_framework.trainer import (
     CheckpointConfig,
     GenericTrainer,
@@ -23,11 +28,6 @@ from model_training_framework.trainer import (
     LoggingConfig,
     MultiDataLoaderConfig,
     ValidationConfig,
-)
-from model_training_framework.trainer.config import (
-    EpochLengthPolicy,
-    SamplingStrategy,
-    ValAggregation,
 )
 
 

@@ -57,7 +57,7 @@ except Exception:  # ImportError or environments without CUDA AMP
         yield
 
 
-from model_training_framework.trainer.config import PerformanceConfig
+from model_training_framework.config.schemas import PerformanceConfig
 
 
 class TestModel(nn.Module):

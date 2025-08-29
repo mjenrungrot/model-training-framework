@@ -8,7 +8,7 @@ using the actual DataLoaderManager implementation.
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from model_training_framework.trainer.config import (
+from model_training_framework.config.schemas import (
     EpochLengthPolicy,
     MultiDataLoaderConfig,
     SamplingStrategy,

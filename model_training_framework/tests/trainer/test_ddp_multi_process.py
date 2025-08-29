@@ -89,15 +89,15 @@ def run_ddp_training(
     rank: int, world_size: int, temp_dir: str, port: int | None = None
 ):
     """Run training on a single process."""
+    from model_training_framework.config.schemas import (
+        EpochLengthPolicy,
+        SamplingStrategy,
+    )
     from model_training_framework.trainer import (
         DDPConfig,
         GenericTrainer,
         GenericTrainerConfig,
         MultiDataLoaderConfig,
-    )
-    from model_training_framework.trainer.config import (
-        EpochLengthPolicy,
-        SamplingStrategy,
     )
 
     # Setup DDP

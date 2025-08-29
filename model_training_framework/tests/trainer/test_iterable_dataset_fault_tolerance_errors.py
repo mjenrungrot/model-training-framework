@@ -16,6 +16,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, IterableDataset, TensorDataset
 
+from model_training_framework.config.schemas import EpochLengthPolicy, SamplingStrategy
 from model_training_framework.trainer import (
     CheckpointConfig,
     FaultToleranceConfig,
@@ -23,7 +24,6 @@ from model_training_framework.trainer import (
     GenericTrainerConfig,
     MultiDataLoaderConfig,
 )
-from model_training_framework.trainer.config import EpochLengthPolicy, SamplingStrategy
 
 # Remove non-existent import
 

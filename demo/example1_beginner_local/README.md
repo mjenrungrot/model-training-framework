@@ -80,7 +80,7 @@ from model_training_framework.trainer import (
     GenericTrainer, GenericTrainerConfig, MultiDataLoaderConfig,
     CheckpointConfig, LoggingConfig, ValidationConfig
 )
-from model_training_framework.trainer.config import (
+from model_training_framework.config.schemas import (
     SamplingStrategy, EpochLengthPolicy, ValAggregation
 )
 

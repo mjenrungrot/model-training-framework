@@ -23,7 +23,7 @@ The framework supports multiple logging backends through a unified `LoggerProtoc
 ### Basic Configuration
 
 ```python
-from model_training_framework.trainer.config import LoggingConfig
+from model_training_framework.config.schemas import LoggingConfig
 
 # Single logger
 config = LoggingConfig(
@@ -221,7 +221,7 @@ The framework supports two early stopping mechanisms:
 Using the `EarlyStopping` utility:
 
 ```python
-from model_training_framework.trainer.config import GenericTrainerConfig
+from model_training_framework.config.schemas import GenericTrainerConfig
 
 # Configure via GenericTrainerConfig
 config = GenericTrainerConfig(
@@ -252,7 +252,7 @@ config = HooksConfig(
 You can control which early stopping mechanism is active:
 
 ```python
-from model_training_framework.trainer.config import ValidationConfig
+from model_training_framework.config.schemas import ValidationConfig
 
 config = ValidationConfig(
     early_stopping_source="both"  # Default: both can trigger
@@ -311,7 +311,7 @@ Early stopping decisions are synchronized across all ranks in distributed traini
 ### Complete Configuration
 
 ```python
-from model_training_framework.trainer.config import (
+from model_training_framework.config.schemas import (
     GenericTrainerConfig,
     LoggingConfig,
     HooksConfig,
@@ -350,7 +350,7 @@ config = GenericTrainerConfig(
 ```python
 # Training with multiple dataloaders using WEIGHTED strategy
 from model_training_framework.trainer.multi_dataloader import SamplingStrategy
-from model_training_framework.trainer.config import MultiDataLoaderConfig
+from model_training_framework.config.schemas import MultiDataLoaderConfig
 
 config = GenericTrainerConfig(
     multi=MultiDataLoaderConfig(

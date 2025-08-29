@@ -14,13 +14,13 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset, TensorDataset
 
+from model_training_framework.config.schemas import (
+    EpochLengthPolicy,
+    SamplingStrategy,
+)
 from model_training_framework.trainer import (
     MultiDataLoaderConfig,
     PerformanceConfig,
-)
-from model_training_framework.trainer.config import (
-    EpochLengthPolicy,
-    SamplingStrategy,
 )
 from model_training_framework.trainer.multi_dataloader import DataLoaderManager
 

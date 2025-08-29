@@ -19,6 +19,12 @@ from model import SmallMLP
 import torch
 
 from model_training_framework.config import ConfigurationManager, ExperimentConfig
+from model_training_framework.config.schemas import (
+    EpochLengthPolicy,
+    SamplingStrategy,
+    ValAggregation,
+    ValidationFrequency,
+)
 from model_training_framework.trainer import (
     CheckpointConfig,
     DDPConfig,
@@ -30,12 +36,6 @@ from model_training_framework.trainer import (
     PerformanceConfig,
     PreemptionConfig,
     ValidationConfig,
-)
-from model_training_framework.trainer.config import (
-    EpochLengthPolicy,
-    SamplingStrategy,
-    ValAggregation,
-    ValidationFrequency,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent
