@@ -6,11 +6,16 @@ This module provides template rendering for SLURM batch scripts:
 - Context variable substitution
 - SBATCH script generation
 - Template management and caching
+
+Note: This engine uses Python's string.Template for variable substitution
+and does NOT process Jinja2 control blocks ({% if ... %}, {% for ... %}, etc.).
+All template variables use the {{VAR}} or {VAR} format and are simple substitutions.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import logging
 import re
 import string
@@ -168,12 +173,13 @@ class SBATCHTemplateEngine:
             raise TemplateError("Template string cannot be empty")
 
         try:
-            # Cache template with special key for string templates
-            cache_key = "__string_template__"
+            # Cache template with content-hashed key to avoid collisions
+            # MD5 is safe here as it's not used for security, just cache keying
+            cache_key = f"string_template_{hashlib.md5(template_string.encode(), usedforsecurity=False).hexdigest()[:8]}"
             self.template_cache[cache_key] = template_string
             self.template_string = template_string
 
-            logger.debug("Loaded template from string")
+            logger.debug(f"Loaded template from string (cached as {cache_key})")
             return template_string
 
         except Exception as e:
@@ -203,6 +209,27 @@ class SBATCHTemplateEngine:
             List of validation issues (empty if valid)
         """
         issues = []
+
+        # Check for unsupported Jinja control blocks
+        jinja_patterns = [
+            (r"{%\s*if\s+.*?%}", "Jinja if block"),
+            (r"{%\s*for\s+.*?%}", "Jinja for loop"),
+            (r"{%\s*elif\s+.*?%}", "Jinja elif block"),
+            (r"{%\s*else\s*%}", "Jinja else block"),
+            (r"{%\s*endif\s*%}", "Jinja endif"),
+            (r"{%\s*endfor\s*%}", "Jinja endfor"),
+            (r"{%\s*block\s+.*?%}", "Jinja block"),
+            (r"{%\s*extends\s+.*?%}", "Jinja extends"),
+            (r"{%\s*include\s+.*?%}", "Jinja include"),
+        ]
+
+        for pattern, description in jinja_patterns:
+            if re.search(pattern, template_content):
+                issues.append(
+                    f"Unsupported {description} detected. "
+                    "This engine only supports simple variable substitution ({{{{VAR}}}} format). "
+                    "Remove Jinja control blocks or use commented guidance instead."
+                )
 
         # Check for required SBATCH directives
         required_directives = [
@@ -324,6 +351,13 @@ class SBATCHTemplateEngine:
         """
         Generate SBATCH script from template and context.
 
+        Template Resolution Order (first available wins):
+        1. template_string parameter (if provided)
+        2. self.template_string (if set via constructor or set_template_string)
+        3. template_path parameter (if provided)
+        4. self.template_path (if set via constructor)
+        5. Raises TemplateError if no template source is available
+
         Args:
             context: Template context
             template_path: Optional template path (uses default if None)
@@ -334,7 +368,9 @@ class SBATCHTemplateEngine:
             Generated SBATCH script content
 
         Raises:
-            TemplateError: If script generation fails
+            TemplateError: If no template source is provided or if script generation fails.
+                          Specifically raises TemplateError("No template path or string provided")
+                          when no template source is available.
         """
         # Load template (string takes precedence over path)
         if template_string:
@@ -351,6 +387,13 @@ class SBATCHTemplateEngine:
         # Validate template
         issues = self.validate_template(template_content)
         if issues:
+            # Check if any issues are about Jinja blocks (critical errors)
+            jinja_issues = [i for i in issues if "Unsupported" in i and "Jinja" in i]
+            if jinja_issues:
+                raise TemplateError(
+                    f"Template contains unsupported Jinja control blocks: {'; '.join(jinja_issues)}"
+                )
+            # Other issues are warnings
             logger.warning(f"Template validation issues: {issues}")
 
         # Render template
@@ -391,16 +434,10 @@ class SBATCHTemplateEngine:
 #SBATCH --error={{ERROR_FILE}}
 #SBATCH --requeue={{REQUEUE}}
 
-# Optional parameters
-{% if CONSTRAINT %}
-#SBATCH --constraint={{CONSTRAINT}}
-{% endif %}
-{% if MAIL_TYPE %}
-#SBATCH --mail-type={{MAIL_TYPE}}
-{% endif %}
-{% if MAIL_USER %}
-#SBATCH --mail-user={{MAIL_USER}}
-{% endif %}
+# Optional parameters - uncomment and modify as needed
+# #SBATCH --constraint={{CONSTRAINT}}
+# #SBATCH --mail-type={{MAIL_TYPE}}
+# #SBATCH --mail-user={{MAIL_USER}}
 
 # Environment setup
 module load python/3.9
@@ -412,25 +449,57 @@ echo "Job Name: {{JOB_NAME}}"
 echo "Node: $SLURM_NODEID"
 echo "Start Time: $(date)"
 echo "Working Directory: $(pwd)"
+echo "Nodes: {{NODES}}, Tasks per node: {{NTASKS_PER_NODE}}"
 
-# Git information (if available)
-{% if COMMIT_HASH %}
+# Git information - will show if available
 echo "Commit Hash: {{COMMIT_HASH}}"
-{% endif %}
-{% if BRANCH_NAME %}
 echo "Branch: {{BRANCH_NAME}}"
-{% endif %}
 
 # Create experiment directory
 mkdir -p experiments/{{EXPERIMENT_NAME}}
 
 # Setup environment
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
-export CUDA_VISIBLE_DEVICES=$SLURM_LOCALID
 
-# Run training script
-echo "Starting training..."
-{{PYTHON_EXECUTABLE}} {{SCRIPT_PATH}} {{CONFIG_NAME}}
+# Thread settings to prevent oversubscription
+export OMP_NUM_THREADS={{CPUS_PER_TASK}}
+export MKL_NUM_THREADS={{CPUS_PER_TASK}}
+export NUMEXPR_NUM_THREADS={{CPUS_PER_TASK}}
+
+# NCCL settings for robust distributed training
+export NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_DEBUG=INFO
+export NCCL_DEBUG_SUBSYS=INIT,ENV
+
+# Determine launch mode based on number of tasks
+NTASKS_PER_NODE={{NTASKS_PER_NODE}}
+
+if [ "$NTASKS_PER_NODE" -gt 1 ]; then
+    echo "Launching distributed training with $NTASKS_PER_NODE tasks"
+
+    # Multi-task: use srun for proper rank-to-GPU mapping
+    # Each rank gets one GPU via CUDA_VISIBLE_DEVICES set by srun
+    srun --ntasks-per-node=$NTASKS_PER_NODE \\
+         --cpus-per-task={{CPUS_PER_TASK}} \\
+         --gpus-per-task=1 \\
+         bash -c "
+            # Per-rank GPU assignment (srun sets SLURM_LOCALID per task)
+            export CUDA_VISIBLE_DEVICES=\\$SLURM_LOCALID
+            echo \\\"Rank \\$SLURM_PROCID: CUDA_VISIBLE_DEVICES=\\$CUDA_VISIBLE_DEVICES\\\"
+
+            # Run the training script
+            {{PYTHON_EXECUTABLE}} {{SCRIPT_PATH}} {{CONFIG_NAME}}
+         "
+else
+    echo "Launching single-process training"
+
+    # Single task: run directly with all GPUs visible
+    export CUDA_VISIBLE_DEVICES=0
+    echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
+
+    # Run training script
+    {{PYTHON_EXECUTABLE}} {{SCRIPT_PATH}} {{CONFIG_NAME}}
+fi
 
 echo "Job completed at $(date)"
 """

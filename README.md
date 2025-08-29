@@ -706,6 +706,59 @@ cd {{PROJECT_ROOT}}
 python {{SCRIPT_PATH}} {{CONFIG_NAME}}
 ```
 
+### In-Memory Templates and Preview
+
+You can use templates directly from strings without file I/O:
+
+```python
+from model_training_framework.slurm.templates import (
+    SBATCHTemplateEngine,
+    TemplateContext,
+)
+
+# Define template as string
+template_string = """#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+echo "Running {{EXPERIMENT_NAME}}"
+{{PYTHON_EXECUTABLE}} {{SCRIPT_PATH}} {{CONFIG_NAME}}
+"""
+
+# Initialize with string template
+engine = SBATCHTemplateEngine(template_string=template_string)
+
+# Or pass template string directly to generation
+engine = SBATCHTemplateEngine()
+context = TemplateContext(
+    job_name="my_job",
+    experiment_name="my_experiment",
+    script_path="train.py",
+    config_name="config.yaml",
+)
+
+# Preview without saving to file
+preview = engine.preview_rendered_script(
+    context, template_string=template_string
+)
+print(preview)
+
+# Generate and save
+script = engine.generate_sbatch_script(
+    context,
+    template_string=template_string,
+    output_path=Path("job.sbatch")
+)
+```
+
+**Template Resolution Precedence:**
+
+1. `template_string` (passed to method) - highest priority
+2. `template_string` (passed to constructor)
+3. `template_path` (passed to method)
+4. `template_path` (passed to constructor)
+5. Engine defaults - lowest priority
+
 ### Job Submission
 
 ```python
