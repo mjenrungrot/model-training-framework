@@ -522,26 +522,65 @@ logging:
   wandb_project: "my_project"
 ```
 
-### Parameter Grid Search
+### Grid Search Quickstart
+
+Generate experiments programmatically with the improved grid search API:
 
 ```python
-from model_training_framework.config import ParameterGrid
+from model_training_framework.config import ParameterGridSearch, ParameterGrid
+from pathlib import Path
 
-# Define parameter search spaces
-grid1 = ParameterGrid("optimization_search")
-grid1.add_parameter("optimizer.lr", [1e-4, 5e-4, 1e-3])
-grid1.add_parameter("optimizer.weight_decay", [0.0, 0.01])
+# Base experiment config (dict or ExperimentConfig)
+base = {
+    "experiment_name": "demo",
+    "model": {"type": "resnet18"},
+    "data": {"dataset_name": "cifar10", "batch_size": 64},
+    "training": {"max_epochs": 5, "gradient_accumulation_steps": 1},
+    "optimizer": {"type": "adam", "lr": 1e-3},
+    "logging": {"use_wandb": False}
+}
 
-grid2 = ParameterGrid("architecture_search")
-grid2.add_parameter("model.dropout", [0.1, 0.2, 0.3])
-grid2.add_parameter("model.hidden_size", [256, 512, 1024])
-
-# Execute grid search
-framework.run_grid_search(
-    base_config="configs/base.yaml",
-    parameter_grids=[grid1, grid2],
-    script_path="scripts/train.py"
+# Build grid search with method chaining
+gs = ParameterGridSearch(base)
+grid = (
+    ParameterGrid("lr_bs")
+    .add_parameter("optimizer.lr", [1e-3, 3e-4])
+    .add_parameter("data.batch_size", [32, 64])
 )
+gs.add_grid(grid)
+
+# Generate experiments
+experiments = list(gs.generate_experiments())
+print(f"Generated {len(experiments)} experiments")
+
+# Optional: save grid config and summary
+out = Path("runs/grid_search_demo")
+gs.save_grid_config(out / "grid_config.json")
+gs.save_summary(out / "summary.txt")
+```
+
+#### Using Typed Configurations
+
+For type safety and better IDE support, register custom config classes:
+
+```python
+from model_training_framework.config import register_model, register_dataset
+from model_training_framework.config.schemas import ModelConfig, DataConfig
+from model_training_framework.config.registry import ConfigRegistry
+
+@register_model("resnet18")
+class ResNet18Config(ModelConfig):
+    num_layers: int = 18
+    pretrained: bool = False
+
+@register_dataset("cifar10")
+class CIFAR10Config(DataConfig):
+    num_classes: int = 10
+    augmentation: bool = True
+
+# Create typed config from dict
+model_cfg = ConfigRegistry.create_model_config({"type": "resnet18", "pretrained": True})
+data_cfg = ConfigRegistry.create_data_config({"dataset_name": "cifar10", "batch_size": 128})
 ```
 
 ## Training Scripts
