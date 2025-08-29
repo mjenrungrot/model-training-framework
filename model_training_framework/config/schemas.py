@@ -36,15 +36,10 @@ class NamingStrategy(Enum):
 class ModelConfig:
     """Model architecture configuration."""
 
-    type: str
-    hidden_size: int = 512
-    num_layers: int = 6
-    dropout: float = 0.1
-    activation: str = "relu"
-    num_classes: int | None = None
-    pretrained: bool = False
-    freeze_backbone: bool = False
-    custom_params: dict[str, Any] = field(default_factory=dict)
+    def __init__(self, type: str, **kwargs: Any):
+        self.type = type
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
 @dataclass
@@ -78,19 +73,10 @@ class SchedulerConfig:
 class DataConfig:
     """Dataset configuration."""
 
-    dataset_name: str
-    dataset_path: str | None = None
-    train_split: str = "train"
-    val_split: str = "validation"
-    test_split: str = "test"
-    batch_size: int = 32
-    num_workers: int = 4
-    pin_memory: bool = True
-    shuffle_train: bool = True
-    drop_last: bool = True
-    preprocessing: dict[str, Any] = field(default_factory=dict)
-    augmentations: dict[str, Any] = field(default_factory=dict)
-    custom_params: dict[str, Any] = field(default_factory=dict)
+    def __init__(self, dataset_name: str, **kwargs: Any):
+        self.dataset_name = dataset_name
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
 @dataclass
