@@ -9,7 +9,6 @@ This module provides comprehensive configuration management for the training fra
 """
 
 from .grid_search import (
-    GridSearchExecutor,
     GridSearchResult,
     ParameterGrid,
     ParameterGridSearch,
@@ -24,6 +23,7 @@ from .schemas import (
     DataConfig,
     ExecutionMode,
     ExperimentConfig,
+    GridSearchConfig,
     LoggingConfig,
     ModelConfig,
     NamingStrategy,
@@ -34,7 +34,6 @@ from .schemas import (
 )
 from .validators import (
     ConfigValidator,
-    ResourceCheck,
     ValidationResult,
 )
 
@@ -49,7 +48,7 @@ __all__ = [
     "ExperimentConfig",
     # Naming
     "ExperimentNaming",
-    "GridSearchExecutor",
+    "GridSearchConfig",
     "GridSearchResult",
     "LoggingConfig",
     "ModelConfig",
@@ -58,7 +57,6 @@ __all__ = [
     # Grid search
     "ParameterGrid",
     "ParameterGridSearch",
-    "ResourceCheck",
     "SLURMConfig",
     "SchedulerConfig",
     "TrainingConfig",

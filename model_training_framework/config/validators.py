@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from .schemas import (
-        DataConfig,
         ExperimentConfig,
         ModelConfig,
         OptimizerConfig,
@@ -97,53 +96,12 @@ class ValidationResult:
         self.issues.append(ValidationIssue("info", component, message, field))
 
 
-@dataclass
-class ResourceCheck:
-    """Result of resource requirement validation."""
-
-    is_feasible: bool
-    estimated_memory_gb: float
-    estimated_time_hours: float
-    recommended_partition: str | None = None
-    issues: list[str] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-
-
 class ConfigValidator:
     """Validates experiment configurations against schema and resource constraints."""
 
     # Constants for validation limits
     MAX_EXPERIMENT_NAME_LENGTH = 200
     MAX_EFFECTIVE_BATCH_SIZE = 10000
-    PARTITION_LONG_HOURS = 72
-    PARTITION_HIGH_MEM_GB = 500
-    PARTITION_HIGH_MEM_GPUS = 4
-    PARTITION_STANDARD_HOURS = 24
-
-    # Constants for time parsing
-    TIME_PARTS_HMS = 3  # Hours:Minutes:Seconds
-    TIME_PARTS_HM = 2  # Hours:Minutes
-    MINUTES_PER_HOUR = 60
-    SECONDS_PER_HOUR = 3600
-    HOURS_PER_DAY = 24
-
-    # Constants for training time estimation
-    BASE_TIME_PER_EPOCH = 0.5  # 30 minutes per epoch
-
-    # Known model types and their approximate memory requirements (GB)
-    MODEL_MEMORY_ESTIMATES: ClassVar[dict[str, float]] = {
-        "resnet18": 0.5,
-        "resnet50": 1.0,
-        "resnet101": 2.0,
-        "bert-base": 1.5,
-        "bert-large": 3.0,
-        "gpt2": 2.0,
-        "gpt2-medium": 4.0,
-        "gpt2-large": 6.0,
-        "t5-small": 1.0,
-        "t5-base": 2.0,
-        "t5-large": 3.0,
-    }
 
     # Valid optimizer types
     VALID_OPTIMIZERS: ClassVar[set[str]] = {
@@ -168,18 +126,6 @@ class ConfigValidator:
         "cosine_annealing_warm_restarts",
     }
 
-    # Valid activation functions
-    VALID_ACTIVATIONS: ClassVar[set[str]] = {
-        "relu",
-        "gelu",
-        "swish",
-        "tanh",
-        "sigmoid",
-        "leaky_relu",
-        "elu",
-        "selu",
-    }
-
     @staticmethod
     def validate_config(config: ExperimentConfig) -> ValidationResult:
         """Comprehensive configuration validation."""
@@ -187,6 +133,9 @@ class ConfigValidator:
 
         # Validate basic required fields
         ConfigValidator._validate_basic_fields(config, result)
+
+        # Validate data configuration
+        ConfigValidator._validate_data_config(config.data, result)
 
         # Validate model configuration
         ConfigValidator._validate_model_config(config.model, result)
@@ -223,50 +172,45 @@ class ConfigValidator:
                 f"Experiment name too long (max {ConfigValidator.MAX_EXPERIMENT_NAME_LENGTH} characters)",
             )
 
-        if not config.data.dataset_name:
-            result.add_error("basic", "Dataset name is required", "data.dataset_name")
-
         # Validate seed if provided
         if config.seed is not None and (config.seed < 0 or config.seed > 2**32 - 1):
             result.add_error("basic", "Seed must be between 0 and 2^32-1", "seed")
 
     @staticmethod
+    def _validate_data_config(data, result: ValidationResult) -> None:
+        """Minimal validation for flexible data configurations.
+
+        Only validates the required dataset_name field and delegates to custom validation
+        if available. This allows users to define their own data configurations
+        with arbitrary fields without framework-imposed constraints.
+        """
+        if not data.dataset_name:
+            result.add_error("data", "Dataset name is required", "data.dataset_name")
+
+        # Call custom validation if available
+        # This allows users to implement their own validation logic
+        if hasattr(data, "validate") and callable(data.validate):
+            custom_errors = data.validate()
+            for error in custom_errors:
+                result.add_error("data", error)
+
+    @staticmethod
     def _validate_model_config(model: ModelConfig, result: ValidationResult) -> None:
-        """Validate model configuration."""
+        """Minimal validation for flexible model configurations.
+
+        Only validates the required type field and delegates to custom validation
+        if available. This allows users to define their own model configurations
+        with arbitrary fields without framework-imposed constraints.
+        """
         if not model.type:
             result.add_error("model", "Model type is required", "model.type")
 
-        # Validate dimensions
-        if model.hidden_size <= 0:
-            result.add_error(
-                "model", "Hidden size must be positive", "model.hidden_size"
-            )
-
-        if model.num_layers <= 0:
-            result.add_error(
-                "model", "Number of layers must be positive", "model.num_layers"
-            )
-
-        # Validate dropout
-        if not 0.0 <= model.dropout <= 1.0:
-            result.add_error(
-                "model", "Dropout must be between 0.0 and 1.0", "model.dropout"
-            )
-
-        # Validate activation
-        if model.activation not in ConfigValidator.VALID_ACTIVATIONS:
-            result.add_warning(
-                "model",
-                f"Unknown activation function: {model.activation}",
-                "model.activation",
-                f"Consider using one of: {', '.join(ConfigValidator.VALID_ACTIVATIONS)}",
-            )
-
-        # Validate num_classes if provided
-        if model.num_classes is not None and model.num_classes <= 0:
-            result.add_error(
-                "model", "Number of classes must be positive", "model.num_classes"
-            )
+        # Call custom validation if available
+        # This allows users to implement their own validation logic
+        if hasattr(model, "validate") and callable(model.validate):
+            custom_errors = model.validate()
+            for error in custom_errors:
+                result.add_error("model", error)
 
     @staticmethod
     def _validate_training_config(
@@ -491,19 +435,22 @@ class ConfigValidator:
         config: ExperimentConfig, result: ValidationResult
     ) -> None:
         """Validate parameter compatibility across components."""
-        # Check batch size vs gradient accumulation
-        effective_batch_size = (
-            config.data.batch_size * config.training.gradient_accumulation_steps
-        )
-        if config.slurm:
-            effective_batch_size *= config.slurm.nodes * config.slurm.ntasks_per_node
-
-        if effective_batch_size > ConfigValidator.MAX_EFFECTIVE_BATCH_SIZE:
-            result.add_warning(
-                "compatibility",
-                f"Very large effective batch size: {effective_batch_size}",
-                suggestion="Consider reducing batch_size or gradient_accumulation_steps",
+        # Check batch size vs gradient accumulation (only if batch_size exists)
+        if hasattr(config.data, "batch_size"):
+            effective_batch_size = (
+                config.data.batch_size * config.training.gradient_accumulation_steps
             )
+            if config.slurm:
+                effective_batch_size *= (
+                    config.slurm.nodes * config.slurm.ntasks_per_node
+                )
+
+            if effective_batch_size > ConfigValidator.MAX_EFFECTIVE_BATCH_SIZE:
+                result.add_warning(
+                    "compatibility",
+                    f"Very large effective batch size: {effective_batch_size}",
+                    suggestion="Consider reducing batch_size or gradient_accumulation_steps",
+                )
 
         # Check scheduler warmup vs total steps
         if config.scheduler and config.scheduler.warmup_steps > 0:
@@ -535,148 +482,3 @@ class ConfigValidator:
                 "Early stopping patience < validation frequency",
                 suggestion="Early stopping may trigger before seeing enough validation results",
             )
-
-    @staticmethod
-    def check_resource_requirements(config: ExperimentConfig) -> ResourceCheck:
-        """Validate SLURM resource requirements and provide recommendations."""
-        check = ResourceCheck(
-            is_feasible=True, estimated_memory_gb=0.0, estimated_time_hours=0.0
-        )
-
-        if not config.slurm:
-            check.issues.append("No SLURM configuration provided")
-            check.is_feasible = False
-            return check
-
-        # Estimate memory requirements
-        model_memory = ConfigValidator._estimate_model_memory(config.model)
-        batch_memory = ConfigValidator._estimate_batch_memory(config.data, config.model)
-        overhead_memory = 2.0  # OS and framework overhead
-
-        check.estimated_memory_gb = model_memory + batch_memory + overhead_memory
-
-        # Parse requested memory
-        requested_memory = ConfigValidator._parse_memory_string(config.slurm.mem)
-
-        if check.estimated_memory_gb > requested_memory:
-            check.is_feasible = False
-            check.issues.append(
-                f"Estimated memory ({check.estimated_memory_gb:.1f}GB) > "
-                f"requested memory ({requested_memory:.1f}GB)"
-            )
-        elif check.estimated_memory_gb > requested_memory * 0.8:
-            check.warnings.append(
-                f"Memory usage may be tight: {check.estimated_memory_gb:.1f}GB / "
-                f"{requested_memory:.1f}GB requested"
-            )
-
-        # Estimate training time
-        check.estimated_time_hours = ConfigValidator._estimate_training_time(config)
-
-        # Parse requested time
-        requested_time_hours = ConfigValidator._parse_time_string(config.slurm.time)
-
-        if check.estimated_time_hours > requested_time_hours:
-            check.warnings.append(
-                f"Estimated time ({check.estimated_time_hours:.1f}h) > "
-                f"requested time ({requested_time_hours:.1f}h)"
-            )
-
-        # Recommend partition based on requirements
-        check.recommended_partition = ConfigValidator._recommend_partition(
-            check.estimated_memory_gb,
-            check.estimated_time_hours,
-            config.slurm.gpus_per_node,
-        )
-
-        return check
-
-    @staticmethod
-    def _estimate_model_memory(model: ModelConfig) -> float:
-        """Estimate model memory requirements in GB."""
-        base_memory = ConfigValidator.MODEL_MEMORY_ESTIMATES.get(model.type, 2.0)
-
-        # Scale by model size parameters
-        size_factor = (model.hidden_size / 512) * (model.num_layers / 6)
-
-        return base_memory * size_factor
-
-    @staticmethod
-    def _estimate_batch_memory(data: DataConfig, model: ModelConfig) -> float:
-        """Estimate batch memory requirements in GB."""
-        # Very rough estimate based on batch size and model complexity
-        base_per_sample = 0.01  # 10MB per sample
-        complexity_factor = model.hidden_size / 512
-
-        return data.batch_size * base_per_sample * complexity_factor
-
-    @staticmethod
-    def _parse_memory_string(mem_str: str) -> float:
-        """Parse memory string to GB."""
-        if mem_str.endswith("G"):
-            return float(mem_str[:-1])
-        if mem_str.endswith("M"):
-            return float(mem_str[:-1]) / 1024
-        if mem_str.endswith("K"):
-            return float(mem_str[:-1]) / (1024 * 1024)
-        return float(mem_str) / (1024 * 1024 * 1024)  # Assume bytes
-
-    @staticmethod
-    def _parse_time_string(time_str: str) -> float:
-        """Parse time string to hours."""
-        # Handle format like "1-00:00:00" or "24:00:00"
-        if "-" in time_str:
-            days, time_part = time_str.split("-")
-            hours_from_days = int(days) * ConfigValidator.HOURS_PER_DAY
-        else:
-            hours_from_days = 0
-            time_part = time_str
-
-        time_parts = time_part.split(":")
-        if len(time_parts) == ConfigValidator.TIME_PARTS_HMS:
-            hours, minutes, seconds = map(int, time_parts)
-            return (
-                hours_from_days
-                + hours
-                + minutes / ConfigValidator.MINUTES_PER_HOUR
-                + seconds / ConfigValidator.SECONDS_PER_HOUR
-            )
-        if len(time_parts) == ConfigValidator.TIME_PARTS_HM:
-            hours, minutes = map(int, time_parts)
-            return hours_from_days + hours + minutes / ConfigValidator.MINUTES_PER_HOUR
-        return hours_from_days + int(time_parts[0])
-
-    @staticmethod
-    def _estimate_training_time(config: ExperimentConfig) -> float:
-        """Estimate training time in hours."""
-        # Very rough estimate - in practice this would need more sophisticated modeling
-        base_time_per_epoch = ConfigValidator.BASE_TIME_PER_EPOCH
-
-        # Scale by model complexity
-        complexity_factor = (config.model.hidden_size / 512) * (
-            config.model.num_layers / 6
-        )
-
-        # Scale by batch size (inversely)
-        batch_factor = 64 / config.data.batch_size
-
-        return (
-            config.training.max_epochs
-            * base_time_per_epoch
-            * complexity_factor
-            * batch_factor
-        )
-
-    @staticmethod
-    def _recommend_partition(memory_gb: float, time_hours: float, gpus: int) -> str:
-        """Recommend SLURM partition based on requirements."""
-        if time_hours > ConfigValidator.PARTITION_LONG_HOURS:
-            return "gpu-long"
-        if (
-            memory_gb > ConfigValidator.PARTITION_HIGH_MEM_GB
-            or gpus > ConfigValidator.PARTITION_HIGH_MEM_GPUS
-        ):
-            return "gpu-high-mem"
-        if time_hours > ConfigValidator.PARTITION_STANDARD_HOURS:
-            return "gpu"
-        return "ckpt-all"

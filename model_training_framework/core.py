@@ -20,7 +20,9 @@ from .config import (
     ConfigValidator,
     ExecutionMode,
     ExperimentConfig,
-    GridSearchExecutor,
+    GridSearchConfig,
+    GridSearchResult,
+    NamingStrategy,
     ParameterGrid,
     ParameterGridSearch,
     ValidationResult,
@@ -106,10 +108,6 @@ class ModelTrainingFramework:
             )
 
         self.job_monitor = SLURMJobMonitor()
-
-        self.grid_search_executor = GridSearchExecutor(
-            launcher=self.slurm_launcher, config_manager=self.config_manager
-        )
 
         logger.info(f"Initialized ModelTrainingFramework at {self.project_root}")
 
@@ -306,23 +304,36 @@ class ModelTrainingFramework:
 
         # Execute grid search
         try:
-            result = self.grid_search_executor.execute_grid_search(
-                grid_search=grid_search,
-                execution_mode=execution_mode,
-                output_dir=output_dir,
+            # TODO: Implement grid search execution without GridSearchExecutor
+            # For now, just generate the experiments
+            experiments = list(grid_search.generate_experiments())
+            logger.info(f"Generated {len(experiments)} experiments from grid search")
+
+            # Return a placeholder result
+            # Create a minimal grid config for the result
+            grid_config = GridSearchConfig(
+                name="grid_search",
+                description="Grid search placeholder",
+                base_config=base_config_dict,
+                parameter_grids=[],
+                naming_strategy=NamingStrategy.HASH_BASED,
                 max_concurrent_jobs=max_concurrent_jobs,
+                execution_mode=execution_mode,
+                output_dir=str(output_dir) if output_dir else None,
             )
 
-            # Track jobs if SLURM execution
-            if execution_mode == ExecutionMode.SLURM and hasattr(
-                result, "submitted_jobs"
-            ):
-                for job_id in result.submitted_jobs:
-                    if job_id != "DRY_RUN":
-                        self.job_monitor.track_job(job_id)
+            result = GridSearchResult(
+                grid_config=grid_config,
+                total_experiments=len(experiments),
+                generated_experiments=experiments,
+                submitted_jobs=[],
+                failed_submissions=[],
+                execution_time=0.0,
+                output_directory=output_dir,
+            )
 
-            logger.info(
-                f"Grid search completed: {result.success_rate:.1%} success rate"
+            logger.warning(
+                "Grid search execution not yet implemented without GridSearchExecutor"
             )
             return result
 

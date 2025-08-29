@@ -194,84 +194,192 @@ optimizer:
 
 ### Basic Grid Search
 
-```yaml
-# base_config.yaml
-experiment_name: "grid_search_base"
-model:
-  name: "transformer"
-  hidden_size: 256  # Will be overridden
-training:
-  epochs: 50
-  learning_rate: 0.001  # Will be overridden
-```
+The framework provides a powerful and flexible grid search API for hyperparameter exploration:
 
 ```python
-# Python script for grid search
 from model_training_framework.config import ParameterGridSearch, ParameterGrid
+from pathlib import Path
 
-# Load base configuration
-base_config = config_manager.load_config("base_config.yaml")
+# Define base configuration (dict or ExperimentConfig)
+base_config = {
+    "experiment_name": "transformer_baseline",
+    "model": {
+        "type": "transformer",
+        "hidden_size": 256,
+        "num_layers": 6,
+        "num_heads": 8,
+        "dropout": 0.1
+    },
+    "data": {
+        "dataset_name": "my_dataset",
+        "batch_size": 32,
+        "num_workers": 4
+    },
+    "training": {
+        "max_epochs": 50,
+        "gradient_accumulation_steps": 1,
+        "validation_frequency": 100,
+        "log_frequency": 10
+    },
+    "optimizer": {
+        "type": "adamw",
+        "lr": 1e-3,
+        "weight_decay": 0.01
+    },
+    "logging": {
+        "use_wandb": True,
+        "wandb_project": "my_project"
+    }
+}
 
-# Create grid search
-grid_search = ParameterGridSearch(base_config)
+# Create grid search with base config
+gs = ParameterGridSearch(base_config)
 
-# Add parameter grids
-lr_grid = grid_search.create_grid("learning_rates")
-lr_grid.add_parameter("training.learning_rate", [1e-4, 1e-3, 1e-2])
-lr_grid.add_parameter("optimizer.weight_decay", [0.01, 0.1])
+# Define parameter grids with method chaining
+optimization_grid = (
+    ParameterGrid("optimization")
+    .add_parameter("optimizer.lr", [1e-4, 5e-4, 1e-3])
+    .add_parameter("optimizer.weight_decay", [0.01, 0.05, 0.1])
+    .add_parameter("training.gradient_accumulation_steps", [1, 2, 4])
+)
 
-model_grid = grid_search.create_grid("model_sizes")
-model_grid.add_parameter("model.hidden_size", [128, 256, 512])
-model_grid.add_parameter("model.num_layers", [4, 6, 8])
+architecture_grid = (
+    ParameterGrid("architecture")
+    .add_parameter("model.hidden_size", [256, 512, 1024])
+    .add_parameter("model.num_layers", [4, 6, 8])
+    .add_parameter("model.dropout", [0.1, 0.2, 0.3])
+)
 
-# Generate experiments
-experiments = list(grid_search.generate_experiments())
+# Add grids to search
+gs.add_grid(optimization_grid)
+gs.add_grid(architecture_grid)
+
+# Set naming strategy
+gs.set_naming_strategy("parameter_based")  # or "hash_based", "timestamp_based"
+
+# Generate all experiment configurations
+experiments = list(gs.generate_experiments())
+print(f"Generated {len(experiments)} experiment configurations")
+
+# Save configurations
+output_dir = Path("experiments/grid_search")
+gs.save_grid_config(output_dir / "grid_config.json")
+gs.save_summary(output_dir / "summary.txt")
+
+# Iterate through experiments
+for exp in experiments:
+    print(f"Experiment: {exp.experiment_name}")
+    print(f"  Learning rate: {exp.optimizer.lr}")
+    print(f"  Hidden size: {exp.model.hidden_size}")
 ```
 
-### Advanced Grid Search Configuration
+### Advanced Grid Search Features
 
-```json
-{
-  "name": "advanced_grid_search",
-  "description": "Complex parameter exploration",
-  "base_config_path": "configs/base.yaml",
-  "naming_strategy": "descriptive",
-  "grids": [
-    {
-      "name": "architecture_search",
-      "description": "Model architecture variations",
-      "parameters": {
-        "model.hidden_size": [256, 512, 1024],
-        "model.num_layers": [6, 12, 24],
-        "model.num_heads": [8, 16, 32]
-      }
+#### Custom Parameter Combinations
+
+```python
+# Create grid with custom combinations
+grid = ParameterGrid("custom_combinations")
+
+# Add linked parameters (will be varied together)
+grid.add_linked_parameters([
+    ("model.hidden_size", [256, 512, 1024]),
+    ("model.num_heads", [8, 16, 32])  # Scales with hidden_size
+])
+
+# Add conditional parameters
+grid.add_parameter_with_condition(
+    "optimizer.lr",
+    values=[1e-3, 5e-4, 1e-4],
+    condition=lambda cfg: cfg["model"]["hidden_size"] <= 512
+)
+```
+
+#### Using Typed Configurations
+
+For better type safety and IDE support, use the configuration registry:
+
+```python
+from model_training_framework.config import ConfigRegistry, register_model, register_dataset
+from model_training_framework.config.schemas import ModelConfig, DataConfig
+from dataclasses import dataclass
+
+# Register custom model configuration
+@register_model("transformer")
+@dataclass
+class TransformerConfig(ModelConfig):
+    hidden_size: int = 512
+    num_layers: int = 6
+    num_heads: int = 8
+    dropout: float = 0.1
+    max_seq_length: int = 512
+    vocab_size: int = 30000
+
+    def validate(self) -> list[str]:
+        """Custom validation logic."""
+        errors = []
+        if self.hidden_size % self.num_heads != 0:
+            errors.append(f"hidden_size ({self.hidden_size}) must be divisible by num_heads ({self.num_heads})")
+        return errors
+
+# Register custom dataset configuration
+@register_dataset("my_dataset")
+@dataclass
+class MyDatasetConfig(DataConfig):
+    dataset_path: str = "/path/to/data"
+    max_samples: int | None = None
+    preprocessing: str = "standard"
+    cache_dir: str | None = None
+
+# Use typed configs in grid search
+base_config = {
+    "experiment_name": "typed_experiment",
+    "model": {
+        "type": "transformer",
+        "hidden_size": 512,
+        "num_heads": 8
     },
-    {
-      "name": "optimization_search",
-      "description": "Optimization hyperparameters",
-      "parameters": {
-        "training.learning_rate": [1e-5, 5e-5, 1e-4, 5e-4],
-        "optimizer.weight_decay": [0.01, 0.05, 0.1],
-        "training.gradient_accumulation_steps": [1, 2, 4, 8]
-      }
-    },
-    {
-      "name": "regularization_search",
-      "description": "Regularization techniques",
-      "parameters": {
-        "model.dropout": [0.0, 0.1, 0.2, 0.3],
-        "training.max_grad_norm": [0.5, 1.0, 2.0],
-        "scheduler.warmup_steps": [500, 1000, 2000]
-      }
+    "data": {
+        "dataset_name": "my_dataset",
+        "batch_size": 32,
+        "preprocessing": "advanced"
     }
-  ],
-  "constraints": {
-    "max_combinations": 1000,
-    "exclude_combinations": [
-      {"model.hidden_size": 1024, "model.num_layers": 24}
-    ]
-  }
 }
+
+# Grid search will use registered configs for validation
+gs = ParameterGridSearch(base_config)
+grid = ParameterGrid("typed_search")
+grid.add_parameter("model.num_layers", [6, 12, 24])
+grid.add_parameter("data.max_samples", [1000, 5000, None])
+gs.add_grid(grid)
+
+# Generate experiments with type checking
+experiments = list(gs.generate_experiments())
+```
+
+#### Grid Search Result Analysis
+
+```python
+# Load and analyze grid search results
+from model_training_framework.config import GridSearchResult
+
+# After running experiments, analyze results
+result = GridSearchResult(
+    grid_config=gs.get_config(),
+    total_experiments=len(experiments),
+    generated_experiments=experiments,
+    submitted_jobs=["job1", "job2", "job3"],
+    failed_submissions=[],
+    execution_time=3600.0,
+    output_directory=output_dir
+)
+
+print(f"Success rate: {result.success_rate:.1%}")
+print(f"Total experiments: {result.total_experiments}")
+print(f"Failed submissions: {len(result.failed_submissions)}")
+
+# Save detailed results
+result.save_summary(output_dir / "results.json")
 ```
 
 ## SLURM Configuration

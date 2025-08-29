@@ -63,5 +63,8 @@
         "**/node_modules": true,
         "**/.DS_Store": true,
         "**/coverage.xml": true
-    }
+    },
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "python-envs.pythonProjects": []
 }
