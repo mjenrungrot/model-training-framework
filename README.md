@@ -1,598 +1,78 @@
 # Model Training Framework
 
-A comprehensive Python package for multi-dataloader machine learning model training with fault tolerance, SLURM integration, and deterministic scheduling.
+A comprehensive Python framework for deep learning research with three core components: **Config Search Sweep**, **SLURM Launcher**, and **Fault-Tolerant Trainer**. Built for researchers working on HPC clusters.
 
-## 🎯 Key Design: Multi-DataLoader-Only Architecture
-
-**This framework is designed exclusively for multi-dataloader training.** Even single dataloader scenarios must use the multi-dataloader API with a list containing one loader. This unified design enables seamless scaling and consistent behavior across all use cases.
-
-## Features
-
-- **Multi-DataLoader Training**: Built-in support for training with multiple datasets simultaneously
-- **Deterministic Scheduling**: ROUND_ROBIN, WEIGHTED, ALTERNATING, and SEQUENTIAL strategies
-- **Fault-Tolerant Training**: Preemption-safe with instruction-level checkpointing and exact resume
-- **SLURM Integration**: Seamless job launching and management on HPC clusters
-- **Flexible Aggregation**: Multiple validation aggregation strategies for multi-loader scenarios
-- **Distributed Training**: Multi-node and multi-GPU support via Lightning Fabric with DDP
-
-## Installation
+## 🚀 Quick Installation
 
 ```bash
-# Install from source
 git clone https://github.com/example/model-training-framework.git
 cd model-training-framework
-pip install -e .
-
-# Install with all optional dependencies
 pip install -e ".[all]"
-
-# Or install specific extras
-pip install -e ".[dev]"           # Development tools
-pip install -e ".[tensorboard]"   # TensorBoard logging
-pip install -e ".[wandb]"         # Weights & Biases integration
-pip install -e ".[docs]"          # Documentation tools
 ```
 
-## CI & Local Development
+See [Installation Guide](docs/INSTALLATION.md) for detailed instructions.
 
-- Primary CI: CircleCI runs lint, type-checks, tests, security, build, docs placeholder, and integration. GitHub Actions workflows are manual-only (for tooling and ad-hoc runs).
-- Local dev quickstart:
+## 🎯 Three Main Components
 
-  ```bash
-  python -m venv .venv
-  source .venv/bin/activate   # Windows: .venv\\Scripts\\activate
-  pip install -U pip
-  pip install -e ".[dev]"
+### 1. Config Search Sweep
 
-  # Run checks
-  ruff check . && ruff format --check .
-  mypy model_training_framework/
-  pytest -vv --maxfail=1
-  ```
-
-- Coverage / Codecov: CI produces `coverage.xml`. To upload from CircleCI, add `CODECOV_TOKEN` in your CircleCI project settings (Project → Environment Variables). Upload is skipped if the token is absent.
-- Codex multi-review: A manual GitHub Actions workflow posts multi-perspective PR reviews. Maintainers: set `CODEX_AUTH_B64` (see docs/codex-multi-review.md), then run via GitHub → Actions → “codex-multi-review” → Run workflow.
-- Docs build: The CI docs step is a placeholder. When you’re ready, wire up Sphinx/MkDocs and add the build command to `.circleci/config.yml` and `.github/workflows/ci.yml`.
-- Maintainers: Be sure to enable this repository in CircleCI so PRs/branches execute the CircleCI pipeline.
-
-### Core Dependencies
-
-- `torch>=2.0.0` - PyTorch framework
-- `lightning>=2.0.0` - PyTorch Lightning
-- `lightning-fabric>=2.0.0` - Lightning Fabric for distributed training
-- `tensorboard>=2.10.0` - TensorBoard logging
-- `numpy>=1.21.0` - Numerical operations
-- `pyyaml>=6.0` - Configuration files
-- `gitpython>=3.1.0` - Git integration
-
-## Quick Start
-
-### 1. Single DataLoader (Using Multi-Loader API)
-
-```python
-from model_training_framework.trainer import (
-    GenericTrainer,
-    GenericTrainerConfig,
-    MultiDataLoaderConfig,
-    SamplingStrategy,
-    EpochLengthPolicy,
-)
-
-# Configuration for single loader (still uses multi-loader config)
-config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
-        sampling_strategy=SamplingStrategy.SEQUENTIAL,
-        epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,
-        dataloader_names=["main"],  # Single name in list
-    )
-)
-
-# Create trainer - note the list syntax
-trainer = GenericTrainer(
-    config=config,
-    model=model,
-    optimizers=[optimizer],  # Always a list
-)
-
-# Training step signature includes batch index and dataloader info
-def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
-    # batch_idx is 0-based within this dataloader for the epoch
-    # dataloader_idx will be 0, dataloader_name will be "main"
-    x, y = batch
-    outputs = trainer.model(x)
-    loss = torch.nn.functional.cross_entropy(outputs, y)
-    return {"loss": loss}
-
-trainer.set_training_step(training_step)
-
-# Fit with single loader wrapped in list
-trainer.fit(
-    train_loaders=[train_loader],  # Single loader in list
-    val_loaders=[val_loader],      # Single loader in list
-    max_epochs=10
-)
-```
-
-### 2. Multiple DataLoaders with Different Strategies
-
-#### Round-Robin Strategy (Fair Alternation)
-
-```python
-from model_training_framework.trainer import (
-    GenericTrainer,
-    GenericTrainerConfig,
-    MultiDataLoaderConfig,
-    SamplingStrategy,
-    EpochLengthPolicy,
-    ValidationConfig,
-    ValAggregation,
-)
-
-# Alternates between dataloaders: A, B, A, B, ...
-config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
-        sampling_strategy=SamplingStrategy.ROUND_ROBIN,
-        epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,
-        dataloader_names=["dataset_a", "dataset_b", "dataset_c"],
-    ),
-    validation=ValidationConfig(
-        aggregation=ValAggregation.MACRO_AVG_EQUAL_LOADERS,
-    ),
-)
-
-trainer = GenericTrainer(
-    config=config,
-    model=model,
-    optimizers=[optimizer],
-)
-
-# Training with multiple loaders
-trainer.fit(
-    train_loaders=[loader_a, loader_b, loader_c],
-    val_loaders=[val_a, val_b, val_c],
-    max_epochs=20,
-)
-```
-
-#### Weighted Strategy (Importance-Based Sampling)
-
-```python
-# Minimal imports for copy‑paste
-from model_training_framework.trainer import (
-    GenericTrainerConfig,
-    MultiDataLoaderConfig,
-    SamplingStrategy,
-    EpochLengthPolicy,
-    LoggingConfig,
-)
-# Sample based on dataset importance/size
-config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
-        sampling_strategy=SamplingStrategy.WEIGHTED,
-        dataloader_weights=[0.5, 0.3, 0.2],  # 50%, 30%, 20%
-        epoch_length_policy=EpochLengthPolicy.FIXED_NUM_STEPS,
-        steps_per_epoch=1000,
-        dataloader_names=["primary", "auxiliary", "synthetic"],
-    ),
-    logging=LoggingConfig(
-        log_loader_proportions=True,  # Monitor actual sampling
-    ),
-)
-```
-
-#### Alternating Pattern (Custom Schedule)
-
-```python
-# Minimal imports for copy‑paste
-from model_training_framework.trainer import (
-    GenericTrainerConfig,
-    MultiDataLoaderConfig,
-    SamplingStrategy,
-)
-# Define explicit pattern: 2x A, 1x B, 1x C, repeat
-config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
-        sampling_strategy=SamplingStrategy.ALTERNATING,
-        alternating_pattern=[0, 0, 1, 2],  # Indices into loader list
-        burst_size=3,  # Take 3 batches at a time
-        dataloader_names=["main", "augmented", "hard_negatives"],
-    ),
-)
-```
-
-### 3. Validation Aggregation Strategies
-
-```python
-from model_training_framework.trainer import (
-    GenericTrainerConfig,
-    ValidationConfig,
-    ValAggregation,
-)
-
-# Micro-average: Weight by number of samples
-config = GenericTrainerConfig(
-    validation=ValidationConfig(
-        aggregation=ValAggregation.MICRO_AVG_WEIGHTED_BY_SAMPLES,
-        per_loader_metrics=True,  # Track per-loader metrics
-        global_metrics=True,      # Also track aggregated
-    ),
-)
-
-# Macro-average: Equal weight to each loader
-config = GenericTrainerConfig(
-    validation=ValidationConfig(
-        aggregation=ValAggregation.MACRO_AVG_EQUAL_LOADERS,
-    ),
-)
-
-# Per-loader tracking for multi-task
-config = GenericTrainerConfig(
-    validation=ValidationConfig(
-        aggregation=ValAggregation.PRIMARY_METRIC_PER_LOADER,
-    ),
-)
-```
-
-### 4. Checkpoint and Resume
-
-```python
-# Minimal imports for copy‑paste
-from model_training_framework.trainer import (
-    GenericTrainerConfig,
-    CheckpointConfig,
-    FaultToleranceConfig,
-)
-# Checkpoint configuration
-config = GenericTrainerConfig(
-    checkpoint=CheckpointConfig(
-        save_every_n_epochs=1,
-        save_every_n_steps=500,
-        max_checkpoints=5,
-    ),
-    fault_tolerance=FaultToleranceConfig(
-        save_sampler_state=True,  # For exact resume
-        save_dataset_state=True,
-        verify_deterministic_resume=True,
-    ),
-)
-
-# Resume from checkpoint
-if checkpoint_path.exists():
-    trainer.load_checkpoint(checkpoint_path)
-    # Resumes from exact batch/sample
-```
-
-### 5. Advanced Multi-Loader Patterns
-
-#### Multi-Task Learning
-
-```python
-# Different optimizers for different tasks
-optimizers = [
-    torch.optim.Adam(model.task_a_params(), lr=0.001),
-    torch.optim.SGD(model.task_b_params(), lr=0.01),
-]
-
-config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
-        sampling_strategy=SamplingStrategy.WEIGHTED,
-        dataloader_weights=[0.6, 0.4],
-        dataloader_names=["task_a", "task_b"],
-    ),
-    per_loader_optimizers={
-        "task_a": {"optimizer_idx": 0, "loss_weight": 1.0},
-        "task_b": {"optimizer_idx": 1, "loss_weight": 0.5},
-    },
-)
-
-trainer = GenericTrainer(
-    config=config,
-    model=multi_task_model,
-    optimizers=optimizers,  # Multiple optimizers
-)
-```
-
-#### Curriculum Learning
-
-```python
-# Sequential processing with increasing difficulty
-config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
-        sampling_strategy=SamplingStrategy.SEQUENTIAL,
-        dataloader_names=["easy", "medium", "hard"],
-        epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,
-    ),
-)
-
-# Or use alternating pattern for gradual transition
-config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
-        sampling_strategy=SamplingStrategy.ALTERNATING,
-        # More easy, fewer hard samples
-        alternating_pattern=[0, 0, 0, 0, 1, 1, 2],
-        dataloader_names=["easy", "medium", "hard"],
-    ),
-)
-```
-
-### 6. DDP with Multi-Loaders
-
-```python
-# DDP configuration for multi-loader training
-from lightning.fabric import Fabric
-
-from model_training_framework.trainer import (
-    GenericTrainer,
-    GenericTrainerConfig,
-    MultiDataLoaderConfig,
-    SamplingStrategy,
-    DDPConfig,
-)
-
-fabric = Fabric(accelerator="gpu", devices=4, strategy="ddp")
-fabric.launch()
-
-config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
-        sampling_strategy=SamplingStrategy.ROUND_ROBIN,
-        dataloader_names=["shard_1", "shard_2"],
-    ),
-    ddp=DDPConfig(
-        sync_schedules_across_ranks=True,
-        validate_schedule_consistency=True,
-    ),
-)
-
-# Fabric handles distributed setup
-model, *optimizers = fabric.setup(model, *optimizers)
-trainer = GenericTrainer(
-    config=config,
-    model=model,
-    optimizers=optimizers,
-    fabric=fabric,
-)
-```
-
-## 📚 Examples
-
-Comprehensive examples are available in the `demo/` directory:
-
-### Beginner Examples (example1_beginner_local)
-
-- **[basic_model_training.py](demo/example1_beginner_local/basic_model_training.py)**: Single dataloader with multi-loader API
-- **[multi_loader_training.py](demo/example1_beginner_local/multi_loader_training.py)**: Multiple dataloaders with various strategies
-- **[sample_dataset.py](demo/example1_beginner_local/data/sample_dataset.py)**: Example dataset implementation
-
-### Intermediate HPC Examples (example2_intermediate_hpc)
-
-- **[train_script.py](demo/example2_intermediate_hpc/train_script.py)**: Distributed training with DDP
-- **[orchestrate.py](demo/example2_intermediate_hpc/orchestrate.py)**: SLURM job orchestration
-- **[config.py](demo/example2_intermediate_hpc/config.py)**: Configuration management
-
-### Production Examples (example3_production)
-
-- **[train_script.py](demo/example3_production/train_script.py)**: Production training with fault tolerance
-- **[orchestrate.py](demo/example3_production/orchestrate.py)**: Advanced job orchestration
-- **[model.py](demo/example3_production/model.py)**: Model architecture examples
-- **[data.py](demo/example3_production/data.py)**: Data pipeline implementation
-
-### Configuration Examples
-
-- **[multi_loader_config.yaml](demo/example1_beginner_local/config_examples/multi_loader_config.yaml)**: Complete multi-loader configuration
-- **[simple_config.yaml](demo/example1_beginner_local/config_examples/simple_config.yaml)**: Basic configuration example
-
-## 🔄 Migration Guide
-
-### Migrating from Single-Loader to Multi-Loader API
-
-**Old (Single-Loader) Pattern:**
-
-```python
-# ❌ Old pattern - no longer supported
-trainer = Trainer(model, optimizer)
-trainer.fit(train_loader, val_loader)
-```
-
-**New (Multi-Loader) Pattern:**
-
-```python
-# ✅ New pattern - required for all training
-config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
-        sampling_strategy=SamplingStrategy.SEQUENTIAL,
-        dataloader_names=["main"],
-    )
-)
-trainer = GenericTrainer(
-    config=config,
-    model=model,
-    optimizers=[optimizer],  # List required
-)
-trainer.fit(
-    train_loaders=[train_loader],  # List required
-    val_loaders=[val_loader],      # List required
-)
-```
-
-### Key Changes
-
-1. **Always use lists for loaders**: `train_loaders=[loader]`
-2. **Always use lists for optimizers**: `optimizers=[optimizer]`
-3. **Require MultiDataLoaderConfig**: Even for single loader
-4. **Training step signature changed**:
-
-   ```python
-   # Old: def training_step(batch)
-   # New:
-   def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
-       pass
-   ```
-
-## 🎯 Use Cases
-
-### When to Use Each Sampling Strategy
-
-| Strategy | Use Case | Example |
-|----------|----------|---------|
-| **ROUND_ROBIN** | Fair representation from all datasets | Multi-domain training |
-| **WEIGHTED** | Imbalanced datasets or importance-based | 70% main task, 30% auxiliary |
-| **ALTERNATING** | Specific patterns needed | Curriculum learning patterns |
-| **SEQUENTIAL** | Process datasets in order | Pretrain → Finetune → Adapt |
-
-### Common Patterns
-
-**Handling Imbalanced Datasets:**
-
-```python
-# Oversample minority class
-config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
-        sampling_strategy=SamplingStrategy.WEIGHTED,
-        dataloader_weights=[0.2, 0.8],  # Inverse of actual sizes
-        dataloader_names=["majority", "minority"],
-    ),
-)
-```
-
-**Multi-Domain Training:**
-
-```python
-# Equal representation from each domain
-config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
-        sampling_strategy=SamplingStrategy.ROUND_ROBIN,
-        dataloader_names=["domain_a", "domain_b", "domain_c"],
-        cycle_short_loaders=True,  # Restart shorter loaders
-    ),
-)
-```
-
-## Project Structure
-
-```text
-your_project/
-├── model_training_framework/    # This package
-├── configs/                     # Configuration files
-│   ├── base_config.yaml
-│   └── experiment_configs/
-├── experiments/                 # Experiment outputs
-├── scripts/                     # Training scripts
-│   └── train.py
-├── slurm_template.txt          # SLURM batch template
-└── requirements.txt
-```
-
-## Configuration System
-
-### Experiment Configuration
-
-```yaml
-# configs/base_config.yaml
-experiment_name: "my_experiment"
-
-model:
-  type: "resnet50"
-  num_classes: 1000
-  dropout: 0.1
-
-training:
-  max_epochs: 100
-  batch_size: 32
-  gradient_accumulation_steps: 1
-
-optimizer:
-  type: "adamw"
-  lr: 1e-4
-  weight_decay: 0.01
-
-data:
-  dataset_name: "imagenet"
-  batch_size: 32
-  num_workers: 4
-
-slurm:
-  account: "realitylab"
-  partition: "gpu"
-  nodes: 1
-  gpus_per_node: 1
-  time: "12:00:00"
-
-logging:
-  use_wandb: true
-  wandb_project: "my_project"
-```
-
-### Grid Search Quickstart
-
-Generate experiments programmatically with the improved grid search API:
+Generate and manage hyperparameter search experiments programmatically.
 
 ```python
 from model_training_framework.config import ParameterGridSearch, ParameterGrid
-from pathlib import Path
 
-# Base experiment config (dict or ExperimentConfig)
-base = {
-    "experiment_name": "demo",
-    "model": {"type": "resnet18"},
-    "data": {"dataset_name": "cifar10", "batch_size": 64},
-    "training": {"max_epochs": 5, "gradient_accumulation_steps": 1},
-    "optimizer": {"type": "adam", "lr": 1e-3},
-    "logging": {"use_wandb": False}
+# Define base configuration
+base_config = {
+    "experiment_name": "baseline",
+    "model": {"type": "transformer", "hidden_size": 256},
+    "optimizer": {"type": "adamw", "lr": 1e-3},
+    "training": {"max_epochs": 50}
 }
 
-# Build grid search with method chaining
-gs = ParameterGridSearch(base)
+# Create parameter search
+gs = ParameterGridSearch(base_config)
 grid = (
-    ParameterGrid("lr_bs")
-    .add_parameter("optimizer.lr", [1e-3, 3e-4])
-    .add_parameter("data.batch_size", [32, 64])
+    ParameterGrid("hyperparameters")
+    .add_parameter("optimizer.lr", [1e-4, 5e-4, 1e-3])
+    .add_parameter("model.hidden_size", [256, 512, 1024])
 )
 gs.add_grid(grid)
 
 # Generate experiments
 experiments = list(gs.generate_experiments())
 print(f"Generated {len(experiments)} experiments")
-
-# Optional: save grid config and summary
-out = Path("runs/grid_search_demo")
-gs.save_grid_config(out / "grid_config.json")
-gs.save_summary(out / "summary.txt")
 ```
 
-#### Using Typed Configurations
+### 2. SLURM Launcher
 
-For type safety and better IDE support, register custom config classes:
+Submit and manage jobs on HPC clusters with automatic requeue and preemption handling.
 
 ```python
-from model_training_framework.config import register_model, register_dataset
-from model_training_framework.config.schemas import ModelConfig, DataConfig
-from model_training_framework.config.registry import ConfigRegistry
+from model_training_framework.slurm import SLURMLauncher
 
-@register_model("resnet18")
-class ResNet18Config(ModelConfig):
-    num_layers: int = 18
-    pretrained: bool = False
+# Create launcher with SBATCH template
+launcher = SLURMLauncher(
+    template_path="slurm_template.txt",
+    project_root=".",
+    experiments_dir="./experiments"
+)
 
-@register_dataset("cifar10")
-class CIFAR10Config(DataConfig):
-    num_classes: int = 10
-    augmentation: bool = True
+# Submit batch of experiments
+result = launcher.submit_experiment_batch(
+    experiments=experiments,
+    script_path="train.py",
+    max_concurrent_jobs=10,
+    dry_run=False  # Set True to preview
+)
 
-# Create typed config from dict
-model_cfg = ConfigRegistry.create_model_config({"type": "resnet18", "pretrained": True})
-data_cfg = ConfigRegistry.create_data_config({"dataset_name": "cifar10", "batch_size": 128})
+print(f"Submitted {result.success_count} jobs to SLURM")
 ```
 
-## Training Scripts
+### 3. Fault-Tolerant Trainer
 
-### Basic Training Script
+Train models with automatic checkpointing, exact resume, and multi-dataloader support.
 
 ```python
-#!/usr/bin/env python3
-import argparse
-from pathlib import Path
-
-from model_training_framework import ModelTrainingFramework
 from model_training_framework.trainer import (
     GenericTrainer,
     GenericTrainerConfig,
@@ -600,383 +80,157 @@ from model_training_framework.trainer import (
     SamplingStrategy,
 )
 
-import torch
-import torch.nn as nn
-from lightning.fabric import Fabric
+# Configure trainer with multi-loader support
+config = GenericTrainerConfig(
+    multi=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.WEIGHTED,
+        dataloader_weights=[0.7, 0.3],
+        dataloader_names=["primary", "auxiliary"],
+    ),
+    checkpoint=CheckpointConfig(
+        save_every_n_steps=500,
+        max_checkpoints=3,
+    )
+)
 
+# Create trainer
+trainer = GenericTrainer(config, model, [optimizer])
+
+# Define training step
 def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
-    """Define training step logic."""
     x, y = batch
-    pred = trainer.model(x)
-    loss = nn.functional.cross_entropy(pred, y)
+    outputs = trainer.model(x)
+    loss = F.cross_entropy(outputs, y)
     return {"loss": loss}
 
-def validation_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
-    """Define validation step logic."""
-    x, y = batch
-    pred = trainer.model(x)
-    loss = nn.functional.cross_entropy(pred, y)
-    acc = (pred.argmax(dim=1) == y).float().mean()
-    return {"loss": loss, "accuracy": acc}
+trainer.set_training_step(training_step)
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("config", help="Configuration file")
-    args = parser.parse_args()
-
-    # Load configuration
-    framework = ModelTrainingFramework()
-    config = framework.load_experiment_config(args.config)
-
-    # Setup distributed training
-    fabric = Fabric(devices="auto", accelerator="auto")
-
-    # Create model, optimizer, data loaders
-    model = create_model(config.model)
-    optimizer = create_optimizer(model, config.optimizer)
-    train_loader, val_loader = create_data_loaders(config.data)
-
-    # Setup with Fabric
-    model, optimizer = fabric.setup(model, optimizer)
-    train_loader = fabric.setup_dataloaders(train_loader)
-    val_loader = fabric.setup_dataloaders(val_loader)
-
-    # Create trainer with multi-loader config
-    trainer_config = GenericTrainerConfig(
-        multi=MultiDataLoaderConfig(
-            sampling_strategy=SamplingStrategy.SEQUENTIAL,
-            dataloader_names=["main"],
-        )
-    )
-    trainer = GenericTrainer(
-        config=trainer_config,
-        fabric=fabric,
-        model=model,
-        optimizers=[optimizer]  # Always use list
-    )
-
-    # Set step functions
-    trainer.set_training_step(training_step)
-    trainer.set_validation_step(validation_step)
-
-    # Train model with lists of loaders
-    trainer.fit(
-        train_loaders=[train_loader],  # Always use list
-        val_loaders=[val_loader],      # Always use list
-        max_epochs=config.training.max_epochs
-    )
-
-if __name__ == "__main__":
-    main()
+# Train with automatic resume on preemption
+trainer.fit(
+    train_loaders=[primary_loader, auxiliary_loader],
+    val_loaders=[val_loader],
+    max_epochs=100
+)
 ```
 
-## SLURM Integration
+## 📚 Complete Example
 
-### SLURM Template
-
-Create `slurm_template.txt` in your project root:
+See [demo/example3_production/](demo/example3_production/) for a complete working example that demonstrates all three components working together:
 
 ```bash
-#!/bin/bash
+# Run locally
+python demo/example3_production/orchestrate.py local
 
-#SBATCH --job-name={{JOB_NAME}}
-#SBATCH --account={{ACCOUNT}}
-#SBATCH --partition={{PARTITION}}
-#SBATCH --nodes={{NODES}}
-#SBATCH --ntasks-per-node={{NTASKS_PER_NODE}}
-#SBATCH --gpus-per-node={{GPUS_PER_NODE}}
-#SBATCH --cpus-per-task={{CPUS_PER_TASK}}
-#SBATCH --mem={{MEM}}
-#SBATCH --time={{TIME}}
-#SBATCH --output={{OUTPUT_FILE}}
-#SBATCH --error={{ERROR_FILE}}
-#SBATCH --requeue={{REQUEUE}}
+# Submit to SLURM (dry run)
+python demo/example3_production/orchestrate.py slurm
 
-# Environment setup
-module load python/3.9
-module load cuda/11.8
-
-# Job information
-echo "Job ID: $SLURM_JOB_ID"
-echo "Experiment: {{EXPERIMENT_NAME}}"
-echo "Node: $SLURM_NODEID"
-
-# Run training
-cd {{PROJECT_ROOT}}
-python {{SCRIPT_PATH}} {{CONFIG_NAME}}
+# Submit to SLURM (actual submission)
+python demo/example3_production/orchestrate.py slurm submit
 ```
 
-### In-Memory Templates and Preview
+## 🔄 Key Features
 
-You can use templates directly from strings without file I/O:
+### Multi-DataLoader Training
 
-```python
-from model_training_framework.slurm.templates import (
-    SBATCHTemplateEngine,
-    TemplateContext,
-)
+- **Sampling Strategies**: ROUND_ROBIN, WEIGHTED, ALTERNATING, SEQUENTIAL
+- **Flexible Aggregation**: Multiple validation strategies
+- **Per-Loader Metrics**: Track metrics for each dataset
 
-# Define template as string
-template_string = """#!/bin/bash
-#SBATCH --job-name={{JOB_NAME}}
-#SBATCH --account={{ACCOUNT}}
-#SBATCH --partition={{PARTITION}}
-echo "Running {{EXPERIMENT_NAME}}"
-{{PYTHON_EXECUTABLE}} {{SCRIPT_PATH}} {{CONFIG_NAME}}
-"""
+### Fault Tolerance
 
-# Initialize with string template
-engine = SBATCHTemplateEngine(template_string=template_string)
+- **Automatic Checkpointing**: Save at intervals or on preemption
+- **Exact Resume**: Continue from exact batch/sample
+- **SLURM Integration**: Handle preemption signals gracefully
 
-# Or pass template string directly to generation
-engine = SBATCHTemplateEngine()
-context = TemplateContext(
-    job_name="my_job",
-    experiment_name="my_experiment",
-    script_path="train.py",
-    config_name="config.yaml",
-)
+### Experiment Management
 
-# Preview without saving to file
-preview = engine.preview_rendered_script(
-    context, template_string=template_string
-)
-print(preview)
+- **Grid Search**: Generate parameter combinations
+- **Git Integration**: Isolate experiments in branches
+- **Logging**: WandB, TensorBoard, Console support
 
-# Generate and save
-script = engine.generate_sbatch_script(
-    context,
-    template_string=template_string,
-    output_path=Path("job.sbatch")
-)
+## 📖 Documentation
+
+- **[Quick Start Guide](docs/QUICKSTART.md)** - Extended examples to get started
+- **[API Reference](docs/API.md)** - Complete API documentation
+- **[Configuration Guide](docs/CONFIGURATION.md)** - Detailed configuration options
+- **[Multi-DataLoader Guide](docs/MULTI_DATALOADER.md)** - Multi-loader training patterns
+- **[Migration Guide](docs/MIGRATION.md)** - Migrating existing code
+- **[Advanced Features](docs/ADVANCED_FEATURES.md)** - Production features
+
+## 🏗️ Project Structure
+
+```text
+model_training_framework/
+├── config/              # Configuration and grid search
+├── slurm/               # SLURM job submission
+├── trainer/             # Training engine
+└── utils/               # Utilities
+
+demo/
+└── example3_production/ # Complete working example
+    ├── config.py        # Configuration setup
+    ├── orchestrate.py   # Job orchestration
+    └── train_script.py  # Training script
 ```
 
-**Template Resolution Precedence:**
+## 🚦 Quick Start Workflow
 
-1. `template_string` (passed to method) - highest priority
-2. `template_string` (passed to constructor)
-3. `template_path` (passed to method)
-4. `template_path` (passed to constructor)
-5. Engine defaults - lowest priority
-
-### Job Submission
+### 1. Define Your Experiment
 
 ```python
-# Submit single experiment
-result = framework.run_single_experiment(
-    config=config,
-    script_path="scripts/train.py",
-    execution_mode=ExecutionMode.SLURM
-)
-
-print(f"Submitted job: {result.job_id}")
-
-# Submit batch of experiments
-results = framework.run_grid_search(
-    base_config=base_config,
-    parameter_grids=grids,
-    script_path="scripts/train.py",
-    max_concurrent_jobs=10
-)
-
-print(f"Submitted {results.success_count} jobs successfully")
-```
-
-## Advanced Features
-
-### Hooks System
-
-The framework provides a comprehensive hooks system for injecting custom behavior:
-
-```python
-from model_training_framework.trainer import TrainerHooks, GenericTrainer
-
-class CustomHook(TrainerHooks):
-    def on_epoch_start(self, trainer, epoch):
-        print(f"Starting epoch {epoch}")
-
-    def on_train_batch_end(self, trainer, batch, dataloader_idx, dataloader_name, metrics):
-        if metrics["loss"] > 10:
-            print(f"High loss detected: {metrics['loss']}")
-
-    def on_validation_end(self, trainer, epoch, metrics):
-        print(f"Validation metrics: {metrics}")
-
-# Register hooks with trainer
-trainer = GenericTrainer(config=config, model=model, optimizers=[optimizer])
-trainer.hook_manager.register_hook(CustomHook())
-```
-
-Available hooks:
-
-- `on_train_start/end` - Training lifecycle
-- `on_epoch_start/end` - Epoch boundaries
-- `on_train_batch_start/end` - Training batches
-- `on_validation_start/end` - Validation phases
-- `on_before/after_backward` - Gradient computation
-- `on_before/after_optimizer_step` - Optimization
-- `on_checkpoint_save/load` - Checkpointing
-- `on_gradient_clip` - Gradient clipping
-
-### Metrics Management
-
-Advanced metrics tracking with per-loader and global aggregation:
-
-```python
-from model_training_framework.trainer import MetricsManager, AggregationStrategy
-
-# Configure metrics aggregation
-config = GenericTrainerConfig(
-    metrics=MetricsConfig(
-        aggregation_strategy=AggregationStrategy.WEIGHTED_AVERAGE,
-        track_proportions=True,
-        per_loader_metrics=True,
-    )
-)
-
-# Access metrics during training
-def on_epoch_end(trainer, epoch, metrics):
-    # Per-loader metrics
-    loader_a_loss = metrics.get("train/dl_loader_a/loss")
-
-    # Global aggregated metrics
-    global_loss = metrics.get("train/loss")
-
-    # Loader proportions
-    proportions = trainer.metrics_manager.get_loader_proportions()
-```
-
-### Enhanced Logging
-
-Multiple logging backends with unified interface:
-
-```python
-from model_training_framework.config.schemas import LoggingConfig, GenericTrainerConfig
-
-# Single logger (W&B)
-cfg = GenericTrainerConfig(
-    logging=LoggingConfig(
-        logger_type="wandb",
-        wandb_project="my_project",
-        wandb_entity="my_team",
-        log_scalars_every_n_steps=10,
-        log_loader_proportions=True,
-    )
-)
-
-# Multiple loggers (console + tensorboard + wandb)
-cfg = GenericTrainerConfig(
-    logging=LoggingConfig(
-        logger_type="composite",
-        composite_loggers=["console", "tensorboard", "wandb"],
-        wandb_project="my_project",
-        wandb_entity="my_team",
-        tensorboard_dir="./tb_logs",
-        log_scalars_every_n_steps=10,
-        log_loader_proportions=True,
-    )
-)
-```
-
-### Fault-Tolerant Training
-
-The framework provides preemption-safe training with automatic checkpointing:
-
-```python
-# Training automatically handles SIGUSR1 signals
-# Checkpoints are saved with instruction-level granularity
-# Resume from latest checkpoint on restart
-
-trainer_config = GenericTrainerConfig(
-    checkpoint=CheckpointConfig(
-        save_every_n_epochs=1,
-        save_rng=True,  # For deterministic resume
-        max_checkpoints=5
-    ),
-    preemption=PreemptionConfig(
-        signal=signal.SIGUSR1,
-        max_checkpoint_sec=300.0,
-        requeue_job=True
-    )
-)
-```
-
-### Git Integration
-
-Automatic git branch management for experiment isolation:
-
-```python
-# Creates temporary branches for each experiment
-# Format: slurm-job/<experiment_name>/<timestamp>/<commit_hash>
-result = framework.run_single_experiment(
-    config=config,
-    script_path="scripts/train.py",
-    use_git_branch=True  # Enable git integration
-)
-```
-
-### Experiment Tracking
-
-Integration with Weights & Biases and other tracking systems:
-
-```python
-config = {
-    "logging": {
-        "use_wandb": True,
-        "wandb_project": "my_project",
-        "wandb_entity": "my_team",
-        "log_scalars_every_n_steps": 50
-    }
+base_config = {
+    "experiment_name": "my_experiment",
+    "model": {"type": "resnet", "num_layers": 18},
+    "optimizer": {"type": "adam", "lr": 0.001},
+    "training": {"max_epochs": 100}
 }
 ```
 
-## API Reference
+### 2. Set Up Parameter Search
 
-### Core Classes
+```python
+gs = ParameterGridSearch(base_config)
+grid = ParameterGrid("search").add_parameter("optimizer.lr", [1e-3, 1e-4])
+gs.add_grid(grid)
+experiments = list(gs.generate_experiments())
+```
 
-- **GenericTrainer**: Multi-dataloader training engine with fault tolerance
-- **MultiDataLoaderManager**: Manages multiple dataloaders with various sampling strategies
-- **MetricsManager**: Advanced metrics tracking and aggregation
-- **HookManager**: Training lifecycle hooks system
-- **CheckpointManager**: Checkpoint saving and loading with exact resume
+### 3. Submit to SLURM
 
-### Configuration Classes
+```python
+launcher = SLURMLauncher("template.txt", ".", "./experiments")
+result = launcher.submit_experiment_batch(experiments, "train.py")
+```
 
-- **GenericTrainerConfig**: Main trainer configuration
-- **MultiDataLoaderConfig**: Multi-loader sampling configuration
-- **ValidationConfig**: Validation aggregation settings
-- **CheckpointConfig**: Checkpointing behavior
-- **LoggingConfig**: Logging and monitoring settings
+### 4. Train with Fault Tolerance
 
-### Logging & Monitoring
+```python
+trainer = GenericTrainer(config, model, [optimizer])
+trainer.fit([train_loader], [val_loader], max_epochs=100)
+# Automatically resumes from checkpoint if interrupted
+```
 
-- **WandBLogger**: Weights & Biases integration
-- **TensorBoardLogger**: TensorBoard logging
-- **ConsoleLogger**: Structured console output
-- **CompositeLogger**: Multiple logger backends
+## ⚙️ Requirements
 
-### SLURM & Orchestration
+- Python 3.9+
+- PyTorch 2.0+
+- Lightning Fabric 2.0+
+- SLURM (for cluster submission)
 
-- **ModelTrainingFramework**: Main orchestration class
-- **SLURMLauncher**: Job submission and management
-- **ParameterGrid**: Grid search configuration
-- **GitManager**: Experiment branch management
-
-## Contributing
+## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Add tests for new functionality
-5. Run the test suite: `pytest`
-6. Submit a pull request
+4. Add tests
+5. Submit a pull request
 
-## License
+## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License - see LICENSE file for details.
 
-## Support
+## 🆘 Support
 
-- Documentation: <https://model-training-framework.readthedocs.io/>
-- Issues: <https://github.com/example/model-training-framework/issues>
-- Discussions: <https://github.com/example/model-training-framework/discussions>
+- Issues: [GitHub Issues](https://github.com/example/model-training-framework/issues)
+- Discussions: [GitHub Discussions](https://github.com/example/model-training-framework/discussions)
+- Documentation: [Full Docs](docs/)
