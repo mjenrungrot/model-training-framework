@@ -23,6 +23,7 @@ from .schemas import (
     DataConfig,
     ExecutionMode,
     ExperimentConfig,
+    GridSearchConfig,
     LoggingConfig,
     ModelConfig,
     NamingStrategy,
@@ -47,6 +48,7 @@ __all__ = [
     "ExperimentConfig",
     # Naming
     "ExperimentNaming",
+    "GridSearchConfig",
     "GridSearchResult",
     "LoggingConfig",
     "ModelConfig",

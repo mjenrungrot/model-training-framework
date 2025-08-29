@@ -20,7 +20,9 @@ from .config import (
     ConfigValidator,
     ExecutionMode,
     ExperimentConfig,
+    GridSearchConfig,
     GridSearchResult,
+    NamingStrategy,
     ParameterGrid,
     ParameterGridSearch,
     ValidationResult,
@@ -308,12 +310,26 @@ class ModelTrainingFramework:
             logger.info(f"Generated {len(experiments)} experiments from grid search")
 
             # Return a placeholder result
+            # Create a minimal grid config for the result
+            grid_config = GridSearchConfig(
+                name="grid_search",
+                description="Grid search placeholder",
+                base_config=base_config_dict,
+                parameter_grids=[],
+                naming_strategy=NamingStrategy.HASH_BASED,
+                max_concurrent_jobs=max_concurrent_jobs,
+                execution_mode=execution_mode,
+                output_dir=str(output_dir) if output_dir else None,
+            )
+
             result = GridSearchResult(
+                grid_config=grid_config,
                 total_experiments=len(experiments),
-                submitted_experiments=0,
-                failed_experiments=0,
-                success_rate=0.0,
-                output_dir=output_dir,
+                generated_experiments=experiments,
+                submitted_jobs=[],
+                failed_submissions=[],
+                execution_time=0.0,
+                output_directory=output_dir,
             )
 
             logger.warning(
