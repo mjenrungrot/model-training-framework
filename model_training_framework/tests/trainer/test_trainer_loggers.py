@@ -8,6 +8,7 @@ This module tests the logging functionality including:
 - Metrics formatting and logging
 """
 
+import importlib.util
 import tempfile
 from unittest.mock import MagicMock, patch
 
@@ -21,6 +22,9 @@ from model_training_framework.trainer.loggers import (
     WandBLogger,
     create_logger,
 )
+
+# Check if wandb is available using importlib
+WANDB_AVAILABLE = importlib.util.find_spec("wandb") is not None
 
 
 class TestConsoleLogger:
@@ -144,6 +148,7 @@ class TestTensorBoardLogger:
             logger.close()
 
 
+@pytest.mark.skipif(not WANDB_AVAILABLE, reason="wandb not installed")
 class TestWandBLogger:
     """Test WandB logger implementation."""
 
@@ -283,6 +288,7 @@ class TestCreateLogger:
             assert isinstance(logger, TensorBoardLogger)
             logger.close()
 
+    @pytest.mark.skipif(not WANDB_AVAILABLE, reason="wandb not installed")
     @patch("model_training_framework.trainer.loggers.wandb_mod")
     def test_create_wandb_logger(self, mock_wandb):
         """Test creating WandB logger."""
