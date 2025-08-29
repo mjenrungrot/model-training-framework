@@ -73,14 +73,16 @@ class ModelConfig:
 
         This method enables compatibility with grid search and config manager.
         """
+        # Work with a copy to avoid mutating the input
+        data_copy = data.copy()
         # Extract known fields
-        type_val = data.pop("type", "custom")
+        type_val = data_copy.pop("type", "custom")
         # Create instance with known fields
         instance = cls(type=type_val)
         # Store remaining fields as extra
-        instance._extra_fields = data.copy()
+        instance._extra_fields = data_copy
         # Also set as attributes for backward compatibility
-        for key, value in data.items():
+        for key, value in data_copy.items():
             setattr(instance, key, value)
         return instance
 
@@ -193,15 +195,17 @@ class DataConfig:
 
         This method enables compatibility with grid search and config manager.
         """
+        # Work with a copy to avoid mutating the input
+        data_copy = data.copy()
         # Extract known fields
-        dataset_name = data.pop("dataset_name", "custom")
-        batch_size = data.pop("batch_size", 32)
+        dataset_name = data_copy.pop("dataset_name", "custom")
+        batch_size = data_copy.pop("batch_size", 32)
         # Create instance with known fields
         instance = cls(dataset_name=dataset_name, batch_size=batch_size)
         # Store remaining fields as extra
-        instance._extra_fields = data.copy()
+        instance._extra_fields = data_copy
         # Also set as attributes for backward compatibility
-        for key, value in data.items():
+        for key, value in data_copy.items():
             setattr(instance, key, value)
         return instance
 
