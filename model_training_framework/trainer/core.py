@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from dataclasses import asdict
 import subprocess
 import time
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -287,6 +288,11 @@ class GenericTrainer:
                 entity=config.logging.wandb_entity,
                 tags=config.logging.wandb_tags,
                 notes=config.logging.wandb_notes,
+                run_name=config.logging.wandb_name,
+                mode=config.logging.wandb_mode,
+                id=config.logging.wandb_id,
+                resume=config.logging.wandb_resume,
+                config=asdict(config),
                 loggers_list=config.logging.composite_loggers,
             )
 

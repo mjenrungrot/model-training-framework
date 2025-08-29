@@ -29,7 +29,11 @@ from model_training_framework.trainer.config import LoggingConfig
 config = LoggingConfig(
     logger_type="wandb",
     wandb_project="my-project",
-    wandb_entity="my-team"
+    wandb_entity="my-team",
+    wandb_name="run-name",
+    wandb_mode="online",
+    wandb_id="abc123",
+    wandb_resume="allow",
 )
 
 # Composite logger with explicit list

@@ -118,6 +118,10 @@ class LoggingConfig:
     wandb_entity: str | None = None
     wandb_tags: list[str] = field(default_factory=list)
     wandb_notes: str | None = None
+    wandb_name: str | None = None
+    wandb_mode: str | None = None
+    wandb_id: str | None = None
+    wandb_resume: str | None = None
     log_scalars_every_n_steps: int | None = 50
     log_images_every_n_steps: int | None = 500
     log_gradients: bool = False

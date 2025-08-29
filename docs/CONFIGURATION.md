@@ -120,6 +120,10 @@ logging:
   wandb_project: "my_project"
   wandb_entity: "my_team"
   wandb_tags: ["experiment", "baseline"]
+  wandb_name: "experiment-1"
+  wandb_mode: "online"
+  wandb_id: "run-123"
+  wandb_resume: "allow"
   log_every_n_steps: 10
   save_code: true
 

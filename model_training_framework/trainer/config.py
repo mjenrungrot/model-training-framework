@@ -276,6 +276,10 @@ class LoggingConfig:
     wandb_entity: str | None = None  # W&B entity/team name
     wandb_tags: list[str] = field(default_factory=list)  # Tags for W&B experiment
     wandb_notes: str | None = None  # Notes for W&B experiment
+    wandb_name: str | None = None  # Run name for W&B
+    wandb_mode: str | None = None  # W&B mode (online, offline, disabled)
+    wandb_id: str | None = None  # Unique run ID for W&B
+    wandb_resume: str | None = None  # W&B resume strategy
 
     # TensorBoard configuration
     use_tensorboard: bool = False  # Whether to use TensorBoard logging
