@@ -12,7 +12,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/example/model-training-framework.git
+git clone https://github.com/mjenrungrot/model-training-framework.git
 cd model-training-framework
 
 # Install in development mode

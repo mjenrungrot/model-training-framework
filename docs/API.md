@@ -535,6 +535,8 @@ class GenericTrainerConfig:
     fault_tolerance: FaultToleranceConfig                 # Fault tolerance settings
     performance: PerformanceConfig                        # Performance optimizations
     hooks: HooksConfig                                    # Hooks configuration
+    preemption: Optional[PreemptionConfig] = None         # Preemption handling settings
+    ddp: Optional[DDPConfig] = None                       # Distributed training settings
 ```
 
 ### MultiDataLoaderConfig
@@ -722,7 +724,7 @@ try:
     trainer.fit(train_loaders, val_loaders)
 except PreemptionTimeoutError as e:
     # Handle preemption timeout
-    trainer.save_emergency_checkpoint()
+    trainer.save_checkpoint(emergency=True)
 except TrainerError as e:
     # Handle general trainer errors
     logger.error(f"Training failed: {e}")

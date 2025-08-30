@@ -69,7 +69,6 @@ data:
   train_split: "train"
   val_split: "validation"
   test_split: "test"
-  num_workers: 4
   preprocessing:
     tokenizer: "bert-base-uncased"
     max_length: 512
@@ -593,7 +592,7 @@ final_config = config_manager.compose_configs(
         "overrides/gpu_settings.yaml"
     ],
     parameter_overrides={
-        "training.learning_rate": 0.0005,
+        "optimizer.lr": 0.0005,
         "model.hidden_size": 1024
     }
 )
@@ -622,7 +621,7 @@ slurm:
   mem: "64G"
 
 performance:
-  num_workers: 8
+  dataloader_num_workers: 8
   pin_memory: true
 ```
 
@@ -722,11 +721,11 @@ model:
 ```python
 # Start with coarse grids, then refine
 coarse_grid = ParameterGrid("coarse_search")
-coarse_grid.add_parameter("training.learning_rate", [1e-5, 1e-4, 1e-3])
+coarse_grid.add_parameter("optimizer.lr", [1e-5, 1e-4, 1e-3])
 
 # Then refine around best results
 fine_grid = ParameterGrid("fine_search")
-fine_grid.add_parameter("training.learning_rate", [5e-5, 8e-5, 1e-4, 2e-4])
+fine_grid.add_parameter("optimizer.lr", [5e-5, 8e-5, 1e-4, 2e-4])
 ```
 
 ### 5. SLURM Resource Planning
@@ -783,8 +782,7 @@ trainer:
 performance:
   mixed_precision: "16-mixed"
 
-data:
-  num_workers: 4
+# Note: num_workers has moved to performance.dataloader_num_workers
 ```
 
 New configuration:
