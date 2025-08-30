@@ -493,21 +493,19 @@ module load cudnn/8.6
 source activate {{conda_env}}
 cd {{project_root}}
 
-# Set environment variables for distributed training
-export CUDA_VISIBLE_DEVICES=$SLURM_LOCALID
+# torchrun automatically sets WORLD_SIZE, RANK, LOCAL_RANK, and CUDA_VISIBLE_DEVICES
+# We only need to set the rendezvous endpoint for torchrun
 export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT=${MASTER_PORT:-29500}  # Allow override via SLURM
-export WORLD_SIZE=$SLURM_NTASKS
-export RANK=$SLURM_PROCID
-export LOCAL_RANK=$SLURM_LOCALID
+
+# Set SLURM variables for torchrun if not already set
 export SLURM_NNODES=${SLURM_NNODES:-1}
 export SLURM_NTASKS_PER_NODE=${SLURM_NTASKS_PER_NODE:-1}
 
 # Print environment info
 echo "Python: $(which python)"
-echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
-echo "WORLD_SIZE: $WORLD_SIZE"
-echo "RANK: $RANK"
+echo "Master address: $MASTER_ADDR:$MASTER_PORT"
+echo "Nodes: $SLURM_NNODES, Tasks per node: $SLURM_NTASKS_PER_NODE"
 
 # Run training with torchrun for distributed training
 # torchrun handles the distributed setup automatically

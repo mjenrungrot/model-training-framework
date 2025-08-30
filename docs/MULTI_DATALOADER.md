@@ -175,8 +175,12 @@ config = GenericTrainerConfig(
         sampling_strategy=SamplingStrategy.SEQUENTIAL,
         dataloader_names=["validation"],
     ),
-    # Select a single optimizer per loader by index (order matches dataloader_names)
-    per_loader_optimizer_id=[0, 1],  # classification uses optimizer 0, regression uses optimizer 1
+    # Per-loader optimizer selection (optional)
+    # Maps each dataloader to an optimizer by index
+    # - List length must match number of dataloaders in train_loader_config
+    # - Values are optimizer indices (0-based)
+    # - If not specified, all loaders use optimizer 0
+    per_loader_optimizer_id=[0, 1],  # loader 0 → optimizer 0, loader 1 → optimizer 1
 )
 
 # Training step

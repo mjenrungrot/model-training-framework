@@ -542,6 +542,7 @@ class GenericTrainerConfig:
     hooks: HooksConfig                                    # Hooks configuration
     preemption: Optional[PreemptionConfig] = None         # Preemption handling settings
     ddp: Optional[DDPConfig] = None                       # Distributed training settings
+    per_loader_optimizer_id: Optional[List[int]] = None   # Maps dataloaders to optimizers
 ```
 
 ### MultiDataLoaderConfig
@@ -656,6 +657,36 @@ trainer.fit(
     train_loaders=[primary_loader, auxiliary_loader],
     val_loaders=[val_primary, val_auxiliary],
     max_epochs=100
+)
+```
+
+#### Per-Loader Optimizer Selection
+
+When using multiple dataloaders with different learning requirements:
+
+```python
+# Example: Different optimizers for different data types
+classification_optimizer = torch.optim.Adam(
+    classification_head.parameters(), lr=1e-3
+)
+regression_optimizer = torch.optim.SGD(
+    regression_head.parameters(), lr=1e-2
+)
+
+config = GenericTrainerConfig(
+    train_loader_config=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.ROUND_ROBIN,
+        dataloader_names=["classification", "regression"],
+    ),
+    # Map each loader to its optimizer (by index in optimizers list)
+    per_loader_optimizer_id=[0, 1],  # classification→0, regression→1
+    # ... other config
+)
+
+trainer = GenericTrainer(
+    config=config,
+    model=model,
+    optimizers=[classification_optimizer, regression_optimizer],
 )
 ```
 
