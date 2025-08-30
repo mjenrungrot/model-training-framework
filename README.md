@@ -5,7 +5,7 @@ A comprehensive Python framework for deep learning research with three core comp
 ## 🚀 Quick Installation
 
 ```bash
-git clone https://github.com/example/model-training-framework.git
+git clone https://github.com/mjenrungrot/model-training-framework.git
 cd model-training-framework
 pip install -e ".[all]"
 ```
@@ -264,6 +264,6 @@ MIT License - see LICENSE.md for details.
 
 ## 🆘 Support
 
-- Issues: [GitHub Issues](https://github.com/example/model-training-framework/issues)
-- Discussions: [GitHub Discussions](https://github.com/example/model-training-framework/discussions)
+- Issues: [GitHub Issues](https://github.com/mjenrungrot/model-training-framework/issues)
+- Discussions: [GitHub Discussions](https://github.com/mjenrungrot/model-training-framework/discussions)
 - Documentation: [Full Docs](docs/)

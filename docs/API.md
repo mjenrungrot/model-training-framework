@@ -266,7 +266,7 @@ launcher = SLURMLauncher(
 
 result = launcher.submit_single_experiment(
     config=config,
-    script_path="train.py",
+    script_path="demo/example3_production/train_script.py",  # Or your custom script
     use_git_branch=False,
     dry_run=False  # Set True to preview without submitting
 )
@@ -282,7 +282,7 @@ Submit multiple experiments.
 ```python
 result = launcher.submit_experiment_batch(
     experiments=experiments,
-    script_path="train.py",
+    script_path="demo/example3_production/train_script.py",  # Or your custom script
     max_concurrent=10,
     use_git_branch=False,
     dry_run=False
@@ -408,7 +408,7 @@ launcher = SLURMLauncher(
 # Submit batch
 result = launcher.submit_experiment_batch(
     experiments=experiments,
-    script_path="train.py",
+    script_path="demo/example3_production/train_script.py",  # Or your custom script
     max_concurrent=5,
     dry_run=False
 )

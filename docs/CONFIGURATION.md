@@ -506,11 +506,10 @@ echo "WORLD_SIZE: $WORLD_SIZE"
 echo "RANK: $RANK"
 
 # Run training
-srun python -m model_training_framework.scripts.train \
+# Example: Run your training script (replace with your actual script)
+srun python demo/example3_production/train_script.py \
     --config {{config_path}} \
-    --experiment-name {{experiment_name}} \
-    --output-dir {{output_dir}} \
-    --distributed
+    --experiment-name {{experiment_name}}
 
 echo "Job completed at: $(date)"
 ```

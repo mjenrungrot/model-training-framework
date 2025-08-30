@@ -104,8 +104,8 @@ python -c "import model_training_framework as mtf; print('Installation successfu
 # Run tests
 pytest model_training_framework/tests/
 
-# Check CLI tools (if installed)
-python -m model_training_framework.scripts.train --help
+# Run example training script
+python demo/example3_production/train_script.py --help
 ```
 
 ## Troubleshooting

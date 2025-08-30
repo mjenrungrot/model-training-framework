@@ -88,7 +88,7 @@ framework = ModelTrainingFramework(project_root=".")
 # Format: slurm-job/<experiment_name>/<timestamp>/<commit_hash>
 result = framework.run_single_experiment(
     config=config,
-    script_path="scripts/train.py",
+    script_path="demo/example3_production/train_script.py",  # Or your custom script
     use_git_branch=True  # Enable git integration
 )
 ```

@@ -2,6 +2,9 @@
 # Comprehensive .gitignore for Model Training Framework
 # Based on Python, ML/AI, and HPC development best practices
 
+# ===== VS Code Settings =====
+.vscode/settings.json
+
 # ===== Python Bytecode and Cache =====
 __pycache__/
 *.py[cod]
