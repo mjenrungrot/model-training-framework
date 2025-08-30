@@ -522,6 +522,38 @@ torchrun \
 echo "Job completed at: $(date)"
 ```
 
+### Minimal torchrun SLURM Template
+
+For simple multi-GPU jobs without complex environment setup:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=torch-training
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:4              # Request 4 GPUs
+#SBATCH --ntasks-per-node=1       # One task to launch torchrun
+#SBATCH --cpus-per-task=32        # CPUs for all GPUs
+#SBATCH --time=24:00:00
+#SBATCH --partition=gpu
+
+# Activate environment
+source /path/to/venv/bin/activate
+
+# Set master address for torchrun
+export MASTER_ADDR=$(hostname)
+export MASTER_PORT=29500
+
+# Run with torchrun - explicitly set nproc_per_node to number of GPUs
+torchrun \
+    --standalone \
+    --nnodes=1 \
+    --nproc_per_node=4 \
+    train_script.py \
+    --config config.yaml
+```
+
+**Important**: Always explicitly set `--nproc_per_node` to match your GPU count. Do not rely on environment variables that may be unset.
+
 ## Environment Variables
 
 ### Supported Environment Variables
@@ -766,6 +798,22 @@ except ValidationError as e:
 ```
 
 ## Backwards Compatibility
+
+### Configuration Key Mapping Table (v0.2.0+)
+
+| Old Key | New Key | Available Since | Notes |
+|---------|---------|-----------------|-------|
+| `config.multi` | `config.train_loader_config` | v0.2.0 | For training loaders |
+| `config.multi` | `config.val_loader_config` | v0.2.0 | For validation loaders (optional) |
+| `data.num_workers` | `performance.dataloader_num_workers` | v0.2.0 | Moved to performance section |
+| `training.epochs` | `training.max_epochs` | v0.2.0 | Clarifies maximum epochs |
+| `optimizer.learning_rate` | `optimizer.lr` | v0.2.0 | Shorter, standard naming |
+| `checkpoint.checkpoint_dir` | `checkpoint.root_dir` | v0.2.0 | Aligns with schema |
+| `checkpoint.save_top_k` | `checkpoint.max_checkpoints` | v0.2.0 | Clearer naming |
+| `checkpoint.monitor` | `checkpoint.monitor_metric` | v0.2.0 | More explicit |
+| `checkpoint.mode` | `checkpoint.monitor_mode` | v0.2.0 | Pairs with monitor_metric |
+| `checkpoint.filename` | `checkpoint.filename_template` | v0.2.0 | Indicates template nature |
+| `performance.mixed_precision: "16-mixed"` | `performance.use_amp: true` | v0.2.0 | Boolean flag for AMP |
 
 ### Configuration Key Renames
 

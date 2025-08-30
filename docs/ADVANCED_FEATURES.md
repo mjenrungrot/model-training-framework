@@ -266,6 +266,7 @@ def main(fabric):
     )
 
     # Fabric handles distributed setup internally via GenericTrainer
+    # Note: Requires GenericTrainer v0.2.0+ for automatic Fabric integration
     trainer = GenericTrainer(
         config=config,
         model=model,
@@ -274,7 +275,8 @@ def main(fabric):
     )
 
     # Training logic here
-    # Note: GenericTrainer automatically calls sampler.set_epoch() for DistributedSampler
+    # Note: GenericTrainer v0.2.0+ automatically calls sampler.set_epoch() for DistributedSampler
+    # For earlier versions, manually call: train_loader.sampler.set_epoch(epoch)
     trainer.fit(train_loaders, val_loaders, max_epochs=100)
 
 # Launch the distributed training
@@ -316,11 +318,19 @@ config = GenericTrainerConfig(
     )
 )
 
-# AMP is automatically handled:
+# AMP is automatically handled by GenericTrainer v0.2.0+:
 # - GradScaler created for CUDA devices
 # - Forward passes wrapped in autocast
 # - Loss scaled before backward
 # - Gradients unscaled before clipping
+#
+# For earlier versions or manual control, use:
+# scaler = torch.cuda.amp.GradScaler()
+# with torch.cuda.amp.autocast():
+#     loss = model(batch)
+# scaler.scale(loss).backward()
+# scaler.step(optimizer)
+# scaler.update()
 
 # On Ampere+ GPUs, enable TF32 and set matmul precision for additional speedups
 import torch

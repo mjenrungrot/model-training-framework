@@ -43,6 +43,18 @@ experiments = list(gs.generate_experiments())
 print(f"Generated {len(experiments)} experiments")
 ```
 
+## 🚀 Quick Start Example
+
+For a complete, production-ready example that demonstrates all features:
+
+📁 **[demo/example3_production/](demo/example3_production/README.md)** - Full implementation with:
+
+- Grid search configuration
+- SLURM job submission
+- Fault-tolerant training
+- Preemption handling
+- Multi-GPU support
+
 ### 2. SLURM Launcher
 
 Submit and manage jobs on HPC clusters with automatic requeue and preemption handling.
@@ -153,10 +165,10 @@ For DataLoader optimization and best practices, see [DataLoader Best Practices](
 # Run locally
 python demo/example3_production/orchestrate.py local
 
-# Submit to SLURM (dry run)
+# Generate SLURM scripts (DRY RUN - does not submit)
 python demo/example3_production/orchestrate.py slurm
 
-# Submit to SLURM (actual submission)
+# Actually submit jobs to SLURM (REAL SUBMISSION)
 python demo/example3_production/orchestrate.py slurm submit
 ```
 
@@ -189,6 +201,19 @@ python demo/example3_production/orchestrate.py slurm submit
 - **[Multi-DataLoader Guide](docs/MULTI_DATALOADER.md)** - Multi-loader training patterns
 - **[Migration Guide](docs/MIGRATION.md)** - Migrating existing code
 - **[Advanced Features](docs/ADVANCED_FEATURES.md)** - Production features
+
+## 🔄 Configuration Compatibility
+
+### Key Mapping Changes (v0.2.0+)
+
+| Old Key | New Key | Available Since |
+|---------|---------|-----------------|
+| `config.multi` | `config.train_loader_config` / `config.val_loader_config` | v0.2.0 |
+| `data.num_workers` | `performance.dataloader_num_workers` | v0.2.0 |
+| `training.epochs` | `training.max_epochs` | v0.2.0 |
+| `optimizer.learning_rate` | `optimizer.lr` | v0.2.0 |
+| `checkpoint.checkpoint_dir` | `checkpoint.root_dir` | v0.2.0 |
+| `performance.mixed_precision: "16-mixed"` | `performance.use_amp: true` | v0.2.0 |
 
 ## 🏗️ Project Structure
 
