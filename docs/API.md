@@ -53,7 +53,7 @@ Set the experiment naming strategy.
 from model_training_framework.config import NamingStrategy
 
 gs.set_naming_strategy(NamingStrategy.PARAMETER_BASED)
-# Options: PARAMETER_BASED, HASH_BASED, SEQUENTIAL
+# Options: PARAMETER_BASED, HASH_BASED, TIMESTAMP_BASED
 ```
 
 ##### `generate_experiments() -> Iterator[ExperimentConfig]`
@@ -241,8 +241,7 @@ from model_training_framework.slurm import SLURMLauncher
 SLURMLauncher(
     template_path: Union[str, Path],
     project_root: Union[str, Path],
-    experiments_dir: Union[str, Path],
-    git_manager: Optional[GitManager] = None
+    experiments_dir: Optional[Union[str, Path]] = None
 )
 ```
 
@@ -250,12 +249,11 @@ SLURMLauncher(
 
 - `template_path`: Path to SBATCH template file
 - `project_root`: Root directory of project
-- `experiments_dir`: Directory for experiment outputs
-- `git_manager`: Optional git integration
+- `experiments_dir`: Optional directory for experiment outputs (defaults to `{project_root}/experiments`)
 
 #### Methods
 
-##### `submit_experiment(experiment: ExperimentConfig, script_path: Path, dry_run: bool = False) -> JobResult`
+##### `submit_single_experiment(config: ExperimentConfig, script_path: Path, use_git_branch: bool = False, dry_run: bool = False) -> SLURMJobResult`
 
 Submit single experiment to SLURM.
 
@@ -266,9 +264,10 @@ launcher = SLURMLauncher(
     experiments_dir="./experiments"
 )
 
-result = launcher.submit_experiment(
-    experiment=config,
+result = launcher.submit_single_experiment(
+    config=config,
     script_path="train.py",
+    use_git_branch=False,
     dry_run=False  # Set True to preview without submitting
 )
 
@@ -284,7 +283,7 @@ Submit multiple experiments.
 result = launcher.submit_experiment_batch(
     experiments=experiments,
     script_path="train.py",
-    max_concurrent_jobs=10,
+    max_concurrent=10,
     use_git_branch=False,
     dry_run=False
 )
@@ -347,6 +346,7 @@ Available template variables:
 {{ACCOUNT}}          # Account name
 {{PARTITION}}        # Partition name
 {{NODES}}            # Number of nodes
+{{NTASKS_PER_NODE}}  # Tasks per node
 {{GPUS_PER_NODE}}    # GPUs per node
 {{CPUS_PER_TASK}}    # CPUs per task
 {{MEM}}              # Memory allocation
@@ -354,7 +354,6 @@ Available template variables:
 {{EXPERIMENT_NAME}}  # Experiment name
 {{SCRIPT_PATH}}      # Training script path
 {{CONFIG_NAME}}      # Configuration file name
-{{PROJECT_ROOT}}     # Project root directory
 {{OUTPUT_FILE}}      # Output file path
 {{ERROR_FILE}}       # Error file path
 ```
@@ -380,7 +379,7 @@ launcher = SLURMLauncher(
 result = launcher.submit_experiment_batch(
     experiments=experiments,
     script_path="train.py",
-    max_concurrent_jobs=5,
+    max_concurrent=5,
     dry_run=False
 )
 

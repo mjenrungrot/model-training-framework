@@ -336,7 +336,10 @@ for exp in experiments:
         "final_loss": trainer.current_val_loss,
         "best_loss": trainer.best_val_loss,
     }
-    save_results(results, output_dir / f"{exp.experiment_name}_results.json")
+    # Save results
+    import json
+    with open(output_dir / f"{exp.experiment_name}_results.json", "w") as f:
+        json.dump(results, f, indent=2)
 ```
 
 ## SLURM Submission
@@ -392,7 +395,7 @@ launcher = SLURMLauncher(
 result = launcher.submit_experiment_batch(
     experiments=experiments,  # From grid search
     script_path="train.py",
-    max_concurrent_jobs=10,  # Limit concurrent jobs
+    max_concurrent=10,  # Limit concurrent jobs
     dry_run=False
 )
 
@@ -462,7 +465,7 @@ trainer = GenericTrainer(config, model, [optimizer])
 # Automatic resume if checkpoint exists
 checkpoint_dir = Path("checkpoints")
 if checkpoint_dir.exists():
-    latest = trainer.checkpoint_manager.find_latest_checkpoint()
+    latest = trainer.checkpoint_manager.get_latest_checkpoint()
     if latest:
         trainer.load_checkpoint(latest)
         print(f"Resumed from epoch {trainer.current_epoch}")
@@ -566,6 +569,7 @@ def create_dataloaders(config):
         pin_memory=torch.cuda.is_available(),
         persistent_workers=config.get("num_workers", 4) > 0,
         prefetch_factor=2 if config.get("num_workers", 4) > 0 else None
+    )
 
     return train_loader, val_loader
 
@@ -689,7 +693,7 @@ def main():
 
     # Resume from checkpoint if requested
     if args.resume:
-        checkpoint_path = args.checkpoint or trainer.checkpoint_manager.find_latest_checkpoint()
+        checkpoint_path = args.checkpoint or trainer.checkpoint_manager.get_latest_checkpoint()
         if checkpoint_path and Path(checkpoint_path).exists():
             trainer.load_checkpoint(checkpoint_path)
             logger.info(f"Resumed from {checkpoint_path}")

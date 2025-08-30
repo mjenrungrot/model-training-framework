@@ -262,8 +262,7 @@ config = GenericTrainerConfig(
     )
 )
 
-# Fabric handles distributed setup
-model, *optimizers = fabric.setup(model, *optimizers)
+# Fabric handles distributed setup internally via GenericTrainer
 trainer = GenericTrainer(
     config=config,
     model=model,
@@ -367,7 +366,7 @@ trainer = GenericTrainer(config, model, optimizers)
 # Automatic resume if checkpoint exists
 checkpoint_dir = Path("checkpoints")
 if checkpoint_dir.exists():
-    latest = trainer.checkpoint_manager.find_latest_checkpoint()
+    latest = trainer.checkpoint_manager.get_latest_checkpoint()
     if latest:
         trainer.load_checkpoint(latest)
         print(f"Resumed from epoch {trainer.current_epoch}, step {trainer.global_step}")

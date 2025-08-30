@@ -8,6 +8,7 @@ This guide covers best practices for creating high-performance DataLoaders with 
 
 ```python
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, DistributedSampler
 from torch.utils.data.dataloader import default_collate
 
@@ -70,7 +71,7 @@ When using pinned memory, enable non-blocking transfers for better CPU-GPU overl
 ```python
 def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
     # Move data to GPU with non_blocking when pin_memory is enabled
-    device = trainer.device
+    device = next(trainer.model.parameters()).device
     if trainer.config.performance.pin_memory and device.type == 'cuda':
         # Non-blocking transfer overlaps with computation
         x = batch[0].to(device, non_blocking=True)

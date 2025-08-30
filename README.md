@@ -61,7 +61,7 @@ launcher = SLURMLauncher(
 result = launcher.submit_experiment_batch(
     experiments=experiments,
     script_path="train.py",
-    max_concurrent_jobs=10,
+    max_concurrent=10,
     dry_run=False  # Set True to preview
 )
 
@@ -109,9 +109,26 @@ trainer = GenericTrainer(config, model, [optimizer])
 
 # Define training step
 def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
+    device = next(trainer.model.parameters()).device
     x, y = batch
-    outputs = trainer.model(x)
-    loss = F.cross_entropy(outputs, y)
+
+    # Move to device with non_blocking if using pinned memory
+    if device.type == "cuda" and trainer.config.performance.pin_memory:
+        x = x.to(device, non_blocking=True)
+        y = y.to(device, non_blocking=True)
+    else:
+        x = x.to(device)
+        y = y.to(device)
+
+    # Use autocast for mixed precision if enabled
+    if trainer.config.performance.use_amp and device.type == "cuda":
+        with torch.cuda.amp.autocast():
+            outputs = trainer.model(x)
+            loss = F.cross_entropy(outputs, y)
+    else:
+        outputs = trainer.model(x)
+        loss = F.cross_entropy(outputs, y)
+
     return {"loss": loss}
 
 trainer.set_training_step(training_step)

@@ -63,12 +63,10 @@ trainer = GenericTrainer(
 )
 
 # Automatic resume from checkpoint
-ckpt_dir = exp_dir / "checkpoints"
-if ckpt_dir.exists():
-    latest = find_latest_checkpoint(ckpt_dir)
-    if latest:
-        trainer.load_checkpoint(latest)
-        logger.info(f"Resumed from {latest}")
+latest = trainer.checkpoint_manager.get_latest_checkpoint()
+if latest:
+    trainer.load_checkpoint(latest)
+    logger.info(f"Resumed from {latest}")
 
 # Train with preemption handling
 trainer.fit(
@@ -181,7 +179,7 @@ signal.signal(signal.SIGUSR1, _on_sigusr1)
 
 ```python
 # Check for existing checkpoints
-latest = find_latest_checkpoint(ckpt_dir)
+latest = trainer.checkpoint_manager.get_latest_checkpoint()
 if latest:
     trainer.load_checkpoint(latest)
     # Training continues from exact batch/epoch
