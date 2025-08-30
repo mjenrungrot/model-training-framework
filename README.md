@@ -258,7 +258,7 @@ trainer.fit([train_loader], [val_loader], max_epochs=100)
 
 ## 📄 License
 
-MIT License - see LICENSE file for details.
+MIT License - see LICENSE.md for details.
 
 ## 🆘 Support
 

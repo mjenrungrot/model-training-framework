@@ -175,10 +175,8 @@ config = GenericTrainerConfig(
         sampling_strategy=SamplingStrategy.SEQUENTIAL,
         dataloader_names=["validation"],
     ),
-    per_loader_optimizers={
-        "classification": {"optimizer_idx": [0, 2]},  # Use optimizer_a and shared
-        "regression": {"optimizer_idx": [1, 2]},      # Use optimizer_b and shared
-    },
+    # Select a single optimizer per loader by index (order matches dataloader_names)
+    per_loader_optimizer_id=[0, 1],  # classification uses optimizer 0, regression uses optimizer 1
 )
 
 # Training step
@@ -196,7 +194,7 @@ def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
 trainer = GenericTrainer(
     config=config,
     model=model,
-    optimizers=[optimizer_a, optimizer_b, optimizer_shared]
+    optimizers=[optimizer_a, optimizer_b]
 )
 ```
 

@@ -32,12 +32,7 @@ Basic logging of training progress:
 from model_training_framework.config.schemas import HooksConfig
 
 config = HooksConfig(
-    enable_logging_hook=True,
-    logging_hook_config={
-        "log_frequency": 10,  # Log every N batches
-        "log_epoch_metrics": True,
-        "log_learning_rate": True,
-    }
+    enable_logging_hook=True
 )
 ```
 
@@ -188,11 +183,12 @@ config = HooksConfig(
 trainer = GenericTrainer(config, model, optimizers)
 trainer.hook_manager.register_hook(MyCustomHook(threshold=5.0))
 
-# 3. Using decorator pattern
-@trainer.hook_manager.register
+# 3. Register a class explicitly
 class AutoRegisteredHook(TrainerHooks):
     def on_epoch_end(self, trainer, epoch):
         print(f"Epoch {epoch} completed")
+
+trainer.hook_manager.register_hook(AutoRegisteredHook())
 ```
 
 ## Hook Lifecycle

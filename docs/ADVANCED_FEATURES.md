@@ -193,15 +193,18 @@ config = GenericTrainerConfig(
 ### Advanced Metrics Tracking
 
 ```python
-from model_training_framework.trainer import MetricsManager, AggregationStrategy
+from model_training_framework.trainer import ValidationConfig, ValAggregation, LoggingConfig
 
-# Configure metrics aggregation
+# Configure metrics aggregation and logging
 config = GenericTrainerConfig(
-    metrics=MetricsConfig(
-        aggregation_strategy=AggregationStrategy.WEIGHTED_AVERAGE,
-        track_proportions=True,
+    validation=ValidationConfig(
+        aggregation=ValAggregation.MICRO_AVG_WEIGHTED_BY_SAMPLES,
         per_loader_metrics=True,
-    )
+        global_metrics=True,
+    ),
+    logging=LoggingConfig(
+        log_loader_proportions=True,  # Track realized proportions
+    ),
 )
 
 # Access metrics during training
@@ -212,8 +215,8 @@ def on_epoch_end(trainer, epoch, metrics):
     # Global aggregated metrics
     global_loss = metrics.get("train/loss")
 
-    # Loader proportions
-    proportions = trainer.metrics_manager.get_loader_proportions()
+    # Loader proportions (if using weighted sampling)
+    # proportions = trainer.metrics_manager.get_loader_proportions()
 ```
 
 ### Custom Metrics
@@ -447,7 +450,7 @@ except PreemptionTimeoutError as e:
     # Handle preemption timeout
     logger.error(f"Preemption checkpoint failed: {e}")
     # Force save minimal state
-    trainer.save_emergency_checkpoint()
+    trainer.save_checkpoint(emergency=True)
 except CheckpointTimeoutError as e:
     # Handle checkpoint timeout
     logger.error(f"Regular checkpoint failed: {e}")

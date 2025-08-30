@@ -352,7 +352,6 @@ Available template variables:
 {{MEM}}              # Memory allocation
 {{TIME}}             # Time limit
 {{EXPERIMENT_NAME}}  # Experiment name
-{{PROJECT_ROOT}}     # Project root directory
 {{SCRIPT_PATH}}      # Training script path
 {{CONFIG_NAME}}      # Configuration file name
 {{OUTPUT_FILE}}      # Output file path
@@ -386,7 +385,6 @@ export NCCL_ASYNC_ERROR_HANDLING=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # Run training
-cd {{PROJECT_ROOT}}
 python {{SCRIPT_PATH}} {{CONFIG_NAME}}
 ```
 
@@ -576,14 +574,14 @@ SamplingStrategy.SEQUENTIAL    # One after another
 ```python
 @dataclass
 class CheckpointConfig:
-    save_every_n_epochs: int = 1
+    save_every_n_epochs: Optional[int] = 1
     save_every_n_steps: Optional[int] = None
     max_checkpoints: int = 5
-    checkpoint_dir: str = "./checkpoints"
-    save_last: bool = True
+    root_dir: str | Path = "checkpoints"
+    filename_template: str = "epoch_{epoch:03d}_step_{step:06d}.ckpt"
+    monitor_metric: Optional[str] = None  # e.g., "val/loss"
+    monitor_mode: str = "min"  # "min" or "max"
     save_best: bool = True
-    monitor: str = "val/loss"
-    mode: str = "min"  # "min" or "max"
 ```
 
 ### Example: Complete Training Setup
