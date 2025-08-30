@@ -182,15 +182,9 @@ def setup_mixed_precision():
     # Enable TF32 on Ampere GPUs
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-
-    # Use automatic mixed precision
-    from torch.cuda.amp import GradScaler, autocast
-
-    scaler = GradScaler()
-    return scaler
-
-# In training loop
-scaler = setup_mixed_precision()
+    
+    # Note: When using GenericTrainer, it handles GradScaler internally
+    # This is just for demonstration of manual AMP setup
 
 def training_step_with_amp(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
     x, y = batch

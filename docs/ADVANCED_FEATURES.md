@@ -64,7 +64,7 @@ The framework automatically handles SLURM preemption signals:
 
 ```python
 # In your SLURM script
-#SBATCH --signal=USR1@60  # Send SIGUSR1 60s before termination
+#SBATCH --signal=USR1@60
 
 # The trainer automatically:
 # 1. Catches the signal
@@ -248,31 +248,39 @@ def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
 from lightning.fabric import Fabric
 from model_training_framework.trainer import DDPConfig
 
-fabric = Fabric(accelerator="gpu", devices=4, strategy="ddp")
-fabric.launch()
-
-config = GenericTrainerConfig(
-    train_loader_config=MultiDataLoaderConfig(
-        sampling_strategy=SamplingStrategy.ROUND_ROBIN,
-        dataloader_names=["shard_1", "shard_2"],
-    ),
-    val_loader_config=MultiDataLoaderConfig(
-        sampling_strategy=SamplingStrategy.SEQUENTIAL,
-        dataloader_names=["validation"],
-    ),
-    ddp=DDPConfig(
-        sync_schedules_across_ranks=True,
-        validate_schedule_consistency=True,
+def main():
+    fabric = Fabric(accelerator="gpu", devices=4, strategy="ddp")
+    
+    config = GenericTrainerConfig(
+        train_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.ROUND_ROBIN,
+            dataloader_names=["shard_1", "shard_2"],
+        ),
+        val_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,
+            dataloader_names=["validation"],
+        ),
+        ddp=DDPConfig(
+            sync_schedules_across_ranks=True,
+            validate_schedule_consistency=True,
+        )
     )
-)
+    
+    # Fabric handles distributed setup internally via GenericTrainer
+    trainer = GenericTrainer(
+        config=config,
+        model=model,
+        optimizers=optimizers,
+        fabric=fabric,
+    )
+    
+    # Training logic here
+    trainer.fit(train_loaders, val_loaders, max_epochs=100)
 
-# Fabric handles distributed setup internally via GenericTrainer
-trainer = GenericTrainer(
-    config=config,
-    model=model,
-    optimizers=optimizers,
-    fabric=fabric,
-)
+# Launch the distributed training
+if __name__ == "__main__":
+    fabric = Fabric(accelerator="gpu", devices=4, strategy="ddp")
+    fabric.launch(main)
 ```
 
 ### Rank-Aware Processing

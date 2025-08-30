@@ -441,7 +441,7 @@ Create `slurm_template.txt`:
 #SBATCH --time={{TIME}}
 #SBATCH --output=experiments/{{EXPERIMENT_NAME}}/slurm_%j.out
 #SBATCH --error=experiments/{{EXPERIMENT_NAME}}/slurm_%j.err
-#SBATCH --signal=USR1@60  # Signal 60s before timeout
+#SBATCH --signal=USR1@60
 #SBATCH --requeue
 
 # Load modules

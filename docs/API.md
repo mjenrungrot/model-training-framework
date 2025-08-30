@@ -372,9 +372,14 @@ Available template variables:
 #SBATCH --time={{TIME}}
 #SBATCH --output=experiments/{{EXPERIMENT_NAME}}/slurm_%j.out
 #SBATCH --error=experiments/{{EXPERIMENT_NAME}}/slurm_%j.err
-#SBATCH --open-mode=append  # Preserve logs across requeues
-#SBATCH --signal=USR1@60  # Signal 60s before timeout
+#SBATCH --open-mode=append
+#SBATCH --signal=USR1@60
 #SBATCH --requeue
+
+# Notes:
+# --open-mode=append: Preserve logs across requeues
+# --signal=USR1@60: Send SIGUSR1 60s before timeout for graceful shutdown
+# --requeue: Automatically requeue job if preempted
 
 # Recommended environment settings for DDP stability/performance
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
