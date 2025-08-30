@@ -566,7 +566,10 @@ def create_dataloaders(config):
     val_dataset = torch.utils.data.TensorDataset(val_data, val_labels)
 
     # Optimized DataLoader settings
-    nw = int(config.get("num_workers", 4))
+    # Use performance.dataloader_num_workers for consistency with CONFIGURATION.md
+    perf = config.get("performance", {})
+    nw = int(perf.get("dataloader_num_workers", 4))
+    
     tl_kwargs = dict(
         dataset=train_dataset,
         batch_size=config["batch_size"],

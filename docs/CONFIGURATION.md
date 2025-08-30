@@ -153,7 +153,7 @@ performance:
   prefetch_factor: 2
   persistent_workers: true
   dataloader_drop_last: false
-  mixed_precision: "16-mixed"
+  use_amp: true  # Enable automatic mixed precision
   compile_model: false
 
 # Custom parameters (project-specific)
@@ -757,5 +757,52 @@ except ValidationError as e:
     print(f"Fix configuration errors: {e}")
     return
 ```
+
+## Backwards Compatibility
+
+### Configuration Key Renames
+
+For users upgrading from earlier versions, the following configuration keys have been renamed for clarity:
+
+**Trainer Configuration:**
+- `config.multi` → `config.train_loader_config` (for training loaders)
+- `config.multi` → `config.val_loader_config` (for validation loaders, optional)
+
+**Performance Configuration:**
+- `performance.mixed_precision: "16-mixed"` → `performance.use_amp: true`
+- `data.num_workers` → `performance.dataloader_num_workers`
+
+**Example Migration:**
+
+Old configuration:
+```yaml
+trainer:
+  multi:
+    sampling_strategy: "WEIGHTED"
+    dataloader_weights: [0.7, 0.3]
+
+performance:
+  mixed_precision: "16-mixed"
+
+data:
+  num_workers: 4
+```
+
+New configuration:
+```yaml
+trainer:
+  train_loader_config:
+    sampling_strategy: "WEIGHTED"
+    dataloader_weights: [0.7, 0.3]
+  
+  val_loader_config:  # Optional, separate validation config
+    sampling_strategy: "SEQUENTIAL"
+
+performance:
+  use_amp: true
+  dataloader_num_workers: 4
+```
+
+These changes align naming with runtime behavior and clarify the separation between training and validation configurations.
 
 This configuration guide provides comprehensive information for effectively using the Model Training Framework's configuration system. For more examples, see the `examples/` directory.

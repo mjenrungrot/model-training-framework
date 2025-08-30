@@ -203,16 +203,8 @@ def training_step_with_amp(trainer, batch, batch_idx, dataloader_idx, dataloader
         outputs = trainer.model(x)
         loss = F.cross_entropy(outputs, y)
 
-    # Scale loss for backward pass if using AMP
-    if use_amp and hasattr(trainer, 'scaler') and trainer.scaler is not None:
-        trainer.scaler.scale(loss).backward()
-        trainer.scaler.step(trainer.optimizers[0])
-        trainer.scaler.update()
-    else:
-        loss.backward()
-        trainer.optimizers[0].step()
-
-    return {"loss": loss.item()}
+    # Return the loss tensor; the trainer handles backward/optimizer step/scaler
+    return {"loss": loss}
 ```
 
 ## Reproducibility

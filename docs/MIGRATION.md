@@ -250,8 +250,8 @@ Once migrated, you can easily:
 2. **Use Advanced Sampling**: Change strategy without code changes
 
    ```python
-   config.multi.sampling_strategy = SamplingStrategy.WEIGHTED
-   config.multi.dataloader_weights = [0.5, 0.3, 0.2]
+   config.train_loader_config.sampling_strategy = SamplingStrategy.WEIGHTED
+   config.train_loader_config.dataloader_weights = [0.5, 0.3, 0.2]
    ```
 
 3. **Enable Multi-Task Learning**: Use different optimizers per loader
@@ -279,6 +279,17 @@ Once migrated, you can easily:
 
 4. **Optimizer not in list**
    - Solution: Always pass optimizers as a list, even for single optimizer
+
+## Configuration Key Renames
+
+When upgrading to this version, update the following configuration keys:
+
+- `config.multi` → `config.train_loader_config` (for training loaders)
+- `config.multi` → `config.val_loader_config` (for validation loaders)
+- `performance.mixed_precision: "16-mixed"` → `performance.use_amp: true`
+- `data.num_workers` → `performance.dataloader_num_workers`
+
+These changes align naming with runtime behavior and clarify the separation between training and validation configurations.
 
 ## Need Help?
 

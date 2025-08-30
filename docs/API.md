@@ -352,6 +352,7 @@ Available template variables:
 {{MEM}}              # Memory allocation
 {{TIME}}             # Time limit
 {{EXPERIMENT_NAME}}  # Experiment name
+{{PROJECT_ROOT}}     # Project root directory
 {{SCRIPT_PATH}}      # Training script path
 {{CONFIG_NAME}}      # Configuration file name
 {{OUTPUT_FILE}}      # Output file path
@@ -528,13 +529,14 @@ from model_training_framework.trainer import GenericTrainerConfig
 ```python
 @dataclass
 class GenericTrainerConfig:
-    multi: MultiDataLoaderConfig           # Multi-loader configuration (required)
-    checkpoint: CheckpointConfig            # Checkpointing settings
-    logging: LoggingConfig                  # Logging configuration
-    validation: ValidationConfig            # Validation settings
-    fault_tolerance: FaultToleranceConfig   # Fault tolerance settings
-    performance: PerformanceConfig          # Performance optimizations
-    hooks: HooksConfig                      # Hooks configuration
+    train_loader_config: MultiDataLoaderConfig           # Training multi-loader configuration (required)
+    val_loader_config: Optional[MultiDataLoaderConfig] = None  # Validation multi-loader configuration
+    checkpoint: CheckpointConfig                          # Checkpointing settings
+    logging: LoggingConfig                                # Logging configuration
+    validation: ValidationConfig                          # Validation settings
+    fault_tolerance: FaultToleranceConfig                 # Fault tolerance settings
+    performance: PerformanceConfig                        # Performance optimizations
+    hooks: HooksConfig                                    # Hooks configuration
 ```
 
 ### MultiDataLoaderConfig
