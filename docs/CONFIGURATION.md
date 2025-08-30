@@ -508,23 +508,36 @@ echo "Master address: $MASTER_ADDR:$MASTER_PORT"
 echo "Nodes: $SLURM_NNODES, Tasks per node: $SLURM_NTASKS_PER_NODE"
 
 # Run training with torchrun for distributed training
-# torchrun handles the distributed setup automatically
-torchrun \
-    --nnodes=$SLURM_NNODES \
-    --nproc_per_node=$SLURM_NTASKS_PER_NODE \
-    --rdzv_id=$SLURM_JOB_ID \
-    --rdzv_backend=c10d \
-    --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
-    demo/example3_production/train_script.py \
-    --config {{config_path}} \
-    --experiment-name {{experiment_name}}
+# For single-node: torchrun runs directly
+# For multi-node: use srun to launch torchrun on each node
+if [ "$SLURM_NNODES" -eq 1 ]; then
+    # Single-node: run torchrun directly
+    torchrun \
+        --standalone \
+        --nnodes=1 \
+        --nproc_per_node=$SLURM_NTASKS_PER_NODE \
+        demo/example3_production/train_script.py \
+        --config {{config_path}} \
+        --experiment-name {{experiment_name}}
+else
+    # Multi-node: use srun to launch torchrun on each node
+    srun torchrun \
+        --nnodes=$SLURM_NNODES \
+        --nproc_per_node=$SLURM_NTASKS_PER_NODE \
+        --rdzv_id=$SLURM_JOB_ID \
+        --rdzv_backend=c10d \
+        --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
+        demo/example3_production/train_script.py \
+        --config {{config_path}} \
+        --experiment-name {{experiment_name}}
+fi
 
 echo "Job completed at: $(date)"
 ```
 
 ### Minimal torchrun SLURM Template
 
-For simple multi-GPU jobs without complex environment setup:
+For simple single-node multi-GPU jobs:
 
 ```bash
 #!/bin/bash
@@ -539,15 +552,43 @@ For simple multi-GPU jobs without complex environment setup:
 # Activate environment
 source /path/to/venv/bin/activate
 
-# Set master address for torchrun
-export MASTER_ADDR=$(hostname)
-export MASTER_PORT=29500
-
-# Run with torchrun - explicitly set nproc_per_node to number of GPUs
+# Single-node setup: run torchrun directly with --standalone
 torchrun \
     --standalone \
     --nnodes=1 \
     --nproc_per_node=4 \
+    train_script.py \
+    --config config.yaml
+```
+
+### Multi-Node torchrun Template
+
+For multi-node distributed training:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=multinode-training
+#SBATCH --nodes=2                 # Number of nodes
+#SBATCH --gres=gpu:4              # GPUs per node
+#SBATCH --ntasks-per-node=1       # One task per node for srun
+#SBATCH --cpus-per-task=32        # CPUs for all GPUs
+#SBATCH --time=24:00:00
+#SBATCH --partition=gpu
+
+# Activate environment
+source /path/to/venv/bin/activate
+
+# Get master node address
+export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_PORT=29500
+
+# Multi-node: use srun to launch torchrun on each node
+srun torchrun \
+    --nnodes=$SLURM_NNODES \
+    --nproc_per_node=4 \
+    --rdzv_id=$SLURM_JOB_ID \
+    --rdzv_backend=c10d \
+    --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
     train_script.py \
     --config config.yaml
 ```

@@ -294,6 +294,52 @@ if __name__ == "__main__":
     fabric.launch(main)
 ```
 
+### SLURM with torchrun
+
+When using torchrun on SLURM clusters:
+
+#### Single-Node Multi-GPU
+
+For single-node jobs, run torchrun directly:
+
+```bash
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:4
+#SBATCH --ntasks-per-node=1  # One task to launch torchrun
+
+# Run torchrun directly for single-node
+torchrun --standalone --nnodes=1 --nproc_per_node=4 train.py
+```
+
+#### Multi-Node Distributed
+
+For multi-node jobs, use `srun` to launch torchrun on each node:
+
+```bash
+#!/bin/bash
+#SBATCH --nodes=2
+#SBATCH --gres=gpu:4
+#SBATCH --ntasks-per-node=1  # One task per node for srun
+
+export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_PORT=29500
+
+# Use srun to launch torchrun on each node
+srun torchrun \
+    --nnodes=$SLURM_NNODES \
+    --nproc_per_node=4 \
+    --rdzv_id=$SLURM_JOB_ID \
+    --rdzv_backend=c10d \
+    --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
+    train.py
+```
+
+**Key differences**:
+
+- **Single-node**: Use `--standalone` flag, no srun needed
+- **Multi-node**: Use `srun` to launch torchrun, specify rendezvous backend
+
 ### Rank-Aware Processing
 
 ```python
