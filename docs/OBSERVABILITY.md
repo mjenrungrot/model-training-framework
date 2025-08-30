@@ -349,8 +349,7 @@ config = GenericTrainerConfig(
 
 ```python
 # Training with multiple dataloaders using WEIGHTED strategy
-from model_training_framework.trainer import SamplingStrategy
-from model_training_framework.config.schemas import MultiDataLoaderConfig
+from model_training_framework.trainer import SamplingStrategy, MultiDataLoaderConfig
 
 config = GenericTrainerConfig(
     train_loader_config=MultiDataLoaderConfig(

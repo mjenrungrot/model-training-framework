@@ -134,6 +134,8 @@ def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
 trainer.set_training_step(training_step)
 
 # Train with automatic resume on preemption
+# Note: primary_loader, auxiliary_loader, and val_loader are placeholders.
+# See docs/QUICKSTART.md for creating DataLoaders.
 trainer.fit(
     train_loaders=[primary_loader, auxiliary_loader],
     val_loaders=[val_loader],

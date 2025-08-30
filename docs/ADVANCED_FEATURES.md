@@ -52,8 +52,9 @@ trainer_config = GenericTrainerConfig(
 
 ```python
 # Training automatically resumes from latest checkpoint
-if checkpoint_path.exists():
-    trainer.load_checkpoint(checkpoint_path)
+latest = trainer.checkpoint_manager.get_latest_checkpoint()
+if latest:
+    trainer.load_checkpoint(latest)
     # Resumes from exact batch/sample where it left off
 ```
 

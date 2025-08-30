@@ -85,6 +85,12 @@ trainer.fit(
 - **`model.py`**: Simple MLP model for quick training
 - **`_slurm_template.sbatch`**: SLURM template (auto-generated)
 
+## Prerequisites
+
+- Install the framework in editable mode: `pip install -e ".[all]"`
+- Verify PyTorch and (optionally) CUDA: `python -c "import torch; print(torch.cuda.is_available())"`
+- For SLURM runs: ensure `sbatch`/`squeue` are available (e.g., `sinfo` works)
+
 ## 🚀 Quick Start
 
 ### Preview Configuration

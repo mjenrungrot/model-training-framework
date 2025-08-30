@@ -97,9 +97,9 @@ Maintainers should:
 
 After installation, verify everything is working:
 
-```python
-# Test import
-python -c "from model_training_framework import ModelTrainingFramework; print('Installation successful!')"
+```bash
+# Test import (lightweight)
+python -c "import model_training_framework as mtf; print('Installation successful, version:', getattr(mtf, '__version__', 'unknown'))"
 
 # Run tests
 pytest model_training_framework/tests/
@@ -141,6 +141,6 @@ python -m model_training_framework.scripts.train --help
 
 After installation:
 
-1. Read the [Quick Start Guide](../README.md#quick-start)
+1. Read the [Quick Start Guide](QUICKSTART.md)
 2. Review [Configuration Guide](CONFIGURATION.md)
 3. Try the [examples](../demo/example3_production/)
