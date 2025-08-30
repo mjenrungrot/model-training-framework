@@ -239,7 +239,9 @@ base_config = {
     "data": {
         "dataset_name": "my_dataset",
         "batch_size": 32,
-        "num_workers": 4,
+    },
+    "performance": {
+        "dataloader_num_workers": 4,
     },
     "optimizer": {
         "type": "adamw",
@@ -333,7 +335,7 @@ for exp in experiments:
             dataloader_names=["validation"],
         ),
         checkpoint=CheckpointConfig(
-            checkpoint_dir=f"./checkpoints/{exp.experiment_name}",
+            root_dir=f"./checkpoints/{exp.experiment_name}",
         )
     )
 
@@ -693,7 +695,7 @@ def main():
             save_every_n_epochs=1,
             save_every_n_steps=500,
             max_checkpoints=3,
-            checkpoint_dir=f"./checkpoints/{config['experiment_name']}",
+            root_dir=f"./checkpoints/{config['experiment_name']}",
         ),
         logging=LoggingConfig(
             logger_type="composite",

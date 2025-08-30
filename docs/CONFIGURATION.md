@@ -199,7 +199,7 @@ optimizer:
 The framework provides a powerful and flexible grid search API for hyperparameter exploration:
 
 ```python
-from model_training_framework.config import ParameterGridSearch, ParameterGrid
+from model_training_framework.config import ParameterGridSearch, ParameterGrid, NamingStrategy
 from pathlib import Path
 
 # Define base configuration (dict or ExperimentConfig)
@@ -214,8 +214,10 @@ base_config = {
     },
     "data": {
         "dataset_name": "my_dataset",
-        "batch_size": 32,
-        "num_workers": 4
+        "batch_size": 32
+    },
+    "performance": {
+        "dataloader_num_workers": 4
     },
     "training": {
         "max_epochs": 50,
@@ -257,7 +259,7 @@ gs.add_grid(optimization_grid)
 gs.add_grid(architecture_grid)
 
 # Set naming strategy
-gs.set_naming_strategy("parameter_based")  # or "hash_based", "timestamp_based"
+gs.set_naming_strategy(NamingStrategy.PARAMETER_BASED)  # or HASH_BASED, TIMESTAMP_BASED
 
 # Generate all experiment configurations
 experiments = list(gs.generate_experiments())
