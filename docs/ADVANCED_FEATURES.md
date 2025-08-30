@@ -171,7 +171,7 @@ config = GenericTrainerConfig(
     logging=LoggingConfig(
         logger_type="console",
         console_log_level="INFO",
-        log_format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        console_log_format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 )
 ```
@@ -248,15 +248,18 @@ fabric = Fabric(accelerator="gpu", devices=4, strategy="ddp")
 fabric.launch()
 
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.ROUND_ROBIN,
         dataloader_names=["shard_1", "shard_2"],
+    ),
+    val_loader_config=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        dataloader_names=["validation"],
     ),
     ddp=DDPConfig(
         sync_schedules_across_ranks=True,
         validate_schedule_consistency=True,
-        all_reduce_metrics=True  # Aggregate metrics across ranks
-    )
+            )
 )
 
 # Fabric handles distributed setup
@@ -297,9 +300,7 @@ from model_training_framework.config.schemas import PerformanceConfig
 
 config = GenericTrainerConfig(
     performance=PerformanceConfig(
-        use_amp=True,  # Enable mixed precision
-        amp_dtype="float16",  # or "bfloat16" for newer GPUs
-    )
+        use_amp=True,  # Enable mixed precision    )
 )
 
 # AMP is automatically handled:
@@ -332,11 +333,8 @@ import signal
 config = GenericTrainerConfig(
     preemption=PreemptionConfig(
         signal=signal.SIGUSR1,  # Signal to catch
-        timeout_minutes=5,       # Max time for checkpoint save
-        grace_period_seconds=60, # Grace period before forced exit
-        checkpoint_on_preemption=True,
-        exit_on_max_preemptions=True,
-        max_preemptions=3
+        max_checkpoint_sec=300,       # Max time for checkpoint save
+        max_checkpoint_sec=60, # Grace period before forced exit        max_preemptions=3
     )
 )
 
@@ -407,16 +405,14 @@ production_config = GenericTrainerConfig(
     performance=PerformanceConfig(
         use_amp=True,
         compile_model=False,  # Set True for torch.compile
-        num_workers=4,
+        dataloader_num_workers=4,
         pin_memory=True,
         persistent_workers=True
     ),
 
     # Preemption
     preemption=PreemptionConfig(
-        signal=signal.SIGUSR1,
-        checkpoint_on_preemption=True,
-        requeue_job=True
+        signal=signal.SIGUSR1,        requeue_job=True
     )
 )
 ```

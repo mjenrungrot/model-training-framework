@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.9 or higher
+- Python 3.12 or higher
 - PyTorch 2.0.0 or higher
 - CUDA (optional, for GPU support)
 

@@ -166,10 +166,14 @@ optimizer_shared = torch.optim.Adam(model.shared_encoder.parameters(), lr=0.0001
 
 # Configuration
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.WEIGHTED,
         dataloader_weights=[0.6, 0.4],
         dataloader_names=["classification", "regression"],
+    ),
+    val_loader_config=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        dataloader_names=["validation"],
     ),
     per_loader_optimizers={
         "classification": {"optimizer_idx": [0, 2]},  # Use optimizer_a and shared

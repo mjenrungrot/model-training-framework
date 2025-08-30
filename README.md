@@ -85,10 +85,14 @@ from model_training_framework.trainer import (
 
 # Configure trainer with multi-loader support
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.WEIGHTED,
         dataloader_weights=[0.7, 0.3],
         dataloader_names=["primary", "auxiliary"],
+    ),
+    val_loader_config=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        dataloader_names=["validation"],
     ),
     checkpoint=CheckpointConfig(
         save_every_n_steps=500,
@@ -222,7 +226,7 @@ trainer.fit([train_loader], [val_loader], max_epochs=100)
 
 ## ⚙️ Requirements
 
-- Python 3.9+
+- Python 3.12+
 - PyTorch 2.0+
 - Lightning Fabric 2.0+
 - SLURM (for cluster submission)

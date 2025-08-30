@@ -45,7 +45,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 # Configure trainer (multi-loader API required)
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.SEQUENTIAL,
         dataloader_names=["main"],
     )
@@ -97,9 +97,13 @@ from model_training_framework.trainer import (
 
 # Enhanced configuration
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.SEQUENTIAL,
         dataloader_names=["main"],
+    ),
+    val_loader_config=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        dataloader_names=["validation"],
     ),
     checkpoint=CheckpointConfig(
         save_every_n_epochs=1,
@@ -133,7 +137,7 @@ loader_c = DataLoader(dataset_c, batch_size=32)
 
 # Configure round-robin sampling
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.ROUND_ROBIN,
         dataloader_names=["dataset_a", "dataset_b", "dataset_c"],
         epoch_length_policy=EpochLengthPolicy.SUM_OF_LENGTHS,
@@ -173,12 +177,16 @@ trainer.fit(
 ```python
 # Configure weighted sampling (70% A, 20% B, 10% C)
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.WEIGHTED,
         dataloader_weights=[0.7, 0.2, 0.1],
         dataloader_names=["primary", "auxiliary", "rare"],
         epoch_length_policy=EpochLengthPolicy.FIXED_NUM_STEPS,
         steps_per_epoch=500,
+    ),
+    val_loader_config=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        dataloader_names=["validation"],
     ),
     logging=LoggingConfig(
         log_loader_proportions=True,  # Monitor actual sampling
@@ -298,9 +306,13 @@ for exp in experiments:
 
     # Create trainer
     trainer_config = GenericTrainerConfig(
-        multi=MultiDataLoaderConfig(
+        train_loader_config=MultiDataLoaderConfig(
             sampling_strategy=SamplingStrategy.SEQUENTIAL,
             dataloader_names=["main"],
+        ),
+        val_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,
+            dataloader_names=["validation"],
         ),
         checkpoint=CheckpointConfig(
             checkpoint_dir=f"./checkpoints/{exp.experiment_name}",
@@ -626,9 +638,13 @@ def main():
 
     # Trainer configuration
     trainer_config = GenericTrainerConfig(
-        multi=MultiDataLoaderConfig(
+        train_loader_config=MultiDataLoaderConfig(
             sampling_strategy=SamplingStrategy.SEQUENTIAL,
             dataloader_names=["main"],
+        ),
+        val_loader_config=MultiDataLoaderConfig(
+            sampling_strategy=SamplingStrategy.SEQUENTIAL,
+            dataloader_names=["validation"],
         ),
         checkpoint=CheckpointConfig(
             save_every_n_epochs=1,

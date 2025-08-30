@@ -371,7 +371,7 @@ val_loader = create_optimized_dataloader(
 
 # Configure trainer
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.SEQUENTIAL,
         dataloader_names=["train"],
     ),

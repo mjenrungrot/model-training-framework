@@ -137,15 +137,13 @@ checkpoint:
 
 # Preemption configuration
 preemption:
-  timeout_minutes: 5
-  grace_period_seconds: 60
-  max_preemptions: 3
-  checkpoint_on_preemption: true
-  exit_on_max_preemptions: true
+  max_checkpoint_sec: 300  # 5 minutes
+  requeue_job: true
+  resume_from_latest_symlink: true
 
 # Performance configuration
 performance:
-  num_workers: 4
+  dataloader_num_workers: 4
   pin_memory: true
   prefetch_factor: 2
   persistent_workers: true

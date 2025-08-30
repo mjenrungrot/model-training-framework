@@ -37,9 +37,13 @@ from model_training_framework.trainer import (
 )
 
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.SEQUENTIAL,
         dataloader_names=["main"],  # Single name in list
+    ),
+    val_loader_config=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        dataloader_names=["validation"],
     )
 )
 
@@ -123,9 +127,13 @@ def validation_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
 ```python
 # Always required, even for single loader
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.SEQUENTIAL,
         dataloader_names=["main"],  # Define names for your loaders
+    ),
+    val_loader_config=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        dataloader_names=["validation"],
     )
 )
 ```
@@ -161,9 +169,13 @@ model = MyModel()
 optimizer = torch.optim.Adam(model.parameters())
 
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.SEQUENTIAL,
         dataloader_names=["train"],
+    ),
+    val_loader_config=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        dataloader_names=["validation"],
     )
 )
 
@@ -202,9 +214,13 @@ for epoch in range(num_epochs):
 
 ```python
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.SEQUENTIAL,
         dataloader_names=["main"],
+    ),
+    val_loader_config=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        dataloader_names=["validation"],
     )
 )
 

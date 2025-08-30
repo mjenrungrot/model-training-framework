@@ -579,10 +579,14 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 # Configuration
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.WEIGHTED,
         dataloader_weights=[0.7, 0.3],
         dataloader_names=["primary", "auxiliary"],
+    ),
+    val_loader_config=MultiDataLoaderConfig(
+        sampling_strategy=SamplingStrategy.SEQUENTIAL,
+        dataloader_names=["validation"],
     ),
     checkpoint=CheckpointConfig(
         save_every_n_steps=500,
