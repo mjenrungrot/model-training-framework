@@ -253,7 +253,40 @@ gs.save_summary(output_dir / "summary.txt")
 ### Running Grid Search Locally
 
 ```python
+import torch.nn as nn
+import torch.optim as optim
 from model_training_framework.config import ConfigurationManager
+
+def create_model(config):
+    """Create model from configuration."""
+    model_type = config.get("type", "mlp")
+    if model_type == "mlp":
+        return nn.Sequential(
+            nn.Linear(784, config["hidden_size"]),
+            nn.ReLU(),
+            nn.Dropout(config.get("dropout", 0.1)),
+            nn.Linear(config["hidden_size"], 10)
+        )
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+
+def create_optimizer(model, config):
+    """Create optimizer from configuration."""
+    opt_type = config.get("type", "adamw")
+    if opt_type == "adamw":
+        return optim.AdamW(
+            model.parameters(),
+            lr=config["lr"],
+            weight_decay=config.get("weight_decay", 0.01)
+        )
+    elif opt_type == "sgd":
+        return optim.SGD(
+            model.parameters(),
+            lr=config["lr"],
+            momentum=config.get("momentum", 0.9)
+        )
+    else:
+        raise ValueError(f"Unknown optimizer type: {opt_type}")
 
 # Run all experiments
 for exp in experiments:
@@ -462,7 +495,8 @@ import sys
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, TensorDataset
 
 from model_training_framework.trainer import (
     GenericTrainer,
@@ -489,26 +523,37 @@ def create_model(config):
 
 
 def create_dataloaders(config):
-    """Create train and validation dataloaders."""
+    """Create train and validation dataloaders with optimal settings."""
     # Your dataset creation logic
-    train_dataset = ...
-    val_dataset = ...
+    # Example with TensorDataset
+    train_data = torch.randn(1000, 28 * 28)
+    train_labels = torch.randint(0, 10, (1000,))
+    train_dataset = torch.utils.data.TensorDataset(train_data, train_labels)
 
+    val_data = torch.randn(200, 28 * 28)
+    val_labels = torch.randint(0, 10, (200,))
+    val_dataset = torch.utils.data.TensorDataset(val_data, val_labels)
+
+    # Optimized DataLoader settings
     train_loader = DataLoader(
         train_dataset,
         batch_size=config["batch_size"],
         shuffle=True,
         num_workers=config.get("num_workers", 4),
-        pin_memory=True,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=config.get("num_workers", 4) > 0,
+        prefetch_factor=2 if config.get("num_workers", 4) > 0 else None,
+        drop_last=True
     )
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=config["batch_size"],
+        batch_size=config["batch_size"] * 2,  # Larger batch for validation
         shuffle=False,
         num_workers=config.get("num_workers", 4),
-        pin_memory=True,
-    )
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=config.get("num_workers", 4) > 0,
+        prefetch_factor=2 if config.get("num_workers", 4) > 0 else None
 
     return train_loader, val_loader
 

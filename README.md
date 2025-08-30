@@ -73,11 +73,14 @@ print(f"Submitted {result.success_count} jobs to SLURM")
 Train models with automatic checkpointing, exact resume, and multi-dataloader support.
 
 ```python
+import torch
+import torch.nn.functional as F
 from model_training_framework.trainer import (
     GenericTrainer,
     GenericTrainerConfig,
     MultiDataLoaderConfig,
     SamplingStrategy,
+    CheckpointConfig,
 )
 
 # Configure trainer with multi-loader support
@@ -92,6 +95,10 @@ config = GenericTrainerConfig(
         max_checkpoints=3,
     )
 )
+
+# Assume model and optimizer are defined
+# model = YourModel()
+# optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
 
 # Create trainer
 trainer = GenericTrainer(config, model, [optimizer])
@@ -115,7 +122,9 @@ trainer.fit(
 
 ## 📚 Complete Example
 
-See [demo/example3_production/](demo/example3_production/) for a complete working example that demonstrates all three components working together:
+See [demo/example3_production/](demo/example3_production/) for a complete working example that demonstrates all three components working together.
+
+For DataLoader optimization and best practices, see [DataLoader Best Practices](docs/DATALOADER_BEST_PRACTICES.md).
 
 ```bash
 # Run locally
@@ -153,6 +162,7 @@ python demo/example3_production/orchestrate.py slurm submit
 - **[Quick Start Guide](docs/QUICKSTART.md)** - Extended examples to get started
 - **[API Reference](docs/API.md)** - Complete API documentation
 - **[Configuration Guide](docs/CONFIGURATION.md)** - Detailed configuration options
+- **[DataLoader Best Practices](docs/DATALOADER_BEST_PRACTICES.md)** - Performance optimization guide
 - **[Multi-DataLoader Guide](docs/MULTI_DATALOADER.md)** - Multi-loader training patterns
 - **[Migration Guide](docs/MIGRATION.md)** - Migrating existing code
 - **[Advanced Features](docs/ADVANCED_FEATURES.md)** - Production features
