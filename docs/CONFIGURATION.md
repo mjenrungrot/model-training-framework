@@ -137,9 +137,14 @@ checkpoint:
 
 # Preemption configuration
 preemption:
-  max_checkpoint_sec: 300  # 5 minutes
+  # Time limit for saving a checkpoint on preemption (seconds)
+  max_checkpoint_sec: 300
+  # Whether to request SLURM requeue after checkpointing
   requeue_job: true
+  # Resume from the latest symlink when restarting
   resume_from_latest_symlink: true
+  # Optional: POSIX signal used for preemption handling (matches code examples)
+  # signal: USR1  # corresponds to signal.SIGUSR1 in Python
 
 # Performance configuration
 performance:

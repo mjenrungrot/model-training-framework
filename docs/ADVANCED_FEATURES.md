@@ -308,13 +308,21 @@ config = GenericTrainerConfig(
 # - Forward passes wrapped in autocast
 # - Loss scaled before backward
 # - Gradients unscaled before clipping
+
+# On Ampere+ GPUs, enable TF32 and set matmul precision for additional speedups
+import torch
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.set_float32_matmul_precision("high")  # or "medium" if compile stability is a concern
+
+# Note: prefer bf16 on hardware with native support; GradScaler is not needed for bf16
 ```
 
 ### Manual AMP Control
 
 ```python
 def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
-    with torch.cuda.amp.autocast(enabled=trainer.config.performance.use_amp):
+    with torch.amp.autocast(device_type="cuda", enabled=trainer.config.performance.use_amp):
         outputs = trainer.model(batch)
         loss = criterion(outputs, targets)
 

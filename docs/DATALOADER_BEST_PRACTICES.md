@@ -39,19 +39,23 @@ def create_optimized_dataloader(
         shuffle = is_training
 
     # Create DataLoader with performance optimizations
-    dataloader = DataLoader(
-        dataset,
+    loader_kwargs = dict(
+        dataset=dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         sampler=sampler,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),  # Pin memory for faster GPU transfer
-        persistent_workers=(num_workers > 0),  # Keep workers alive between epochs
-        prefetch_factor=2 if num_workers > 0 else None,  # Prefetch batches
         drop_last=is_training,  # Drop incomplete final batch for stable training
         collate_fn=default_collate,
-        worker_init_fn=worker_init_fn  # Set worker seeds
+        worker_init_fn=worker_init_fn,  # Set worker seeds
     )
+    if num_workers > 0:
+        loader_kwargs.update(
+            persistent_workers=True,  # Keep workers alive between epochs
+            prefetch_factor=2,        # Prefetch batches (only valid when num_workers>0)
+        )
+    dataloader = DataLoader(**loader_kwargs)
 
     return dataloader
 
@@ -92,6 +96,19 @@ def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
 1. `pin_memory=True` in DataLoader
 2. Training on CUDA device
 3. Data is being transferred from CPU to GPU
+
+### Ensure per-epoch shuffling in DDP
+
+When using `DistributedSampler`, call `set_epoch(epoch)` at the start of each epoch to get different shuffles across epochs and ranks:
+
+```python
+from torch.utils.data import DistributedSampler
+
+for epoch in range(num_epochs):
+    if isinstance(train_loader.sampler, DistributedSampler):
+        train_loader.sampler.set_epoch(epoch)
+    # proceed with training loop for this epoch
+```
 
 ## Performance Optimization Guidelines
 
@@ -182,7 +199,7 @@ def training_step_with_amp(trainer, batch, batch_idx, dataloader_idx, dataloader
     use_amp = trainer.config.performance.use_amp and device.type == 'cuda'
 
     # Use autocast for mixed precision only on CUDA
-    with torch.cuda.amp.autocast(enabled=use_amp):
+    with torch.amp.autocast(device_type="cuda", enabled=use_amp):
         outputs = trainer.model(x)
         loss = F.cross_entropy(outputs, y)
 

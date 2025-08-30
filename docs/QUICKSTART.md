@@ -126,6 +126,14 @@ trainer = GenericTrainer(config, model, [optimizer])
 ### Round-Robin Strategy
 
 ```python
+from model_training_framework.trainer import (
+    GenericTrainer,
+    GenericTrainerConfig,
+    MultiDataLoaderConfig,
+    SamplingStrategy,
+    EpochLengthPolicy,
+)
+
 # Create multiple datasets
 dataset_a = TensorDataset(torch.randn(1000, 10), torch.randint(0, 2, (1000,)))
 dataset_b = TensorDataset(torch.randn(500, 10), torch.randint(0, 2, (500,)))
@@ -175,6 +183,14 @@ trainer.fit(
 ### Weighted Sampling
 
 ```python
+from model_training_framework.trainer import (
+    GenericTrainerConfig,
+    MultiDataLoaderConfig,
+    SamplingStrategy,
+    EpochLengthPolicy,
+    LoggingConfig,
+)
+
 # Configure weighted sampling (70% A, 20% B, 10% C)
 config = GenericTrainerConfig(
     train_loader_config=MultiDataLoaderConfig(
@@ -550,26 +566,29 @@ def create_dataloaders(config):
     val_dataset = torch.utils.data.TensorDataset(val_data, val_labels)
 
     # Optimized DataLoader settings
-    train_loader = DataLoader(
-        train_dataset,
+    nw = int(config.get("num_workers", 4))
+    tl_kwargs = dict(
+        dataset=train_dataset,
         batch_size=config["batch_size"],
         shuffle=True,
-        num_workers=config.get("num_workers", 4),
+        num_workers=nw,
         pin_memory=torch.cuda.is_available(),
-        persistent_workers=config.get("num_workers", 4) > 0,
-        prefetch_factor=2 if config.get("num_workers", 4) > 0 else None,
-        drop_last=True
+        drop_last=True,
     )
+    if nw > 0:
+        tl_kwargs.update(persistent_workers=True, prefetch_factor=2)
+    train_loader = DataLoader(**tl_kwargs)
 
-    val_loader = DataLoader(
-        val_dataset,
+    vl_kwargs = dict(
+        dataset=val_dataset,
         batch_size=config["batch_size"] * 2,  # Larger batch for validation
         shuffle=False,
-        num_workers=config.get("num_workers", 4),
+        num_workers=nw,
         pin_memory=torch.cuda.is_available(),
-        persistent_workers=config.get("num_workers", 4) > 0,
-        prefetch_factor=2 if config.get("num_workers", 4) > 0 else None
     )
+    if nw > 0:
+        vl_kwargs.update(persistent_workers=True, prefetch_factor=2)
+    val_loader = DataLoader(**vl_kwargs)
 
     return train_loader, val_loader
 

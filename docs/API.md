@@ -358,6 +358,37 @@ Available template variables:
 {{ERROR_FILE}}       # Error file path
 ```
 
+### Example SLURM Template
+
+```bash
+#!/bin/bash
+#SBATCH --job-name={{JOB_NAME}}
+#SBATCH --account={{ACCOUNT}}
+#SBATCH --partition={{PARTITION}}
+#SBATCH --nodes={{NODES}}
+#SBATCH --gpus-per-node={{GPUS_PER_NODE}}
+#SBATCH --cpus-per-task={{CPUS_PER_TASK}}
+#SBATCH --mem={{MEM}}
+#SBATCH --time={{TIME}}
+#SBATCH --output=experiments/{{EXPERIMENT_NAME}}/slurm_%j.out
+#SBATCH --error=experiments/{{EXPERIMENT_NAME}}/slurm_%j.err
+#SBATCH --open-mode=append  # Preserve logs across requeues
+#SBATCH --signal=USR1@60  # Signal 60s before timeout
+#SBATCH --requeue
+
+# Recommended environment settings for DDP stability/performance
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
+export MKL_NUM_THREADS=${SLURM_CPUS_PER_TASK}
+export NCCL_ASYNC_ERROR_HANDLING=1
+# Optional diagnostics: export NCCL_DEBUG=WARN
+# Optional allocator tweak to reduce fragmentation on long runs
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+# Run training
+cd {{PROJECT_ROOT}}
+python {{SCRIPT_PATH}} {{CONFIG_NAME}}
+```
+
 ### Example: Complete SLURM Workflow
 
 ```python

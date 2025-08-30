@@ -60,7 +60,7 @@ launcher = SLURMLauncher(
 # Submit batch of experiments
 result = launcher.submit_experiment_batch(
     experiments=experiments,
-    script_path="train.py",
+    script_path="demo/example3_production/train_script.py",
     max_concurrent=10,
     dry_run=False  # Set True to preview
 )
@@ -122,7 +122,7 @@ def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
 
     # Use autocast for mixed precision if enabled
     if trainer.config.performance.use_amp and device.type == "cuda":
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast(device_type="cuda", enabled=True):
             outputs = trainer.model(x)
             loss = F.cross_entropy(outputs, y)
     else:
