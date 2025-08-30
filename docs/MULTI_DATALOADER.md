@@ -424,14 +424,14 @@ def test_deterministic_resume():
     state1 = trainer.get_state()
 
     # Save checkpoint
-    trainer.save_checkpoint("test.ckpt")
+    trainer.checkpoint_manager.save_checkpoint("test.ckpt")
 
     # Continue for 5 more steps
     trainer.fit(loaders, max_steps=10)
     state2 = trainer.get_state()
 
     # Load checkpoint and train same 5 steps
-    trainer.load_checkpoint("test.ckpt")
+    trainer.checkpoint_manager.load_checkpoint("test.ckpt")
     trainer.fit(loaders, max_steps=10)
     state3 = trainer.get_state()
 

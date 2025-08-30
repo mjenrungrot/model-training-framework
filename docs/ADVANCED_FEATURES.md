@@ -52,9 +52,17 @@ trainer_config = GenericTrainerConfig(
 
 ```python
 # Training automatically resumes from latest checkpoint
+# Option 1: Use fit() with resume_from_checkpoint
+trainer.fit(
+    train_loaders, val_loaders,
+    max_epochs=100,
+    resume_from_checkpoint="latest"  # or specific path
+)
+
+# Option 2: Use checkpoint_manager directly
 latest = trainer.checkpoint_manager.get_latest_checkpoint()
 if latest:
-    trainer.load_checkpoint(latest)
+    trainer.checkpoint_manager.load_checkpoint(latest)
     # Resumes from exact batch/sample where it left off
 ```
 
@@ -359,6 +367,8 @@ def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
 
 ```python
 import signal
+import os
+import sys
 
 # Configure preemption handling
 config = GenericTrainerConfig(
@@ -372,7 +382,7 @@ config = GenericTrainerConfig(
 
 # Set up signal handler
 def handle_preemption(signum, frame):
-    trainer.save_checkpoint(emergency=True)
+    trainer.checkpoint_manager.save_checkpoint(emergency=True)
     if trainer.config.preemption.requeue_job:
         import subprocess
         job_id = os.environ.get('SLURM_JOB_ID')
@@ -397,10 +407,13 @@ trainer = GenericTrainer(config, model, optimizers)
 # Automatic resume if checkpoint exists
 checkpoint_dir = Path("checkpoints")
 if checkpoint_dir.exists():
-    latest = trainer.checkpoint_manager.get_latest_checkpoint()
-    if latest:
-        trainer.load_checkpoint(latest)
-        print(f"Resumed from epoch {trainer.current_epoch}, step {trainer.global_step}")
+    # Automatic resume using fit()
+    trainer.fit(
+        train_loaders, val_loaders,
+        max_epochs=100,
+        resume_from_checkpoint="latest"
+    )
+    # The trainer will automatically resume from the latest checkpoint
 ```
 
 ## Best Practices
@@ -470,7 +483,7 @@ except PreemptionTimeoutError as e:
     # Handle preemption timeout
     logger.error(f"Preemption checkpoint failed: {e}")
     # Force save minimal state
-    trainer.save_checkpoint(emergency=True)
+    trainer.checkpoint_manager.save_checkpoint(emergency=True)
 except CheckpointTimeoutError as e:
     # Handle checkpoint timeout
     logger.error(f"Regular checkpoint failed: {e}")

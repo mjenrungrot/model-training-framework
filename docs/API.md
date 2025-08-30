@@ -22,7 +22,7 @@ Main class for orchestrating parameter grid searches.
 from model_training_framework.config import ParameterGridSearch
 ```
 
-#### Constructor
+#### ParameterGridSearch Constructor
 
 ```python
 ParameterGridSearch(base_config: Dict[str, Any])
@@ -32,7 +32,7 @@ ParameterGridSearch(base_config: Dict[str, Any])
 
 - `base_config`: Base configuration dictionary or ExperimentConfig object
 
-#### Methods
+#### ParameterGridSearch Methods
 
 ##### `add_grid(grid: ParameterGrid) -> None`
 
@@ -89,13 +89,13 @@ Define parameter search spaces.
 from model_training_framework.config import ParameterGrid
 ```
 
-#### Constructor
+#### ParameterGrid Constructor
 
 ```python
 ParameterGrid(name: str, description: str = "")
 ```
 
-#### Methods
+#### ParameterGrid Methods
 
 ##### `add_parameter(key: str, values: List[Any]) -> ParameterGrid`
 
@@ -157,13 +157,13 @@ Manage configuration loading and validation.
 from model_training_framework.config import ConfigurationManager
 ```
 
-#### Constructor
+#### ConfigurationManager Constructor
 
 ```python
 ConfigurationManager(project_root: Path, config_dir: Optional[Path] = None)
 ```
 
-#### Methods
+#### ConfigurationManager Methods
 
 ##### `load_config(config_path: Union[str, Path], validate: bool = True) -> Dict[str, Any]`
 
@@ -235,7 +235,7 @@ Main class for SLURM job submission.
 from model_training_framework.slurm import SLURMLauncher
 ```
 
-#### Constructor
+#### SLURMLauncher Constructor
 
 ```python
 SLURMLauncher(
@@ -251,7 +251,7 @@ SLURMLauncher(
 - `project_root`: Root directory of project
 - `experiments_dir`: Optional directory for experiment outputs (defaults to `{project_root}/experiments`)
 
-#### Methods
+#### SLURMLauncher Methods
 
 ##### `submit_single_experiment(config: ExperimentConfig, script_path: Path, use_git_branch: bool = False, dry_run: bool = False) -> SLURMJobResult`
 
@@ -299,7 +299,7 @@ Template engine for generating SLURM scripts.
 from model_training_framework.slurm.templates import SBATCHTemplateEngine
 ```
 
-#### Constructor
+#### SBATCHTemplateEngine Constructor
 
 ```python
 SBATCHTemplateEngine(
@@ -308,7 +308,7 @@ SBATCHTemplateEngine(
 )
 ```
 
-#### Methods
+#### SBATCHTemplateEngine Methods
 
 ##### `generate_sbatch_script(context: TemplateContext, output_path: Path) -> Path`
 
@@ -440,7 +440,7 @@ Main trainer class.
 from model_training_framework.trainer import GenericTrainer
 ```
 
-#### Constructor
+#### GenericTrainer Constructor
 
 ```python
 GenericTrainer(
@@ -458,7 +458,7 @@ GenericTrainer(
 - `optimizers`: List of optimizers (always a list)
 - `fabric`: Optional Lightning Fabric for distributed training
 
-#### Methods
+#### GenericTrainer Methods
 
 ##### `fit(train_loaders: List[DataLoader], val_loaders: Optional[List[DataLoader]], max_epochs: int) -> None`
 
@@ -506,9 +506,10 @@ trainer.set_validation_step(validation_step)
 Save training checkpoint.
 
 ```python
-checkpoint_path = trainer.save_checkpoint()
+# Use checkpoint_manager for saving
+checkpoint_path = trainer.checkpoint_manager.save_checkpoint()
 # Emergency checkpoint for preemption
-emergency_path = trainer.save_checkpoint(emergency=True)
+emergency_path = trainer.checkpoint_manager.save_checkpoint(emergency=True)
 ```
 
 ##### `load_checkpoint(checkpoint_path: Path) -> None`
@@ -516,7 +517,15 @@ emergency_path = trainer.save_checkpoint(emergency=True)
 Load training checkpoint.
 
 ```python
-trainer.load_checkpoint("checkpoints/best.ckpt")
+# Option 1: Use fit() with resume_from_checkpoint
+trainer.fit(
+    train_loaders, val_loaders,
+    max_epochs=100,
+    resume_from_checkpoint="checkpoints/best.ckpt"
+)
+
+# Option 2: Use checkpoint_manager directly
+trainer.checkpoint_manager.load_checkpoint("checkpoints/best.ckpt")
 ```
 
 ### GenericTrainerConfig
@@ -760,7 +769,7 @@ try:
     trainer.fit(train_loaders, val_loaders)
 except PreemptionTimeoutError as e:
     # Handle preemption timeout
-    trainer.save_checkpoint(emergency=True)
+    trainer.checkpoint_manager.save_checkpoint(emergency=True)
 except TrainerError as e:
     # Handle general trainer errors
     logger.error(f"Training failed: {e}")
