@@ -80,17 +80,11 @@ all = [
     "tensorboard>=2.10.0",
 ]
 
-[project.scripts]
-mtf-train = "model_training_framework.scripts.train:main"
-mtf-grid-search = "model_training_framework.scripts.grid_search:main"
-mtf-submit = "model_training_framework.scripts.submit:main"
-mtf-status = "model_training_framework.scripts.status:main"
-
 [project.urls]
-Homepage = "https://github.com/your-org/model-training-framework"
+Homepage = "https://github.com/mjenrungrot/model-training-framework"
 Documentation = "https://model-training-framework.readthedocs.io/"
-Repository = "https://github.com/your-org/model-training-framework"
-"Bug Tracker" = "https://github.com/your-org/model-training-framework/issues"
+Repository = "https://github.com/mjenrungrot/model-training-framework"
+"Bug Tracker" = "https://github.com/mjenrungrot/model-training-framework/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

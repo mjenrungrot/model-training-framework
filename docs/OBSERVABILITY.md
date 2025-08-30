@@ -349,14 +349,14 @@ config = GenericTrainerConfig(
 
 ```python
 # Training with multiple dataloaders using WEIGHTED strategy
-from model_training_framework.trainer.multi_dataloader import SamplingStrategy
-from model_training_framework.config.schemas import MultiDataLoaderConfig
+from model_training_framework.trainer import SamplingStrategy, MultiDataLoaderConfig
 
 config = GenericTrainerConfig(
-    multi=MultiDataLoaderConfig(
+    train_loader_config=MultiDataLoaderConfig(
         sampling_strategy=SamplingStrategy.WEIGHTED,
         dataloader_weights=[0.7, 0.3],  # 70% loader1, 30% loader2
     ),
+
     logging=LoggingConfig(
         log_loader_proportions=True,  # Track realized proportions
         all_reduce_metrics=True       # Accurate global proportions
