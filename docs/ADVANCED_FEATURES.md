@@ -259,7 +259,7 @@ config = GenericTrainerConfig(
     ddp=DDPConfig(
         sync_schedules_across_ranks=True,
         validate_schedule_consistency=True,
-            )
+    )
 )
 
 # Fabric handles distributed setup
@@ -300,7 +300,8 @@ from model_training_framework.config.schemas import PerformanceConfig
 
 config = GenericTrainerConfig(
     performance=PerformanceConfig(
-        use_amp=True,  # Enable mixed precision    )
+        use_amp=True,  # Enable mixed precision
+    )
 )
 
 # AMP is automatically handled:
@@ -333,16 +334,20 @@ import signal
 config = GenericTrainerConfig(
     preemption=PreemptionConfig(
         signal=signal.SIGUSR1,  # Signal to catch
-        max_checkpoint_sec=300,       # Max time for checkpoint save
-        max_checkpoint_sec=60, # Grace period before forced exit        max_preemptions=3
+        max_checkpoint_sec=300,  # Max time for checkpoint save
+        requeue_job=True,  # Requeue job after preemption
+        resume_from_latest_symlink=True  # Resume from latest checkpoint
     )
 )
 
 # Set up signal handler
 def handle_preemption(signum, frame):
     trainer.save_checkpoint(emergency=True)
-    if should_requeue:
-        os.system(f"scontrol requeue {os.environ['SLURM_JOB_ID']}")
+    if trainer.config.preemption.requeue_job:
+        import subprocess
+        job_id = os.environ.get('SLURM_JOB_ID')
+        if job_id:
+            subprocess.run(['scontrol', 'requeue', job_id], check=True)
     sys.exit(0)
 
 signal.signal(signal.SIGUSR1, handle_preemption)
@@ -406,13 +411,16 @@ production_config = GenericTrainerConfig(
         use_amp=True,
         compile_model=False,  # Set True for torch.compile
         dataloader_num_workers=4,
-        pin_memory=True,
+        pin_memory=torch.cuda.is_available(),
         persistent_workers=True
     ),
 
     # Preemption
     preemption=PreemptionConfig(
-        signal=signal.SIGUSR1,        requeue_job=True
+        signal=signal.SIGUSR1,
+        max_checkpoint_sec=300,
+        requeue_job=True,
+        resume_from_latest_symlink=True
     )
 )
 ```

@@ -44,7 +44,7 @@ def create_optimized_dataloader(
         shuffle=shuffle,
         sampler=sampler,
         num_workers=num_workers,
-        pin_memory=True,  # Pin memory for faster GPU transfer
+        pin_memory=torch.cuda.is_available(),  # Pin memory for faster GPU transfer
         persistent_workers=(num_workers > 0),  # Keep workers alive between epochs
         prefetch_factor=2 if num_workers > 0 else None,  # Prefetch batches
         drop_last=is_training,  # Drop incomplete final batch for stable training
@@ -62,6 +62,35 @@ def worker_init_fn(worker_id):
     import random
     random.seed(worker_seed)
 ```
+
+### Non-Blocking GPU Transfers
+
+When using pinned memory, enable non-blocking transfers for better CPU-GPU overlap:
+
+```python
+def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
+    # Move data to GPU with non_blocking when pin_memory is enabled
+    device = trainer.device
+    if trainer.config.performance.pin_memory and device.type == 'cuda':
+        # Non-blocking transfer overlaps with computation
+        x = batch[0].to(device, non_blocking=True)
+        y = batch[1].to(device, non_blocking=True)
+    else:
+        # Standard transfer for CPU or when pin_memory is disabled
+        x = batch[0].to(device)
+        y = batch[1].to(device)
+
+    # Computation proceeds while transfer completes
+    outputs = trainer.model(x)
+    loss = F.cross_entropy(outputs, y)
+    return {"loss": loss}
+```
+
+**Important**: Only use `non_blocking=True` when:
+
+1. `pin_memory=True` in DataLoader
+2. Training on CUDA device
+3. Data is being transferred from CPU to GPU
 
 ## Performance Optimization Guidelines
 
@@ -148,13 +177,16 @@ scaler = setup_mixed_precision()
 def training_step_with_amp(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
     x, y = batch
 
-    # Use autocast for mixed precision
-    with torch.cuda.amp.autocast():
+    device = next(trainer.model.parameters()).device
+    use_amp = trainer.config.performance.use_amp and device.type == 'cuda'
+
+    # Use autocast for mixed precision only on CUDA
+    with torch.cuda.amp.autocast(enabled=use_amp):
         outputs = trainer.model(x)
         loss = F.cross_entropy(outputs, y)
 
-    # Scale loss for backward pass
-    if trainer.scaler is not None:
+    # Scale loss for backward pass if using AMP
+    if use_amp and hasattr(trainer, 'scaler') and trainer.scaler is not None:
         trainer.scaler.scale(loss).backward()
         trainer.scaler.step(trainer.optimizers[0])
         trainer.scaler.update()
@@ -239,7 +271,7 @@ def create_multi_dataloaders(datasets_dict, batch_sizes, num_workers=4):
             batch_size=batch_size,
             shuffle=True,
             num_workers=workers_per_loader,
-            pin_memory=True,
+            pin_memory=torch.cuda.is_available(),
             persistent_workers=True,
             prefetch_factor=2,
             drop_last=True
@@ -306,7 +338,7 @@ def diagnose_dataloader_speed(dataloader):
     if avg_time > 0.1:  # More than 100ms is slow
         print("Consider:")
         print("- Increasing num_workers")
-        print("- Using pin_memory=True")
+        print("- Using pin_memory=True (for GPU training)")
         print("- Enabling persistent_workers")
         print("- Increasing prefetch_factor")
 ```
@@ -350,6 +382,7 @@ from model_training_framework.trainer import (
     GenericTrainerConfig,
     MultiDataLoaderConfig,
     SamplingStrategy,
+    PerformanceConfig,
 )
 
 # Create optimized DataLoaders
@@ -376,7 +409,12 @@ config = GenericTrainerConfig(
         dataloader_names=["train"],
     ),
     # Enable mixed precision
-    precision="16-mixed",
+    performance=PerformanceConfig(
+        use_amp=True,  # Enable automatic mixed precision
+        dataloader_num_workers=4,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=True,
+    ),
 )
 
 # Create trainer
