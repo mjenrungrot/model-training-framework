@@ -501,31 +501,38 @@ def validation_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
 trainer.set_validation_step(validation_step)
 ```
 
-##### `save_checkpoint(emergency: bool = False) -> Path`
+##### Manual Checkpoint Saving
 
-Save training checkpoint.
+The trainer automatically handles checkpoint saving based on `CheckpointConfig`. For manual saves:
 
 ```python
-# Use checkpoint_manager for saving
-checkpoint_path = trainer.checkpoint_manager.save_checkpoint()
-# Emergency checkpoint for preemption
-emergency_path = trainer.checkpoint_manager.save_checkpoint(emergency=True)
+# The trainer has built-in signal handling via PreemptionConfig
+# Configure it to handle signals automatically:
+config = GenericTrainerConfig(
+    preemption=PreemptionConfig(
+        signal=signal.SIGUSR1,  # Automatically handle this signal
+        max_checkpoint_sec=300,
+    )
+)
+
+# For manual checkpoint save (rarely needed):
+trainer._save_checkpoint(force=True)  # Force immediate save
 ```
 
-##### `load_checkpoint(checkpoint_path: Path) -> None`
+##### Loading Checkpoints
 
-Load training checkpoint.
+For resuming from checkpoints:
 
 ```python
-# Option 1: Use fit() with resume_from_checkpoint
+# Option 1: Use fit() with resume_from_checkpoint (recommended)
 trainer.fit(
     train_loaders, val_loaders,
     max_epochs=100,
-    resume_from_checkpoint="checkpoints/best.ckpt"
+    resume_from_checkpoint="latest"  # or specific path
 )
 
-# Option 2: Use checkpoint_manager directly
-trainer.checkpoint_manager.load_checkpoint("checkpoints/best.ckpt")
+# Option 2: Use internal resume method
+trainer._resume_from_checkpoint("checkpoints/best.ckpt")
 ```
 
 ### GenericTrainerConfig
@@ -769,7 +776,7 @@ try:
     trainer.fit(train_loaders, val_loaders)
 except PreemptionTimeoutError as e:
     # Handle preemption timeout
-    trainer.checkpoint_manager.save_checkpoint(emergency=True)
+    trainer._save_checkpoint(force=True)
 except TrainerError as e:
     # Handle general trainer errors
     logger.error(f"Training failed: {e}")

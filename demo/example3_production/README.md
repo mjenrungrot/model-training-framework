@@ -65,7 +65,7 @@ trainer = GenericTrainer(
 # Automatic resume from checkpoint
 latest = trainer.checkpoint_manager.get_latest_checkpoint()
 if latest:
-    trainer.load_checkpoint(latest)
+    trainer._resume_from_checkpoint(str(latest))
     logger.info(f"Resumed from {latest}")
 
 # Train with preemption handling
@@ -187,7 +187,7 @@ signal.signal(signal.SIGUSR1, _on_sigusr1)
 # Check for existing checkpoints
 latest = trainer.checkpoint_manager.get_latest_checkpoint()
 if latest:
-    trainer.load_checkpoint(latest)
+    trainer._resume_from_checkpoint(str(latest))
     # Training continues from exact batch/epoch
 ```
 

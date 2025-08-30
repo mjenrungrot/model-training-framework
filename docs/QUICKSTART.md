@@ -487,29 +487,33 @@ checkpoint_dir = Path("checkpoints")
 if checkpoint_dir.exists():
     latest = trainer.checkpoint_manager.get_latest_checkpoint()
     if latest:
-        trainer.load_checkpoint(latest)
+        trainer._resume_from_checkpoint(str(latest))
         print(f"Resumed from epoch {trainer.current_epoch}")
 ```
 
 ### Manual Checkpoint Management
 
 ```python
-# Save checkpoint manually
-checkpoint_path = trainer.save_checkpoint()
-print(f"Saved checkpoint to {checkpoint_path}")
+# Save checkpoint manually (rarely needed - trainer saves automatically)
+trainer._save_checkpoint(force=True)
+print("Checkpoint saved")
 
 # Load specific checkpoint
-trainer.load_checkpoint("checkpoints/epoch_5.ckpt")
+trainer._resume_from_checkpoint("checkpoints/epoch_5.ckpt")
 
-# Save emergency checkpoint (on preemption)
+# Signal handling (built-in with PreemptionConfig)
+from model_training_framework.trainer import PreemptionConfig
 import signal
 
-def handle_preemption(signum, frame):
-    print("Preemption signal received, saving checkpoint...")
-    trainer.save_checkpoint(emergency=True)
-    sys.exit(0)
-
-signal.signal(signal.SIGUSR1, handle_preemption)
+# Configure automatic signal handling
+config = GenericTrainerConfig(
+    preemption=PreemptionConfig(
+        signal=signal.SIGUSR1,  # Automatically handle SIGUSR1
+        max_checkpoint_sec=300,  # Timeout for checkpoint save
+    ),
+    # ... other config
+)
+# The trainer will automatically save checkpoints when receiving SIGUSR1
 ```
 
 ## Complete Example
@@ -727,7 +731,7 @@ def main():
     # Handle preemption
     def handle_signal(signum, frame):
         logger.warning("Received preemption signal, saving checkpoint...")
-        trainer.save_checkpoint(emergency=True)
+        trainer._save_checkpoint(force=True)
         sys.exit(0)
 
     signal.signal(signal.SIGUSR1, handle_signal)
@@ -736,7 +740,7 @@ def main():
     if args.resume:
         checkpoint_path = args.checkpoint or trainer.checkpoint_manager.get_latest_checkpoint()
         if checkpoint_path and Path(checkpoint_path).exists():
-            trainer.load_checkpoint(checkpoint_path)
+            trainer._resume_from_checkpoint(str(checkpoint_path))
             logger.info(f"Resumed from {checkpoint_path}")
         else:
             logger.warning("No checkpoint found to resume from")

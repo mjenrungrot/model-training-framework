@@ -59,10 +59,10 @@ trainer.fit(
     resume_from_checkpoint="latest"  # or specific path
 )
 
-# Option 2: Use checkpoint_manager directly
+# Option 2: Use internal resume method
 latest = trainer.checkpoint_manager.get_latest_checkpoint()
 if latest:
-    trainer.checkpoint_manager.load_checkpoint(latest)
+    trainer._resume_from_checkpoint(str(latest))
     # Resumes from exact batch/sample where it left off
 ```
 
@@ -380,9 +380,9 @@ config = GenericTrainerConfig(
     )
 )
 
-# Set up signal handler
+# Set up signal handler (usually not needed - use PreemptionConfig instead)
 def handle_preemption(signum, frame):
-    trainer.checkpoint_manager.save_checkpoint(emergency=True)
+    trainer._save_checkpoint(force=True)
     if trainer.config.preemption.requeue_job:
         import subprocess
         job_id = os.environ.get('SLURM_JOB_ID')
@@ -391,6 +391,15 @@ def handle_preemption(signum, frame):
     sys.exit(0)
 
 signal.signal(signal.SIGUSR1, handle_preemption)
+
+# Better approach: Configure automatic signal handling
+config = GenericTrainerConfig(
+    preemption=PreemptionConfig(
+        signal=signal.SIGUSR1,  # Trainer handles this automatically
+        max_checkpoint_sec=300,
+        requeue_job=True,
+    )
+)
 ```
 
 ### Automatic Recovery
@@ -483,7 +492,7 @@ except PreemptionTimeoutError as e:
     # Handle preemption timeout
     logger.error(f"Preemption checkpoint failed: {e}")
     # Force save minimal state
-    trainer.checkpoint_manager.save_checkpoint(emergency=True)
+    trainer._save_checkpoint(force=True)
 except CheckpointTimeoutError as e:
     # Handle checkpoint timeout
     logger.error(f"Regular checkpoint failed: {e}")
