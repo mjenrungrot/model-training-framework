@@ -1,129 +1,298 @@
-# Example 3 — Production SLURM + Auto-Resume (Minimal)
+# Example 3: Complete Production Workflow
 
-Small, production-minded demo that launches training locally or on a SLURM cluster,
-supports multiple configurations, and automatically resumes from the last checkpoint
-after interruptions (Ctrl+C, SIGTERM, SIGUSR1).
+This example demonstrates all three main components of the Model Training Framework working together in a production-ready setup for HPC clusters.
 
-## Files
+## 🎯 Three Components Integration
 
-- `config.py`: base ExperimentConfig dict and a tiny ParameterGridSearch
-- `data.py`: small synthetic datasets and DataLoaders
-- `model.py`: compact MLP model
-- `train_script.py`: single-experiment trainer (auto-resume from latest.ckpt)
-- `orchestrate.py`: builds configs and runs them locally or submits SLURM jobs
-- `_slurm_template.sbatch`: minimal, safe SBATCH template (auto-created)
+### 1. Config Search Sweep (`config.py`)
 
-## Quick Start
-
-- Preview configs:
-  - `python demo/example3_production/config.py`
-- Local run (sequential):
-  - `python demo/example3_production/orchestrate.py local`
-- SLURM: dry-run submit scripts:
-  - `python demo/example3_production/orchestrate.py slurm`
-- SLURM: actually submit (if you have SLURM):
-  - `python demo/example3_production/orchestrate.py slurm submit`
-
-## Auto-Resume Behavior
-
-- Checkpoints are saved frequently (every N steps) to `experiments/<name>/checkpoints/`.
-- On start, the trainer automatically resumes from `latest.ckpt` if present.
-- Ctrl+C, SIGTERM, or SIGUSR1 causes a checkpoint to be written before exit; the next run continues seamlessly.
-- Uses 2 dataloaders and gradient accumulation by default for realism; adjust in `config.py` if desired.
-
-### Simulate Pre-emption Locally
-
-- No flags needed. The demo pre-empts automatically every ~30 seconds and saves a checkpoint.
-- Just run:
-  - `python demo/example3_production/orchestrate.py local`
-- Re-run the same command; the run resumes from the latest checkpoint and continues.
-
-### Simulate Pre-emption on SLURM
-
-- For actual SLURM submission:
-  - `python demo/example3_production/orchestrate.py slurm submit`
-  - Jobs will pre-empt every ~30s, save a checkpoint, and exit; re-submitting resumes.
-
-## Notes
-
-- The demo anchors all paths under `demo/example3_production` so local and SLURM runs share the same layout.
-- The SLURM template escapes shell variables so scripts render correctly on non-SLURM systems.
-
-## SLURM Requeue & Signals — Recommended Pattern
-
-Long‑running SLURM jobs should handle preemption/time‑limit gracefully by:
-
-- Using `#SBATCH --requeue` so SLURM may requeue when it preempts jobs (QoS/node events).
-- Requesting an early warning signal before termination with `#SBATCH --signal=USR1@N`.
-  - Example: `#SBATCH --signal=USR1@60` sends SIGUSR1 60s before job termination.
-- Handling `SIGUSR1` in your code to quickly save a checkpoint and exit cleanly.
-- Resuming from the latest checkpoint on the next run.
-
-This example implements that pattern:
-
-- `train_script.py` installs a SIGUSR1 handler and saves checkpoints upon preemption.
-- The minimal SBATCH template now includes `#SBATCH --signal=USR1@30` for an early warning.
-- The trainer optionally calls `scontrol requeue "$SLURM_JOB_ID"` after checkpointing so the job requeues immediately (demo‑friendly). You can disable that if you rely on SLURM to requeue.
-
-### Logging and Output Files
-
-- The template uses `#SBATCH --open-mode=append` so requeues append to the same
-  `experiments/<exp>/<jobid>.out` and `.err` files rather than overwriting them.
-- INFO logs are emitted to stdout from within `train_script.py`, so run banners,
-  progress, and checkpoint messages appear in the `.out` file.
-
-### Code Snippet (standard convention)
-
-In Python, set a SIGUSR1 handler and checkpoint on receipt:
+Generates multiple experiment configurations using parameter grid search:
 
 ```python
-import signal
-import logging
+# config.py demonstrates:
+def build_parameter_grid_search(base_config):
+    gs = ParameterGridSearch(base_config)
+    gs.set_naming_strategy(NamingStrategy.PARAMETER_BASED)
 
-preempt_requested = False
+    grid = ParameterGrid("prod_demo")
+    grid.add_parameter("optimizer.lr", [1e-4, 3e-4])
+    grid.add_parameter("data.batch_size", [16])
+    grid.add_parameter("training.gradient_accumulation_steps", [1, 2])
+    grid.add_parameter("custom_params.multi_loader.sampling_strategy",
+                      ["round_robin", "weighted"])
 
+    gs.add_grid(grid)
+    return gs
+```
+
+Generates 8 experiment configurations with different hyperparameters.
+
+### 2. SLURM Launcher (`orchestrate.py`)
+
+Submits experiments to SLURM cluster with automatic job management:
+
+```python
+# orchestrate.py demonstrates:
+launcher = SLURMLauncher(
+    template_path=template_path,
+    project_root=repo_root,
+    experiments_dir=experiments_dir,
+)
+
+result = launcher.submit_experiment_batch(
+    experiments=experiments,
+    script_path=script_path,
+    use_git_branch=False,
+    dry_run=not submit,  # Preview mode available
+)
+```
+
+Creates SBATCH scripts with preemption handling and requeue support.
+
+### 3. Fault-Tolerant Trainer (`train_script.py`)
+
+Trains models with automatic checkpointing and exact resume:
+
+```python
+# train_script.py demonstrates:
+trainer = GenericTrainer(
+    config=trainer_config,
+    model=model,
+    optimizers=[optimizer],
+    fabric=fabric,
+)
+
+# Automatic resume from checkpoint
+latest = trainer.checkpoint_manager.get_latest_checkpoint()
+if latest:
+    trainer._resume_from_checkpoint(str(latest))
+    logger.info(f"Resumed from {latest}")
+
+# Train with preemption handling
+trainer.fit(
+    train_loaders=train_loaders,
+    val_loaders=val_loaders,
+    max_epochs=config["training"]["max_epochs"],
+)
+```
+
+## 📁 Files Overview
+
+- **`config.py`**: Defines base configuration and parameter grid search
+- **`orchestrate.py`**: Main entry point - coordinates all three components
+- **`train_script.py`**: Training script with fault tolerance and multi-loader support
+- **`data.py`**: Creates synthetic datasets for demonstration
+- **`model.py`**: Simple MLP model for quick training
+- **`_slurm_template.sbatch`**: SLURM template (auto-generated)
+
+## Prerequisites
+
+- Install the framework in editable mode: `pip install -e ".[all]"`
+- Verify PyTorch and (optionally) CUDA: `python -c "import torch; print(torch.cuda.is_available())"`
+- For SLURM runs: ensure `sbatch`/`squeue` are available (e.g., `sinfo` works)
+
+## 🚀 Quick Start
+
+### Preview Configuration
+
+See what experiments will be generated:
+
+```bash
+python demo/example3_production/config.py
+```
+
+### Local Execution
+
+Run experiments locally (sequential):
+
+```bash
+python demo/example3_production/orchestrate.py local
+```
+
+### SLURM Submission
+
+**Dry run** (preview SBATCH scripts without submitting):
+
+```bash
+python demo/example3_production/orchestrate.py slurm
+```
+
+**Actual submission** to SLURM:
+
+```bash
+python demo/example3_production/orchestrate.py slurm submit
+```
+
+## 🔄 Workflow Demonstration
+
+### Step 1: Configuration Generation
+
+The `config.py` module creates:
+
+- Base configuration with model, optimizer, and training settings
+- Parameter grid with 4 hyperparameters to search
+- 8 total experiment configurations
+
+### Step 2: Job Orchestration
+
+The `orchestrate.py` script:
+
+- Loads configurations from Step 1
+- Creates experiment directories
+- Generates SLURM scripts from template
+- Submits jobs with proper dependencies
+
+### Step 3: Fault-Tolerant Training
+
+The `train_script.py`:
+
+- Loads assigned configuration
+- Creates multi-dataloader setup (2 loaders)
+- Implements automatic checkpointing
+- Handles SIGUSR1 for graceful preemption
+- Resumes from exact batch on restart
+
+## 🔧 Key Features Demonstrated
+
+### Multi-DataLoader Training
+
+```python
+# Two dataloaders with configurable sampling
+train_loaders = [
+    create_synthetic_loader(64, 10, batch_size, num_workers),
+    create_synthetic_loader(32, 10, batch_size, num_workers),
+]
+
+# Sampling strategy from config
+sampling_strategy = config["custom_params"]["multi_loader"]["sampling_strategy"]
+if sampling_strategy == "weighted":
+    weights = config["custom_params"]["multi_loader"]["dataloader_weights"]
+```
+
+### Preemption Handling
+
+```python
+# Signal handler for SLURM preemption
 def _on_sigusr1(signum, frame):
-    logging.warning("Received SIGUSR1; will checkpoint and exit")
+    logger.warning("Received SIGUSR1; will checkpoint and exit")
     global preempt_requested
     preempt_requested = True
 
 signal.signal(signal.SIGUSR1, _on_sigusr1)
-
-# In your training loop
-for batch in loader:
-    if preempt_requested:
-        save_checkpoint()
-        # Optionally request requeue (demo does this)
-        # subprocess.run(["scontrol", "requeue", os.environ["SLURM_JOB_ID"]], check=True)
-        break  # exit cleanly; next run resumes
-    train_step(batch)
 ```
 
-### Demo: Two Ways to Preempt
+### Automatic Resume
 
-1) Simulated preemption (default):
+```python
+# Check for existing checkpoints
+latest = trainer.checkpoint_manager.get_latest_checkpoint()
+if latest:
+    trainer._resume_from_checkpoint(str(latest))
+    # Training continues from exact batch/epoch
+```
 
-- The demo triggers SIGUSR1 inside Python every ~30s.
-- Run as usual: `python demo/example3_production/orchestrate.py slurm submit`
-- The job saves a checkpoint and requeues; the next submission resumes.
+## 📊 Output Structure
 
-2) SLURM signal‑driven preemption (recommended for production):
+After running, you'll find:
 
-- The SBATCH template includes `#SBATCH --signal=USR1@30`.
-- To test quickly, lower the time limit in `config.py` (e.g., `time: "00:02:00"`) and disable the internal simulator:
+```text
+experiments/
+├── prod_demo_lr1e-4_bs16_ga1_ssround_robin/
+│   ├── config.json
+│   ├── checkpoints/
+│   │   ├── epoch_0_step_10.ckpt
+│   │   └── latest.ckpt -> epoch_0_step_10.ckpt
+│   ├── local_run.log
+│   └── slurm_12345.out  # If submitted to SLURM
+├── prod_demo_lr1e-4_bs16_ga1_ssweighted/
+│   └── ...
+└── ... (6 more experiments)
+```
+
+## 🔍 Monitoring Progress
+
+### Local Runs
 
 ```bash
-export EX3_DISABLE_PREEMPT=1
-python demo/example3_production/orchestrate.py slurm submit
+# Watch log file
+tail -f experiments/*/local_run.log
+
+# Check training progress
+grep "Epoch" experiments/*/local_run.log
 ```
 
-- SLURM sends SIGUSR1 ~30s before termination; the trainer checkpoints, requests requeue (demo), and exits. The job requeues and resumes from the latest checkpoint.
+### SLURM Jobs
 
-In the demo, simulated preemption is disabled automatically after the first
-requeue (via `SLURM_RESTART_COUNT`) so the next run completes, showcasing a
-full preempt→checkpoint→requeue→resume→complete lifecycle.
+```bash
+# Check job status
+squeue -u $USER
 
-### When Does Requeuing Stop?
+# Monitor output
+tail -f experiments/*/slurm_*.out
 
-- The trainer only requeues after a preemption event (SIGUSR1). A normal completion does not requeue; the job exits `COMPLETED`.
-- Your cluster QoS may also cap the maximum requeues. For stricter control, add a small counter (e.g., env var or file) and stop requeuing after N cycles.
+# Check for checkpoints
+ls -la experiments/*/checkpoints/
+```
+
+## ⚙️ Configuration Options
+
+### Adjust Training Duration
+
+```python
+# config.py
+"training": {"max_epochs": 2}  # Increase for longer training
+```
+
+### Change Parameter Search
+
+```python
+# config.py
+grid.add_parameter("optimizer.lr", [1e-5, 1e-4, 1e-3])  # More learning rates
+grid.add_parameter("model.hidden_size", [64, 128, 256])  # Model sizes
+```
+
+### Modify SLURM Settings
+
+```python
+# config.py
+"slurm": {
+    "partition": "gpu",        # Your partition
+    "account": "my-account",   # Your account
+    "time": "04:00:00",       # Time limit
+    "gpus_per_node": 1,       # GPU count
+}
+```
+
+## 🐛 Troubleshooting
+
+### Issue: SLURM submission fails
+
+- Check account/partition names in `config.py`
+- Verify SLURM is available: `sinfo`
+- Review generated scripts: `cat experiments/*/job_*.sbatch`
+
+### Issue: Training doesn't resume
+
+- Check checkpoint exists: `ls experiments/*/checkpoints/`
+- Verify checkpoint loading in logs: `grep "Resumed" experiments/*/local_run.log`
+
+### Issue: Out of memory
+
+- Reduce batch size in `config.py`
+- Increase gradient accumulation steps
+- Request more memory in SLURM config
+
+## 📚 Learn More
+
+- [Main README](../../README.md) - Framework overview
+- [API Documentation](../../docs/API.md) - Complete API reference
+- [Configuration Guide](../../docs/CONFIGURATION.md) - All configuration options
+- [SLURM Guide](../../docs/ADVANCED_FEATURES.md#preemption-handling) - Preemption details
+
+## 💡 Next Steps
+
+1. **Customize the model**: Edit `model.py` to use your architecture
+2. **Use real data**: Replace `data.py` with your dataset loaders
+3. **Add metrics**: Extend `train_script.py` with your metrics
+4. **Scale up**: Increase parameter grid and submit more jobs
+5. **Enable logging**: Add WandB or TensorBoard in config

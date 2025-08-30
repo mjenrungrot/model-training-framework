@@ -53,9 +53,8 @@ model:
 
 # Training configuration
 training:
-  epochs: 100
+  max_epochs: 100
   batch_size: 32
-  learning_rate: 0.001
   gradient_accumulation_steps: 1
   max_grad_norm: 1.0
   warmup_steps: 1000
@@ -69,7 +68,6 @@ data:
   train_split: "train"
   val_split: "validation"
   test_split: "test"
-  num_workers: 4
   preprocessing:
     tokenizer: "bert-base-uncased"
     max_length: 512
@@ -79,7 +77,7 @@ data:
 # Optimizer configuration
 optimizer:
   name: "adamw"
-  learning_rate: 0.001
+  lr: 0.001
   weight_decay: 0.01
   betas: [0.9, 0.999]
   eps: 1e-8
@@ -127,30 +125,34 @@ logging:
 # Checkpoint configuration
 checkpoint:
   save_every_n_epochs: 5
-  save_top_k: 3
-  monitor: "val_loss"
-  mode: "min"
-  checkpoint_dir: "./checkpoints"
-  filename: "{epoch:02d}-{val_loss:.2f}"
+  save_every_n_steps: null
+  max_checkpoints: 3
+  root_dir: "./checkpoints"
+  filename_template: "epoch_{epoch:03d}_step_{step:06d}.ckpt"
+  monitor_metric: "val/loss"
+  monitor_mode: "min"
+  save_best: true
   save_last: true
-  auto_insert_metric_name: true
 
 # Preemption configuration
 preemption:
-  timeout_minutes: 5
-  grace_period_seconds: 60
-  max_preemptions: 3
-  checkpoint_on_preemption: true
-  exit_on_max_preemptions: true
+  # Time limit for saving a checkpoint on preemption (seconds)
+  max_checkpoint_sec: 300
+  # Whether to request SLURM requeue after checkpointing
+  requeue_job: true
+  # Resume from the latest symlink when restarting
+  resume_from_latest_symlink: true
+  # Optional: POSIX signal used for preemption handling (matches code examples)
+  # signal: USR1  # corresponds to signal.SIGUSR1 in Python
 
 # Performance configuration
 performance:
-  num_workers: 4
+  dataloader_num_workers: 4
   pin_memory: true
   prefetch_factor: 2
   persistent_workers: true
   dataloader_drop_last: false
-  mixed_precision: "16-mixed"
+  use_amp: true  # Enable automatic mixed precision
   compile_model: false
 
 # Custom parameters (project-specific)
@@ -179,15 +181,15 @@ model:
   hidden_size: 256
 
 training:
-  epochs: 10
+  max_epochs: 10
   batch_size: 32
-  learning_rate: 0.001
 
 data:
   dataset_name: "mnist"
 
 optimizer:
   name: "adam"
+  lr: 0.001
 ```
 
 ## Parameter Grid Search
@@ -197,7 +199,7 @@ optimizer:
 The framework provides a powerful and flexible grid search API for hyperparameter exploration:
 
 ```python
-from model_training_framework.config import ParameterGridSearch, ParameterGrid
+from model_training_framework.config import ParameterGridSearch, ParameterGrid, NamingStrategy
 from pathlib import Path
 
 # Define base configuration (dict or ExperimentConfig)
@@ -212,8 +214,10 @@ base_config = {
     },
     "data": {
         "dataset_name": "my_dataset",
-        "batch_size": 32,
-        "num_workers": 4
+        "batch_size": 32
+    },
+    "performance": {
+        "dataloader_num_workers": 4
     },
     "training": {
         "max_epochs": 50,
@@ -255,7 +259,7 @@ gs.add_grid(optimization_grid)
 gs.add_grid(architecture_grid)
 
 # Set naming strategy
-gs.set_naming_strategy("parameter_based")  # or "hash_based", "timestamp_based"
+gs.set_naming_strategy(NamingStrategy.PARAMETER_BASED)  # or HASH_BASED, TIMESTAMP_BASED
 
 # Generate all experiment configurations
 experiments = list(gs.generate_experiments())
@@ -489,28 +493,107 @@ module load cudnn/8.6
 source activate {{conda_env}}
 cd {{project_root}}
 
-# Set environment variables
-export CUDA_VISIBLE_DEVICES=$SLURM_LOCALID
+# torchrun automatically sets WORLD_SIZE, RANK, LOCAL_RANK, and CUDA_VISIBLE_DEVICES
+# We only need to set the rendezvous endpoint for torchrun
 export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-export MASTER_PORT=29500
-export WORLD_SIZE=$SLURM_NTASKS
-export RANK=$SLURM_PROCID
+export MASTER_PORT=${MASTER_PORT:-29500}  # Allow override via SLURM
+
+# Set SLURM variables for torchrun if not already set
+export SLURM_NNODES=${SLURM_NNODES:-1}
+export SLURM_NTASKS_PER_NODE=${SLURM_NTASKS_PER_NODE:-1}
 
 # Print environment info
 echo "Python: $(which python)"
-echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
-echo "WORLD_SIZE: $WORLD_SIZE"
-echo "RANK: $RANK"
+echo "Master address: $MASTER_ADDR:$MASTER_PORT"
+echo "Nodes: $SLURM_NNODES, Tasks per node: $SLURM_NTASKS_PER_NODE"
 
-# Run training
-srun python -m model_training_framework.scripts.train \
-    --config {{config_path}} \
-    --experiment-name {{experiment_name}} \
-    --output-dir {{output_dir}} \
-    --distributed
+# Run training with torchrun for distributed training
+# For single-node: torchrun runs directly
+# For multi-node: use srun to launch torchrun on each node
+if [ "$SLURM_NNODES" -eq 1 ]; then
+    # Single-node: run torchrun directly
+    torchrun \
+        --standalone \
+        --nnodes=1 \
+        --nproc_per_node=$SLURM_NTASKS_PER_NODE \
+        demo/example3_production/train_script.py \
+        --config {{config_path}} \
+        --experiment-name {{experiment_name}}
+else
+    # Multi-node: use srun to launch torchrun on each node
+    srun torchrun \
+        --nnodes=$SLURM_NNODES \
+        --nproc_per_node=$SLURM_NTASKS_PER_NODE \
+        --rdzv_id=$SLURM_JOB_ID \
+        --rdzv_backend=c10d \
+        --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
+        demo/example3_production/train_script.py \
+        --config {{config_path}} \
+        --experiment-name {{experiment_name}}
+fi
 
 echo "Job completed at: $(date)"
 ```
+
+### Minimal torchrun SLURM Template
+
+For simple single-node multi-GPU jobs:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=torch-training
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:4              # Request 4 GPUs
+#SBATCH --ntasks-per-node=1       # One task to launch torchrun
+#SBATCH --cpus-per-task=32        # CPUs for all GPUs
+#SBATCH --time=24:00:00
+#SBATCH --partition=gpu
+
+# Activate environment
+source /path/to/venv/bin/activate
+
+# Single-node setup: run torchrun directly with --standalone
+torchrun \
+    --standalone \
+    --nnodes=1 \
+    --nproc_per_node=4 \
+    train_script.py \
+    --config config.yaml
+```
+
+### Multi-Node torchrun Template
+
+For multi-node distributed training:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=multinode-training
+#SBATCH --nodes=2                 # Number of nodes
+#SBATCH --gres=gpu:4              # GPUs per node
+#SBATCH --ntasks-per-node=1       # One task per node for srun
+#SBATCH --cpus-per-task=32        # CPUs for all GPUs
+#SBATCH --time=24:00:00
+#SBATCH --partition=gpu
+
+# Activate environment
+source /path/to/venv/bin/activate
+
+# Get master node address
+export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_PORT=29500
+
+# Multi-node: use srun to launch torchrun on each node
+srun torchrun \
+    --nnodes=$SLURM_NNODES \
+    --nproc_per_node=4 \
+    --rdzv_id=$SLURM_JOB_ID \
+    --rdzv_backend=c10d \
+    --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
+    train_script.py \
+    --config config.yaml
+```
+
+**Important**: Always explicitly set `--nproc_per_node` to match your GPU count. Do not rely on environment variables that may be unset.
 
 ## Environment Variables
 
@@ -591,7 +674,7 @@ final_config = config_manager.compose_configs(
         "overrides/gpu_settings.yaml"
     ],
     parameter_overrides={
-        "training.learning_rate": 0.0005,
+        "optimizer.lr": 0.0005,
         "model.hidden_size": 1024
     }
 )
@@ -610,7 +693,7 @@ training:
   gradient_accumulation_steps: 4
 
 performance:
-  mixed_precision: "16-mixed"
+  use_amp: true
 ```
 
 ```yaml
@@ -620,7 +703,7 @@ slurm:
   mem: "64G"
 
 performance:
-  num_workers: 8
+  dataloader_num_workers: 8
   pin_memory: true
 ```
 
@@ -720,11 +803,11 @@ model:
 ```python
 # Start with coarse grids, then refine
 coarse_grid = ParameterGrid("coarse_search")
-coarse_grid.add_parameter("training.learning_rate", [1e-5, 1e-4, 1e-3])
+coarse_grid.add_parameter("optimizer.lr", [1e-5, 1e-4, 1e-3])
 
 # Then refine around best results
 fine_grid = ParameterGrid("fine_search")
-fine_grid.add_parameter("training.learning_rate", [5e-5, 8e-5, 1e-4, 2e-4])
+fine_grid.add_parameter("optimizer.lr", [5e-5, 8e-5, 1e-4, 2e-4])
 ```
 
 ### 5. SLURM Resource Planning
@@ -754,5 +837,71 @@ except ValidationError as e:
     print(f"Fix configuration errors: {e}")
     return
 ```
+
+## Backwards Compatibility
+
+### Configuration Key Mapping Table (v0.2.0+)
+
+| Old Key | New Key | Available Since | Notes |
+|---------|---------|-----------------|-------|
+| `config.multi` | `config.train_loader_config` | v0.2.0 | For training loaders |
+| `config.multi` | `config.val_loader_config` | v0.2.0 | For validation loaders (optional) |
+| `data.num_workers` | `performance.dataloader_num_workers` | v0.2.0 | Moved to performance section |
+| `training.epochs` | `training.max_epochs` | v0.2.0 | Clarifies maximum epochs |
+| `optimizer.learning_rate` | `optimizer.lr` | v0.2.0 | Shorter, standard naming |
+| `checkpoint.checkpoint_dir` | `checkpoint.root_dir` | v0.2.0 | Aligns with schema |
+| `checkpoint.save_top_k` | `checkpoint.max_checkpoints` | v0.2.0 | Clearer naming |
+| `checkpoint.monitor` | `checkpoint.monitor_metric` | v0.2.0 | More explicit |
+| `checkpoint.mode` | `checkpoint.monitor_mode` | v0.2.0 | Pairs with monitor_metric |
+| `checkpoint.filename` | `checkpoint.filename_template` | v0.2.0 | Indicates template nature |
+| `performance.mixed_precision: "16-mixed"` | `performance.use_amp: true` | v0.2.0 | Boolean flag for AMP |
+
+### Configuration Key Renames
+
+For users upgrading from earlier versions, the following configuration keys have been renamed for clarity:
+
+**Trainer Configuration:**
+
+- `config.multi` → `config.train_loader_config` (for training loaders)
+- `config.multi` → `config.val_loader_config` (for validation loaders, optional)
+
+**Performance Configuration:**
+
+- `performance.mixed_precision: "16-mixed"` → `performance.use_amp: true`
+- `data.num_workers` → `performance.dataloader_num_workers`
+
+**Example Migration:**
+
+Old configuration:
+
+```yaml
+trainer:
+  multi:
+    sampling_strategy: "WEIGHTED"
+    dataloader_weights: [0.7, 0.3]
+
+performance:
+  use_amp: false  # Was: mixed_precision: "16-mixed"
+
+# Note: num_workers has moved to performance.dataloader_num_workers
+```
+
+New configuration:
+
+```yaml
+trainer:
+  train_loader_config:
+    sampling_strategy: "WEIGHTED"
+    dataloader_weights: [0.7, 0.3]
+
+  val_loader_config:  # Optional, separate validation config
+    sampling_strategy: "SEQUENTIAL"
+
+performance:
+  use_amp: true
+  dataloader_num_workers: 4
+```
+
+These changes align naming with runtime behavior and clarify the separation between training and validation configurations.
 
 This configuration guide provides comprehensive information for effectively using the Model Training Framework's configuration system. For more examples, see the `examples/` directory.
