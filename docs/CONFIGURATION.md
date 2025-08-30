@@ -55,7 +55,6 @@ model:
 training:
   epochs: 100
   batch_size: 32
-  learning_rate: 0.001
   gradient_accumulation_steps: 1
   max_grad_norm: 1.0
   warmup_steps: 1000
@@ -78,7 +77,7 @@ data:
 # Optimizer configuration
 optimizer:
   name: "adamw"
-  learning_rate: 0.001
+  lr: 0.001
   weight_decay: 0.01
   betas: [0.9, 0.999]
   eps: 1e-8
@@ -183,13 +182,13 @@ model:
 training:
   epochs: 10
   batch_size: 32
-  learning_rate: 0.001
 
 data:
   dataset_name: "mnist"
 
 optimizer:
   name: "adam"
+  lr: 0.001
 ```
 
 ## Parameter Grid Search
@@ -763,16 +762,19 @@ except ValidationError as e:
 For users upgrading from earlier versions, the following configuration keys have been renamed for clarity:
 
 **Trainer Configuration:**
+
 - `config.multi` → `config.train_loader_config` (for training loaders)
 - `config.multi` → `config.val_loader_config` (for validation loaders, optional)
 
 **Performance Configuration:**
+
 - `performance.mixed_precision: "16-mixed"` → `performance.use_amp: true`
 - `data.num_workers` → `performance.dataloader_num_workers`
 
 **Example Migration:**
 
 Old configuration:
+
 ```yaml
 trainer:
   multi:
@@ -786,12 +788,13 @@ performance:
 ```
 
 New configuration:
+
 ```yaml
 trainer:
   train_loader_config:
     sampling_strategy: "WEIGHTED"
     dataloader_weights: [0.7, 0.3]
-  
+
   val_loader_config:  # Optional, separate validation config
     sampling_strategy: "SEQUENTIAL"
 
