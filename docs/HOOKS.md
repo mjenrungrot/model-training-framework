@@ -395,7 +395,13 @@ class SlackNotificationHook(TrainerHooks):
 
     def _send_notification(self, message):
         import requests
-        requests.post(self.webhook_url, json={"text": message})
+        try:
+            # Add timeout to prevent hanging
+            requests.post(self.webhook_url, json={"text": message}, timeout=10)
+        except requests.exceptions.Timeout:
+            print(f"Warning: Webhook notification timed out")
+        except requests.exceptions.RequestException as e:
+            print(f"Warning: Failed to send webhook notification: {e}")
 ```
 
 ### Debugging Hooks

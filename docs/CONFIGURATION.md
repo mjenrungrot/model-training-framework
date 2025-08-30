@@ -53,7 +53,7 @@ model:
 
 # Training configuration
 training:
-  epochs: 100
+  max_epochs: 100
   batch_size: 32
   gradient_accumulation_steps: 1
   max_grad_norm: 1.0
@@ -125,13 +125,14 @@ logging:
 # Checkpoint configuration
 checkpoint:
   save_every_n_epochs: 5
-  save_top_k: 3
-  monitor: "val_loss"
-  mode: "min"
-  checkpoint_dir: "./checkpoints"
-  filename: "{epoch:02d}-{val_loss:.2f}"
+  save_every_n_steps: null
+  max_checkpoints: 3
+  root_dir: "./checkpoints"
+  filename_template: "epoch_{epoch:03d}_step_{step:06d}.ckpt"
+  monitor_metric: "val/loss"
+  monitor_mode: "min"
+  save_best: true
   save_last: true
-  auto_insert_metric_name: true
 
 # Preemption configuration
 preemption:
@@ -180,7 +181,7 @@ model:
   hidden_size: 256
 
 training:
-  epochs: 10
+  max_epochs: 10
   batch_size: 32
 
 data:
@@ -490,12 +491,15 @@ module load cudnn/8.6
 source activate {{conda_env}}
 cd {{project_root}}
 
-# Set environment variables
+# Set environment variables for distributed training
 export CUDA_VISIBLE_DEVICES=$SLURM_LOCALID
 export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-export MASTER_PORT=29500
+export MASTER_PORT=${MASTER_PORT:-29500}  # Allow override via SLURM
 export WORLD_SIZE=$SLURM_NTASKS
 export RANK=$SLURM_PROCID
+export LOCAL_RANK=$SLURM_LOCALID
+export SLURM_NNODES=${SLURM_NNODES:-1}
+export SLURM_NTASKS_PER_NODE=${SLURM_NTASKS_PER_NODE:-1}
 
 # Print environment info
 echo "Python: $(which python)"
@@ -503,9 +507,15 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 echo "WORLD_SIZE: $WORLD_SIZE"
 echo "RANK: $RANK"
 
-# Run training
-# Example: Run your training script (replace with your actual script)
-srun python demo/example3_production/train_script.py \
+# Run training with torchrun for distributed training
+# torchrun handles the distributed setup automatically
+torchrun \
+    --nnodes=$SLURM_NNODES \
+    --nproc_per_node=$SLURM_NTASKS_PER_NODE \
+    --rdzv_id=$SLURM_JOB_ID \
+    --rdzv_backend=c10d \
+    --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
+    demo/example3_production/train_script.py \
     --config {{config_path}} \
     --experiment-name {{experiment_name}}
 
