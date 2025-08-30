@@ -449,7 +449,7 @@ module load python/3.9
 module load cuda/11.8
 
 # Activate environment
-source venv/bin/activate
+source .venv/bin/activate
 
 # Run training
 cd {{PROJECT_ROOT}}
@@ -571,7 +571,7 @@ def create_dataloaders(config):
     # Use performance.dataloader_num_workers for consistency with CONFIGURATION.md
     perf = config.get("performance", {})
     nw = int(perf.get("dataloader_num_workers", 4))
-    
+
     tl_kwargs = dict(
         dataset=train_dataset,
         batch_size=config["batch_size"],
@@ -602,12 +602,12 @@ def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
     """Single training step."""
     device = next(trainer.model.parameters()).device
     x, y = batch
-    
+
     # Move to device; use non_blocking if pin_memory is enabled
     nb = getattr(trainer.config.performance, "pin_memory", False) and device.type == "cuda"
     x = x.to(device, non_blocking=nb)
     y = y.to(device, non_blocking=nb)
-    
+
     use_amp = getattr(trainer.config.performance, "use_amp", False) and device.type == "cuda"
     with torch.amp.autocast(device_type="cuda", enabled=use_amp):
         outputs = trainer.model(x)
@@ -629,7 +629,7 @@ def validation_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
     """Single validation step."""
     device = next(trainer.model.parameters()).device
     x, y = batch
-    
+
     # Move to device; use non_blocking if pin_memory is enabled
     nb = getattr(trainer.config.performance, "pin_memory", False) and device.type == "cuda"
     x = x.to(device, non_blocking=nb)

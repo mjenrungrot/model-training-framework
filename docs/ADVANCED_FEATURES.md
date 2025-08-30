@@ -248,9 +248,8 @@ def training_step(trainer, batch, batch_idx, dataloader_idx, dataloader_name):
 from lightning.fabric import Fabric
 from model_training_framework.trainer import DDPConfig
 
-def main():
-    fabric = Fabric(accelerator="gpu", devices=4, strategy="ddp")
-    
+def main(fabric):
+    # Receive fabric instance from launch()
     config = GenericTrainerConfig(
         train_loader_config=MultiDataLoaderConfig(
             sampling_strategy=SamplingStrategy.ROUND_ROBIN,
@@ -265,7 +264,7 @@ def main():
             validate_schedule_consistency=True,
         )
     )
-    
+
     # Fabric handles distributed setup internally via GenericTrainer
     trainer = GenericTrainer(
         config=config,
@@ -273,12 +272,14 @@ def main():
         optimizers=optimizers,
         fabric=fabric,
     )
-    
+
     # Training logic here
+    # Note: GenericTrainer automatically calls sampler.set_epoch() for DistributedSampler
     trainer.fit(train_loaders, val_loaders, max_epochs=100)
 
 # Launch the distributed training
 if __name__ == "__main__":
+    # Create single Fabric instance and pass to main via launch()
     fabric = Fabric(accelerator="gpu", devices=4, strategy="ddp")
     fabric.launch(main)
 ```

@@ -610,7 +610,7 @@ training:
   gradient_accumulation_steps: 4
 
 performance:
-  mixed_precision: "16-mixed"
+  use_amp: true
 ```
 
 ```yaml
@@ -782,7 +782,7 @@ trainer:
     dataloader_weights: [0.7, 0.3]
 
 performance:
-  mixed_precision: "16-mixed"
+  use_amp: false  # Was: mixed_precision: "16-mixed"
 
 # Note: num_workers has moved to performance.dataloader_num_workers
 ```
