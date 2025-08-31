@@ -281,7 +281,7 @@ class GenericTrainer:
         # Initialize components
         self.checkpoint_manager = CheckpointManager(
             config.checkpoint,
-            experiment_name=getattr(config, "experiment_name", "experiment"),
+            experiment_name=config.experiment_name,
         )
         self.signal_handler = SignalHandler()
         self.performance_monitor = PerformanceMonitor()
@@ -619,10 +619,8 @@ class GenericTrainer:
             resumed = True
 
         # Setup reproducibility if configured and not resuming (warm-start counts as fresh start)
-        if not resumed:
-            seed_value = getattr(self.config, "seed", None)
-            if seed_value is not None:
-                seed_all(seed_value)
+        if not resumed and self.config.seed is not None:
+            seed_all(self.config.seed)
 
         logger.info(
             f"Starting training for {max_epochs} epochs with "

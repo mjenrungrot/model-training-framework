@@ -676,6 +676,8 @@ class GenericTrainerConfig:
     preemption handling, performance optimization, and logging.
     """
 
+    experiment_name: str = "experiment"  # Name of the experiment for checkpointing
+    seed: int | None = None  # Random seed for reproducibility
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
     preemption: PreemptionConfig = field(default_factory=PreemptionConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
