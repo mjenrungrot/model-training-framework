@@ -362,7 +362,11 @@ class CheckpointManager:
         )
 
     def should_save_checkpoint(
-        self, epoch: int, global_step: int, force: bool = False
+        self,
+        epoch: int,
+        global_step: int,
+        force: bool = False,
+        context: str = "both",
     ) -> bool:
         """
         Determine if a checkpoint should be saved based on configuration.
@@ -371,6 +375,7 @@ class CheckpointManager:
             epoch: Current epoch number
             global_step: Current global step
             force: Force checkpoint save regardless of schedule
+            context: Evaluate triggers for 'step', 'epoch', or 'both'.
 
         Returns:
             True if checkpoint should be saved
@@ -378,16 +383,20 @@ class CheckpointManager:
         if force:
             return True
 
-        # Check step-based saving
-        if (
+        check_step = context in ("both", "step")
+        check_epoch = context in ("both", "epoch")
+
+        # Check step-based saving (only when step context is enabled)
+        if check_step and (
             self.config.save_every_n_steps is not None
             and global_step > 0
             and global_step % self.config.save_every_n_steps == 0
         ):
             return True
 
-        # Check epoch-based saving (epochs are 0-based internally)
-        if (
+        # Check epoch-based saving (only when epoch context is enabled)
+        # Note: epochs are 0-based internally; add 1 for human-friendly boundaries
+        if check_epoch and (
             self.config.save_every_n_epochs is not None
             and (epoch + 1) % self.config.save_every_n_epochs == 0
         ):

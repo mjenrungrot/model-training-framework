@@ -791,7 +791,9 @@ class GenericTrainer:
                 scheduler.step()
 
             # Save checkpoint if needed (only on primary rank)
-            if self.checkpoint_manager.should_save_checkpoint(epoch, self.global_step):
+            if self.checkpoint_manager.should_save_checkpoint(
+                epoch, self.global_step, context="epoch"
+            ):
                 if ddp_is_primary(self.fabric):
                     self._save_checkpoint(epoch_metrics)
                 # All ranks wait for checkpoint save to complete
@@ -1338,7 +1340,7 @@ class GenericTrainer:
         # Optional step-based checkpoint save (only on primary rank)
         try:
             if self.checkpoint_manager.should_save_checkpoint(
-                self.current_epoch, self.global_step
+                self.current_epoch, self.global_step, context="step"
             ):
                 if ddp_is_primary(self.fabric):
                     self._save_checkpoint()
