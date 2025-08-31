@@ -305,6 +305,9 @@ class ConfigurationManager:
             key: str, config_class: type[T], required: bool = True
         ) -> T | None:
             if key in config_data:
+                # Handle None values for optional configs
+                if config_data[key] is None:
+                    return None if not required else config_class()
                 # Use from_dict for flexible configs if available
                 if hasattr(config_class, "from_dict"):
                     return config_class.from_dict(config_data[key])  # type: ignore[attr-defined, no-any-return]
