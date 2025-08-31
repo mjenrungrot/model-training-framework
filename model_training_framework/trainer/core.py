@@ -12,8 +12,9 @@ This module provides the GenericTrainer class - the main training engine with:
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from enum import Enum
+import importlib
 import logging
 import os
 from pathlib import Path
@@ -137,6 +138,22 @@ class TrainingStep(Protocol):
             Dictionary with at least 'loss' key
         """
         ...
+
+
+@dataclass
+class WarmStartResult:
+    """Result returned by a warm-start loader."""
+
+    model_state_dict: dict[str, Any]
+    strict: bool = True
+
+
+class WarmStartLoader(Protocol):
+    """Protocol for user-provided warm-start loader."""
+
+    def __call__(
+        self, trainer: GenericTrainer, checkpoint_path: str
+    ) -> WarmStartResult: ...
 
 
 class ValidationStep(Protocol):
@@ -271,6 +288,11 @@ class GenericTrainer:
         self.signal_handler = SignalHandler()
         self.performance_monitor = PerformanceMonitor()
 
+        # Optional warm-start loader and resume metrics
+        self._warm_start_loader: WarmStartLoader | None = None
+        self.resume_time_sec: float | None = None
+        self.resume_checkpoint_size_mb: float | None = None
+
         # Training state
         self.resume_state = create_initial_resume_state(config.checkpoint.save_rng)
         self.global_step = 0
@@ -376,6 +398,22 @@ class GenericTrainer:
 
         logger.info(f"Initialized GenericTrainer with {len(optimizers)} optimizer(s)")
 
+        # Configure warm-start loader from config if provided
+        try:
+            ws_cfg = getattr(config, "warm_start", None)
+            if ws_cfg and getattr(ws_cfg, "loader_class", None):
+                module_path, attr_name = ws_cfg.loader_class.rsplit(".", 1)
+                module = importlib.import_module(module_path)
+                obj = getattr(module, attr_name)
+                # If it's a class, instantiate it; otherwise expect a callable
+                if isinstance(obj, type):
+                    self._warm_start_loader = obj()  # type: ignore[assignment]
+                else:
+                    self._warm_start_loader = obj  # type: ignore[assignment]
+                # If the loader is a class instance or function, we just store it as callable
+        except Exception:
+            logger.exception("Failed to load warm-start loader from config")
+
     def _maybe_requeue_job(self) -> None:
         """Request Slurm to requeue the current job after preemption.
 
@@ -408,6 +446,10 @@ class GenericTrainer:
     def set_validation_step(self, validation_step_fn: ValidationStep) -> None:
         """Set the validation step function with multi-dataloader signature."""
         self.validation_step_fn = validation_step_fn
+
+    def set_warm_start_loader(self, loader: WarmStartLoader) -> None:
+        """Register a user-provided warm-start loader callable."""
+        self._warm_start_loader = loader
 
     def fit(
         self,
@@ -504,13 +546,69 @@ class GenericTrainer:
                     f"{len(self.optimizers)} optimizer(s) provided"
                 )
 
-        # Resume from checkpoint if specified
+        # Determine resume/warm-start behavior
         resumed = False
-        if resume_from_checkpoint:
-            self._resume_from_checkpoint(resume_from_checkpoint)
+
+        # Auto-resume from latest if configured
+        if self.config.preemption.resume_from_latest_symlink:
+            # Skip auto-resume if a checkpoint was already loaded manually
+            preloaded = False
+            try:
+                rs = getattr(self, "resume_state", None)
+                preloaded = (
+                    (self.global_step > 0)
+                    or (self.current_epoch > 0)
+                    or (
+                        rs is not None
+                        and getattr(cast("Any", rs), "dataloader_manager_state", None)
+                        is not None
+                    )
+                )
+            except Exception:
+                preloaded = (self.global_step > 0) or (self.current_epoch > 0)
+            if preloaded:
+                logger.info("Checkpoint already loaded; skipping auto-resume")
+            else:
+                latest = self.checkpoint_manager.get_latest_checkpoint()
+                if latest is not None:
+                    # Avoid resuming from stale checkpoints that already exceed this run's max_epochs
+                    try:
+                        payload = self.checkpoint_manager.load_checkpoint(
+                            str(latest), map_location="cpu"
+                        )
+                        if payload.epoch >= max_epochs:
+                            logger.info(
+                                "Found latest checkpoint but its epoch >= max_epochs; starting fresh"
+                            )
+                        else:
+                            if resume_from_checkpoint:
+                                logger.info(
+                                    "Auto-resuming from latest checkpoint; ignoring resume_from_checkpoint"
+                                )
+                            self._resume_from_checkpoint(str(latest))
+                            resumed = True
+                    except Exception:
+                        logger.exception(
+                            f"Failed pre-check of latest checkpoint {latest}; starting fresh"
+                        )
+                # No latest checkpoint; consider warm-start if provided
+                elif resume_from_checkpoint:
+                    self._warm_start_from_checkpoint(str(resume_from_checkpoint))
+        # Backward-compatible explicit resume behavior
+        elif resume_from_checkpoint:
+            # Special value: 'latest' resolves latest or errors clearly
+            if str(resume_from_checkpoint).lower() == "latest":
+                latest = self.checkpoint_manager.get_latest_checkpoint()
+                if latest is None:
+                    raise FileNotFoundError(
+                        "resume_from_checkpoint='latest' but no checkpoints found"
+                    )
+                self._resume_from_checkpoint(str(latest))
+            else:
+                self._resume_from_checkpoint(str(resume_from_checkpoint))
             resumed = True
 
-        # Setup reproducibility if configured and not resuming
+        # Setup reproducibility if configured and not resuming (warm-start counts as fresh start)
         if not resumed:
             seed_value = getattr(self.config, "seed", None)
             if seed_value is not None:
@@ -1399,11 +1497,24 @@ class GenericTrainer:
 
             # Load checkpoint only on rank 0 and broadcast to other ranks
             if ddp_is_primary(self.fabric):
+                # Size + timing
+                try:
+                    size_mb = Path(checkpoint_path).stat().st_size / (1024 * 1024)
+                    self.resume_checkpoint_size_mb = size_mb
+                    logger.info(
+                        f"Resuming from checkpoint: {checkpoint_path} (size: {size_mb:.2f} MB)"
+                    )
+                except Exception:
+                    logger.debug("Could not stat checkpoint file", exc_info=True)
+
+                t0 = time.time()
                 # Load checkpoint data on rank 0
                 # Map to CPU to avoid device-coupled payloads and reduce GPU memory spikes
                 payload = self.checkpoint_manager.load_checkpoint(
                     checkpoint_path, map_location="cpu"
                 )
+                self.resume_time_sec = time.time() - t0
+                logger.info(f"Checkpoint loaded in {self.resume_time_sec:.2f} seconds")
 
                 # Extract necessary data for broadcast
                 optimizer_states = payload.optimizer_state_dicts or []
@@ -1539,6 +1650,112 @@ class GenericTrainer:
         except Exception:
             logger.exception("Failed to resume from checkpoint: ")
             raise
+
+    def _warm_start_from_checkpoint(self, checkpoint_path: str) -> None:
+        """Warm-start model weights from a checkpoint (no training state restore).
+
+        Only rank 0 performs file I/O or calls user-provided loader; results are
+        broadcast to all ranks. Epoch/step/RNG/dataloader states are intentionally
+        not modified.
+        """
+        # Resolve 'latest' alias for convenience
+        if checkpoint_path.lower() == "latest":
+            latest = self.checkpoint_manager.get_latest_checkpoint()
+            if latest is None:
+                raise FileNotFoundError(
+                    "resume_from_checkpoint='latest' but no checkpoints found"
+                )
+            checkpoint_path = str(latest)
+
+        ddp_barrier(self.fabric)
+
+        # Rank 0 loads state dict using user loader or built-in fallback
+        broadcast_data: dict[str, Any] | None
+        if ddp_is_primary(self.fabric):
+            try:
+                loader = self._warm_start_loader
+                model_state_dict: dict[str, Any]
+                strict: bool
+
+                if loader is not None:
+                    logger.info(
+                        f"Warm-starting model from user loader: {checkpoint_path}"
+                    )
+                    result = loader(self, checkpoint_path)
+                    model_state_dict = result.model_state_dict
+                    strict = bool(getattr(result, "strict", True))
+                else:
+                    # Fallback: framework checkpoint model-only warm start
+                    if not self.checkpoint_manager.is_framework_checkpoint(
+                        checkpoint_path
+                    ):
+                        raise ValueError(
+                            "Non-framework checkpoint detected; register a warm-start loader via "
+                            "trainer.set_warm_start_loader() or config.warm_start.loader_class"
+                        )
+                    logger.info(
+                        f"Warm-starting model from framework checkpoint: {checkpoint_path}"
+                    )
+                    payload = self.checkpoint_manager.load_checkpoint(
+                        checkpoint_path, map_location="cpu"
+                    )
+                    model_state_dict = payload.model_state_dict
+                    # If config provides a default strict flag, use it; default True
+                    strict = bool(
+                        getattr(
+                            getattr(self.config, "warm_start", None), "strict", True
+                        )
+                    )
+
+                broadcast_data = {
+                    "model_state_dict": model_state_dict,
+                    "strict": strict,
+                }
+            except Exception:
+                logger.exception(
+                    f"Failed to warm-start from checkpoint: {checkpoint_path} - "
+                )
+                raise
+        else:
+            broadcast_data = None
+
+        # Broadcast and apply
+        broadcast_data = ddp_broadcast_object(self.fabric, broadcast_data, src=0)
+        assert broadcast_data is not None
+        strict = bool(broadcast_data.get("strict", True))
+        missing = unexpected = None
+        try:
+            result = self.model.load_state_dict(
+                broadcast_data["model_state_dict"], strict=strict
+            )
+            # Report mismatches when not strict
+            if (
+                not strict
+                and hasattr(result, "missing_keys")
+                and hasattr(result, "unexpected_keys")
+            ):
+                missing = list(result.missing_keys)
+                unexpected = list(result.unexpected_keys)
+        except Exception:
+            logger.exception("Model load_state_dict failed during warm-start")
+            raise
+
+        if ddp_is_primary(self.fabric):
+            if not strict:
+                m = len(missing or [])
+                u = len(unexpected or [])
+                sample_m = ", ".join((missing or [])[:5])
+                sample_u = ", ".join((unexpected or [])[:5])
+                logger.info(
+                    f"Warm-start loaded with non-strict mapping: missing={m}, unexpected={u}"
+                )
+                if m:
+                    logger.debug(f"Missing keys (sample): {sample_m}")
+                if u:
+                    logger.debug(f"Unexpected keys (sample): {sample_u}")
+            logger.info("Warm-start completed; starting fresh training run")
+
+        ddp_barrier(self.fabric)
 
     def _log_step_metrics(
         self, metrics: dict[str, Any], step: int, prefix: str = ""
