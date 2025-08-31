@@ -64,6 +64,37 @@ latest = trainer.checkpoint_manager.get_latest_checkpoint()
 if latest:
     trainer._resume_from_checkpoint(str(latest))
     # Resumes from exact batch/sample where it left off
+
+### Warm-Start (Weights-Only)
+
+To fine-tune from external checkpoints without restoring optimizer/scheduler state, register a
+warm-start loader that returns a `WarmStartResult`.
+
+```python
+from dataclasses import dataclass
+from typing import Any
+
+@dataclass
+class WarmStartResult:
+    model_state_dict: dict[str, Any]
+    strict: bool = True
+
+def hf_loader(trainer, checkpoint_path: str) -> WarmStartResult:
+    raw = torch.load(checkpoint_path, map_location="cpu")
+    # Map keys or drop incompatible heads here
+    state = raw.get("state_dict", raw)
+    return WarmStartResult(model_state_dict=state, strict=False)
+
+trainer.set_warm_start_loader(hf_loader)
+trainer.fit(train_loaders, max_epochs=10, resume_from_checkpoint="/path/to/hf.bin")
+```
+
+Alternatively, register the loader via configuration:
+
+```yaml
+warm_start:
+  loader_class: mypackage.loaders.HFLoader
+  strict: false
 ```
 
 ### Handling SLURM Preemption

@@ -630,6 +630,19 @@ class PreemptionConfig:
 
 
 @dataclass
+class WarmStartConfig:
+    """
+    Configuration for user-provided warm-start loader.
+
+    When provided, `loader_class` should be an import path to a callable or
+    class implementing a `__call__(trainer, checkpoint_path) -> WarmStartResult`.
+    """
+
+    loader_class: str | None = None  # Dotted import path to a callable/loader class
+    strict: bool = True  # Default strictness if loader does not specify
+
+
+@dataclass
 class PerformanceConfig:
     """
     Configuration for performance optimization features.
@@ -680,6 +693,7 @@ class GenericTrainerConfig:
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     fault_tolerance: FaultToleranceConfig = field(default_factory=FaultToleranceConfig)
     ddp: DDPConfig | None = None  # Optional DDP configuration
+    warm_start: WarmStartConfig | None = None  # Optional warm-start configuration
 
     # Per-loader configuration
     loss_weights_per_loader: list[float] | None = None  # Loss weights per dataloader

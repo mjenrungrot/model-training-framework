@@ -47,6 +47,7 @@ from .schemas import (
     ValAggregation,
     ValidationConfig,
     ValidationFrequency,
+    WarmStartConfig,
     # Validation functions
     validate_infinite_loader_constraints,
     validate_trainer_config,
@@ -83,6 +84,7 @@ __all__ = [  # noqa: RUF022
     "TrainingConfig",
     # Trainer configuration schemas
     "CheckpointConfig",
+    "WarmStartConfig",
     "PreemptionConfig",
     "PerformanceConfig",
     "MultiDataLoaderConfig",

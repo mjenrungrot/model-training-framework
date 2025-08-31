@@ -553,6 +553,28 @@ class CheckpointManager:
         )
         return CheckpointPayload.from_dict(raw)
 
+    def is_framework_checkpoint(self, path: str | Path) -> bool:
+        """Detect whether a file is a framework checkpoint (format v1).
+
+        Returns True if the file can be loaded and contains required keys
+        like 'format_version' and 'model_state_dict'. Returns False for
+        corrupted files or unknown formats.
+        """
+        try:
+            p = Path(path)
+            if not p.exists() or not p.is_file():
+                return False
+            raw = cast(
+                "dict[str, Any]", torch.load(p, map_location="cpu", weights_only=False)
+            )
+            return (
+                isinstance(raw, dict)
+                and "format_version" in raw
+                and "model_state_dict" in raw
+            )
+        except Exception:
+            return False
+
     def restore_from_checkpoint(
         self,
         model: torch.nn.Module,

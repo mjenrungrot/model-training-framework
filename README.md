@@ -186,6 +186,50 @@ python demo/example3_production/orchestrate.py slurm submit
 - **Exact Resume**: Continue from exact batch/sample
 - **SLURM Integration**: Handle preemption signals gracefully
 
+### Resume & Warm-Start
+
+- Auto-resume: When `preemption.resume_from_latest_symlink` is true (default), the trainer
+  automatically resumes from the `latest.ckpt` if present (full state restore).
+- Explicit resume: Pass `resume_from_checkpoint` to `fit()`. Use `'latest'` to resolve the latest
+  checkpoint path.
+- Warm-start (weights only): If no latest exists and a warm-start loader is registered (via
+  configuration or `set_warm_start_loader()`), the trainer loads model weights only and starts a fresh run.
+
+Examples:
+
+```python
+# Auto-resume (default behavior)
+trainer.fit(train_loaders=[train_loader], val_loaders=[val_loader], max_epochs=10)
+
+# Explicit full resume using the 'latest' alias
+trainer.fit(train_loaders=[train_loader], val_loaders=[val_loader], max_epochs=10, resume_from_checkpoint="latest")
+
+# Register a warm-start loader at runtime (weights-only)
+from dataclasses import dataclass
+from typing import Any
+
+@dataclass
+class WarmStartResult:
+    model_state_dict: dict[str, Any]
+    strict: bool = True
+
+def my_loader(trainer, path: str) -> WarmStartResult:
+    raw = torch.load(path, map_location="cpu")
+    # Map or filter keys as needed
+    state = raw.get("state_dict", raw)
+    return WarmStartResult(model_state_dict=state, strict=False)
+
+trainer.set_warm_start_loader(my_loader)
+trainer.fit(train_loaders=[train_loader], max_epochs=10, resume_from_checkpoint="/path/to/custom.ckpt")
+
+# Or via configuration (dotted import path)
+from model_training_framework.config import WarmStartConfig
+
+config.warm_start = WarmStartConfig(loader_class="mypackage.loaders.MyLoader", strict=False)
+trainer = GenericTrainer(config, model, [optimizer])
+trainer.fit([train_loader], max_epochs=10, resume_from_checkpoint="/path/to/custom.ckpt")
+```
+
 ### Experiment Management
 
 - **Grid Search**: Generate parameter combinations

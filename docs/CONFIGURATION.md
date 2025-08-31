@@ -145,7 +145,39 @@ preemption:
   # Optional: POSIX signal used for preemption handling (matches code examples)
   # signal: USR1  # corresponds to signal.SIGUSR1 in Python
 
+## Warm-start configuration
+
+The warm-start configuration enables loading model weights from arbitrary checkpoint formats at the
+beginning of training (weights-only). This is intended for fine-tuning from external checkpoints
+while keeping the framework’s fault‑tolerant resume separate.
+
+Fields:
+
+- `warm_start.loader_class` (string | optional): Dotted import path to a callable or class that
+  implements `__call__(trainer, checkpoint_path) -> WarmStartResult`.
+- `warm_start.strict` (bool | default: true): Default `strict` for the built-in framework
+  checkpoint model‑only loader (used when no custom loader is provided).
+
+Behavior:
+
+1. If `preemption.resume_from_latest_symlink` is true and a latest checkpoint exists, the trainer fully
+   resumes from it (restores epoch/step/optim/sched/AMP/RNG/dataloader state).
+2. Else if `resume_from_checkpoint` is provided and a warm-start loader is registered, the trainer performs
+   a warm-start (weights-only). If the provided path is a framework checkpoint and no loader is registered,
+   a built‑in model‑only warm‑start is used with `warm_start.strict`.
+3. Else the trainer starts from scratch and applies seeding if configured.
+
+YAML example:
+
+```yaml
+warm_start:
+  loader_class: mypackage.loaders.HFLoader
+  strict: false
+```
+
+```yaml
 # Performance configuration
+
 performance:
   dataloader_num_workers: 4
   pin_memory: true
@@ -156,6 +188,7 @@ performance:
   compile_model: false
 
 # Custom parameters (project-specific)
+
 custom_params:
   use_custom_loss: true
   loss_weight: 0.5
@@ -167,6 +200,7 @@ custom_params:
     - "f1_score"
     - "precision"
     - "recall"
+
 ```
 
 ### Minimal Configuration
