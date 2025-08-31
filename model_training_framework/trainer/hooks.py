@@ -12,8 +12,15 @@ at various points in the training lifecycle:
 
 from __future__ import annotations
 
+from contextlib import suppress
 import logging
+import re
+import time as _time
 from typing import TYPE_CHECKING, Any
+
+import torch
+
+from .utils import ddp_is_primary
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -105,6 +112,23 @@ class TrainerHooks:
             loader_idx: Index of the current dataloader
             loader_name: Name of the current dataloader
             metrics: Metrics from the batch
+        """
+
+    def on_before_forward(self, trainer: GenericTrainer) -> None:
+        """
+        Called immediately before model forward (+ loss) computation.
+
+        Args:
+            trainer: The trainer instance
+        """
+
+    def on_after_forward(self, trainer: GenericTrainer, duration_ms: float) -> None:
+        """
+        Called immediately after model forward (+ loss) computation.
+
+        Args:
+            trainer: The trainer instance
+            duration_ms: Duration of forward computation in milliseconds
         """
 
     def on_validation_start(self, trainer: GenericTrainer, epoch: int) -> None:
@@ -500,7 +524,132 @@ class EarlyStoppingHook(TrainerHooks):
                 f"(best: {best:.4f}, current: {current:.4f})"
             )
 
-            if self.counter >= self.patience:
-                self.should_stop = True
-                logger.info(f"Early stopping triggered after epoch {epoch + 1}")
-                # Note: Actual stopping should be handled by trainer
+        if self.counter >= self.patience:
+            self.should_stop = True
+            logger.info(f"Early stopping triggered after epoch {epoch + 1}")
+            # Note: Actual stopping should be handled by trainer
+
+
+class RuntimeProfilingHook(TrainerHooks):
+    """Lightweight runtime profiling hook for optimizer and batch wait timing.
+
+    - Times optimizer steps via on_before/after_optimizer_step
+    - Approximates dataloader wait time between batches
+    - Respects log frequency and logs only on primary rank
+    """
+
+    def __init__(
+        self,
+        cuda_sync: bool = True,
+        log_frequency: int | None = None,
+        enable_batch_wait: bool = True,
+    ) -> None:
+        self.cuda_sync = cuda_sync
+        self.log_frequency = log_frequency  # None -> use trainer.config.logging.log_scalars_every_n_steps
+        self.enable_batch_wait = enable_batch_wait
+
+        self._optim_t0: float | None = None
+        self._last_batch_end_time: float | None = None
+        self._last_logged_batch_wait_step: int | None = None
+
+    def _should_log(self, trainer: GenericTrainer, step: int) -> bool:
+        # Only primary rank logs
+        if not ddp_is_primary(getattr(trainer, "fabric", None)):
+            return False
+
+        freq = self.log_frequency
+        if freq is None:
+            try:
+                freq = trainer.config.logging.log_scalars_every_n_steps
+            except Exception:
+                freq = None
+
+        return freq is None or (step % freq == 0)
+
+    def _sanitize_loader(self, name: str) -> str:
+        # Conservative sanitization for metric keys
+        sanitized = re.sub(r"[^A-Za-z0-9_\-]+", "_", name).strip("_")
+        return sanitized or "loader"
+
+    def on_before_optimizer_step(
+        self, trainer: GenericTrainer, optimizer_idx: int
+    ) -> None:
+        # Optional CUDA sync before timing
+        if self.cuda_sync and hasattr(trainer, "model") and torch.cuda.is_available():
+            with suppress(Exception):
+                torch.cuda.synchronize()
+
+        self._optim_t0 = _time.perf_counter()
+
+    def on_after_optimizer_step(
+        self, trainer: GenericTrainer, optimizer_idx: int
+    ) -> None:
+        t0 = self._optim_t0
+        self._optim_t0 = None
+
+        if self.cuda_sync and torch.cuda.is_available():
+            with suppress(Exception):
+                torch.cuda.synchronize()
+
+        if t0 is None:
+            return
+
+        dt_ms = (_time.perf_counter() - t0) * 1000.0
+
+        # Log metric
+        step = getattr(trainer, "global_step", 0)
+        if not self._should_log(trainer, step):
+            return
+
+        loader_name = getattr(trainer, "current_dataloader_name", None) or "unknown"
+        key = f"profile/train/dl_{self._sanitize_loader(loader_name)}/time_optimizer_ms"
+
+        logger_inst = getattr(trainer, "logger", None)
+        if logger_inst is not None:
+            try:
+                logger_inst.log_metrics({key: float(dt_ms)}, step)
+            except Exception:
+                logger.debug("Optimizer timing log failed", exc_info=True)
+
+    def on_train_batch_end(
+        self,
+        trainer: GenericTrainer,
+        batch: Any,
+        loader_idx: int,
+        loader_name: str,
+        metrics: dict[str, Any],
+    ) -> None:
+        if not self.enable_batch_wait:
+            return
+        self._last_batch_end_time = _time.perf_counter()
+
+    def on_train_batch_start(
+        self,
+        trainer: GenericTrainer,
+        batch: Any,
+        loader_idx: int,
+        loader_name: str,
+    ) -> None:
+        if not self.enable_batch_wait or self._last_batch_end_time is None:
+            return
+        now = _time.perf_counter()
+        wait_ms = (now - self._last_batch_end_time) * 1000.0
+
+        # Gate to one log per optimizer step (global_step) and by frequency
+        step = getattr(trainer, "global_step", 0)
+        if self._last_logged_batch_wait_step == step:
+            return
+        if not self._should_log(trainer, step):
+            return
+
+        self._last_logged_batch_wait_step = step
+
+        key = (
+            f"profile/train/dl_{self._sanitize_loader(loader_name)}/time_batch_wait_ms"
+        )
+        logger_inst = getattr(trainer, "logger", None)
+        if logger_inst is not None:
+            try:
+                logger_inst.log_metrics({key: float(wait_ms)}, step)
+            except Exception:
+                logger.debug("Batch-wait timing log failed", exc_info=True)
