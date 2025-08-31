@@ -1701,11 +1701,8 @@ class GenericTrainer:
                     )
                     model_state_dict = payload.model_state_dict
                     # If config provides a default strict flag, use it; default True
-                    strict = bool(
-                        getattr(
-                            getattr(self.config, "warm_start", None), "strict", True
-                        )
-                    )
+                    ws_config = self.config.warm_start
+                    strict = ws_config.strict if ws_config is not None else True
 
                 broadcast_data = {
                     "model_state_dict": model_state_dict,
