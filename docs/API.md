@@ -460,16 +460,26 @@ GenericTrainer(
 
 #### GenericTrainer Methods
 
-##### `fit(train_loaders: List[DataLoader], val_loaders: Optional[List[DataLoader]], max_epochs: int) -> None`
+##### `fit(train_loaders: List[DataLoader], val_loaders: Optional[List[DataLoader]], max_epochs: int, resume_from_checkpoint: Optional[str] = None) -> None`
 
-Main training loop.
+Main training loop with resume and warm-start precedence:
+
+- If `preemption.resume_from_latest_symlink` is true and a latest framework checkpoint exists,
+  the trainer fully resumes from it (restores epoch/step/optim/sched/AMP/RNG/dataloader).
+- Else if `resume_from_checkpoint` is provided, `'latest'` resolves the latest checkpoint path.
+  When auto-resume is disabled, a full resume is performed; otherwise a warm-start (weights-only)
+  is performed via a user loader when available.
+- Else the trainer starts from scratch and applies seeding if configured.
+
+Metrics captured on full resume:
+
+- `GenericTrainer.resume_time_sec` and `GenericTrainer.resume_checkpoint_size_mb`.
 
 ```python
-trainer.fit(
-    train_loaders=[train_loader],  # Always a list
-    val_loaders=[val_loader],      # Always a list
-    max_epochs=100
-)
+trainer.fit(train_loaders=[train_loader], val_loaders=[val_loader], max_epochs=100)
+
+# Explicit resume
+trainer.fit(train_loaders, val_loaders, max_epochs=100, resume_from_checkpoint="latest")
 ```
 
 ##### `set_training_step(fn: Callable) -> None`

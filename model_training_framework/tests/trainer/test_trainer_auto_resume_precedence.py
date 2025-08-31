@@ -9,6 +9,8 @@ Covers three behaviors:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import torch
 from torch import nn, optim
 from torch.utils.data import DataLoader, TensorDataset
@@ -41,12 +43,12 @@ def _create_loaders(
     return loaders
 
 
-def _make_trainer(tmp_path):
+def _make_trainer(tmp_path, *, ckpt_root: Path | None = None):
     config = GenericTrainerConfig()
     # Minimize noise, focus on training epochs
     config.log_loss_every_n_steps = None
     config.validate_every_n_epochs = 10  # Do not run validation in these tests
-    config.checkpoint.root_dir = tmp_path / "experiment"
+    config.checkpoint.root_dir = ckpt_root or (tmp_path / "experiment")
     model = _SimpleModel()
     optimizers = [optim.SGD(model.parameters(), lr=0.01)]
     return GenericTrainer(config=config, model=model, optimizers=optimizers)
@@ -98,24 +100,35 @@ def test_auto_resume_from_latest(tmp_path):
 
 
 def test_explicit_resume_from_user_checkpoint(tmp_path):
-    # First run: produce a checkpoint at end of epoch 1
-    trainer1 = _make_trainer(tmp_path)
-    _set_training_step(trainer1)
-    loaders = _create_loaders(samples_per_loader=4, batch_size=2, num_loaders=2)
-    trainer1.fit(loaders, max_epochs=1)
-    latest = trainer1.checkpoint_manager.get_latest_checkpoint()
-    assert latest is not None
+    # Create a source checkpoint in a separate directory (simulating external fine-tune source)
+    src_root = tmp_path / "src_experiment"
+    trainer_src = _make_trainer(tmp_path, ckpt_root=src_root)
+    _set_training_step(trainer_src)
+    src_loaders = _create_loaders(samples_per_loader=4, batch_size=2, num_loaders=2)
+    trainer_src.fit(src_loaders, max_epochs=1)
+    src_latest = trainer_src.checkpoint_manager.get_latest_checkpoint()
+    assert src_latest is not None
 
-    # Disable auto-resume and explicitly provide checkpoint path
-    trainer2 = _make_trainer(tmp_path)
-    trainer2.config.preemption.resume_from_latest_symlink = False
+    # Fine-tune run: empty destination ckpt dir so no latest exists yet
+    dst_root = tmp_path / "finetune_experiment"
+    trainer2 = _make_trainer(tmp_path, ckpt_root=dst_root)
     _set_training_step(trainer2)
 
-    trainer2.fit(loaders, max_epochs=2, resume_from_checkpoint=str(latest))
+    # First run uses warm-start (weights-only) because no latest exists in dst_root
+    loaders = _create_loaders(samples_per_loader=4, batch_size=2, num_loaders=2)
+    trainer2.fit(loaders, max_epochs=2, resume_from_checkpoint=str(src_latest))
 
     assert trainer2.current_epoch == 2
-    assert trainer2.resume_time_sec is not None
-    assert (trainer2.resume_checkpoint_size_mb or 0) > 0
+    # Warm-start does not populate resume metrics
+    assert trainer2.resume_time_sec is None
+
+    # Second run: auto-resume from latest in dst_root should take precedence even if we pass the same src path
+    trainer3 = _make_trainer(tmp_path, ckpt_root=dst_root)
+    _set_training_step(trainer3)
+    trainer3.fit(loaders, max_epochs=3, resume_from_checkpoint=str(src_latest))
+    assert trainer3.current_epoch == 3
+    # Full resume path taken from latest
+    assert trainer3.resume_time_sec is not None
 
 
 def test_skip_auto_resume_when_preloaded(tmp_path):
@@ -142,3 +155,13 @@ def test_skip_auto_resume_when_preloaded(tmp_path):
 
     assert trainer2.current_epoch == 2
     assert trainer2.resume_time_sec is None
+
+    # After trainer2 finished, trainer3 should auto-resume from latest regardless of provided path
+    trainer3 = _make_trainer(tmp_path)
+    _set_training_step(trainer3)
+    # Pass a bogus path; latest still takes precedence
+    bogus_path = tmp_path / "nope.ckpt"
+    loaders = _create_loaders(samples_per_loader=4, batch_size=2, num_loaders=2)
+    trainer3.fit(loaders, max_epochs=3, resume_from_checkpoint=str(bogus_path))
+    assert trainer3.current_epoch == 3
+    assert trainer3.resume_time_sec is not None

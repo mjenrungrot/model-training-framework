@@ -187,35 +187,33 @@ class GenericTrainer:
     """
     Multi-dataloader trainer with preemption safety and fault tolerance.
 
-    This trainer is designed as a multi-dataloader-only engine. Even single dataloader
-    scenarios must use the multi-dataloader API with a list containing one loader.
-
-    Features:
-    - Multi-dataloader training with deterministic scheduling
-    - Per-loader optimizer routing and loss weighting
-    - Fault-tolerant training with SLURM preemption handling
-    - Instruction-level resume capability
+    - Deterministic multi-dataloader scheduling and per-loader metrics
+    - Fault-tolerant training with exact resume and SLURM preemption handling
     - Distributed training support via Lightning Fabric
-    - Comprehensive monitoring and logging
+    - Comprehensive logging and monitoring
 
-    Example:
-        # Single dataloader (must still use list)
-        trainer = GenericTrainer(
-            config=config,
-            model=model,
-            optimizers=[optimizer],  # Always a list
-            fabric=fabric
-        )
-        trainer.fit(
-            train_loaders=[train_loader],  # Single loader in list
-            val_loaders=[val_loader]       # Single loader in list
-        )
+    Resume and warm-start precedence (performed in fit()):
+    1) If `config.preemption.resume_from_latest_symlink` is true and a latest
+       framework checkpoint exists, fully resume from it (epoch/step/optim/sched/AMP/RNG/dataloader).
+    2) Else if `resume_from_checkpoint` is provided:
+       - If `resume_from_checkpoint == "latest"`, resolve the latest checkpoint.
+       - If auto-resume is disabled, fully resume from the provided path.
+       - Otherwise, perform a warm-start (weights-only) using a user-registered
+         loader or a built-in model-only loader for framework checkpoints.
+    3) Else start from scratch and seed if configured.
+
+    Notes:
+    - If a checkpoint was manually loaded before `fit()` (via the free helper),
+      auto-resume is skipped and seeding is not re-applied.
+    - `GenericTrainer.resume_time_sec` and `resume_checkpoint_size_mb` capture
+      timing and size when a full resume occurs.
+
+    Example (single dataloader must still use a list):
+        trainer = GenericTrainer(config=config, model=model, optimizers=[optimizer], fabric=fabric)
+        trainer.fit(train_loaders=[train_loader], val_loaders=[val_loader])
 
         # Multiple dataloaders
-        trainer.fit(
-            train_loaders=[loader_a, loader_b, loader_c],
-            val_loaders=[val_a, val_b]
-        )
+        trainer.fit(train_loaders=[loader_a, loader_b, loader_c], val_loaders=[val_a, val_b])
     """
 
     def __init__(
@@ -407,9 +405,9 @@ class GenericTrainer:
                 obj = getattr(module, attr_name)
                 # If it's a class, instantiate it; otherwise expect a callable
                 if isinstance(obj, type):
-                    self._warm_start_loader = obj()  # type: ignore[assignment]
+                    self._warm_start_loader = cast("WarmStartLoader", obj())
                 else:
-                    self._warm_start_loader = obj  # type: ignore[assignment]
+                    self._warm_start_loader = cast("WarmStartLoader", obj)
                 # If the loader is a class instance or function, we just store it as callable
         except Exception:
             logger.exception("Failed to load warm-start loader from config")
@@ -461,11 +459,22 @@ class GenericTrainer:
         """
         Main training loop with multi-dataloader support.
 
+        Resume precedence:
+        - If `config.preemption.resume_from_latest_symlink` and a latest checkpoint exists,
+          fully resume from it.
+        - Else if `resume_from_checkpoint` is provided, use `'latest'` alias or the
+          explicit path. If auto-resume is disabled, perform a full resume; otherwise
+          use warm-start (weights only) via a user loader when available.
+        - Else start from scratch and apply seeding when configured.
+
+        Metrics:
+        - `self.resume_time_sec` and `self.resume_checkpoint_size_mb` are populated for full resumes.
+
         Args:
             train_loaders: List of training dataloaders
             val_loaders: Optional list of validation dataloaders
             max_epochs: Maximum number of epochs to train
-            resume_from_checkpoint: Path to checkpoint to resume from
+            resume_from_checkpoint: Path or `'latest'` alias for resume or warm-start
         """
         if self.training_step_fn is None:
             raise ValueError(
@@ -568,6 +577,7 @@ class GenericTrainer:
                 preloaded = (self.global_step > 0) or (self.current_epoch > 0)
             if preloaded:
                 logger.info("Checkpoint already loaded; skipping auto-resume")
+                resumed = True  # Avoid reseeding since state has been loaded
             else:
                 latest = self.checkpoint_manager.get_latest_checkpoint()
                 if latest is not None:
