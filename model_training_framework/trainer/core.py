@@ -938,11 +938,10 @@ class GenericTrainer:
                 self.config.profile_training
                 and self.logger
                 and ddp_is_primary(self.fabric)
+                and self._should_log_this_step(accumulation_counter)
             ):
                 fetch_ms = getattr(iterator, "last_batch_fetch_ms", None)
-                if fetch_ms is not None and self._should_log_this_step(
-                    accumulation_counter
-                ):
+                if fetch_ms is not None:
                     key = f"profile/train/dl_{sanitize_metric_key_component(loader_name)}/time_data_ms"
                     try:
                         self.logger.log_metrics(
@@ -1195,6 +1194,7 @@ class GenericTrainer:
                     self.config.profile_training
                     and self.logger
                     and ddp_is_primary(self.fabric)
+                    and self._should_log_validation_profiling()
                 ):
                     fetch_ms = getattr(iterator, "last_batch_fetch_ms", None)
                     if fetch_ms is not None:
@@ -1235,6 +1235,7 @@ class GenericTrainer:
                     self.config.profile_training
                     and self.logger
                     and ddp_is_primary(self.fabric)
+                    and self._should_log_validation_profiling()
                 ):
                     key = f"profile/val/dl_{sanitize_metric_key_component(loader_name)}/time_forward_ms"
                     try:
@@ -1415,6 +1416,14 @@ class GenericTrainer:
         freq = self.config.logging.log_scalars_every_n_steps
         next_step = self.global_step + 1
         return freq is None or (next_step % freq == 0)
+
+    def _should_log_validation_profiling(self) -> bool:
+        """Check if validation profiling metrics should be logged at current step.
+
+        Respects scalar logging frequency for consistency with training profiling.
+        """
+        freq = self.config.logging.log_scalars_every_n_steps
+        return freq is None or (self.global_step % freq == 0)
 
     def _optimizer_step(self, loader_idx: int) -> None:
         """Execute optimizer step for the specified loader."""

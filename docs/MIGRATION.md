@@ -291,6 +291,49 @@ When upgrading to this version, update the following configuration keys:
 
 These changes align naming with runtime behavior and clarify the separation between training and validation configurations.
 
+## Performance Profiling Default Change (v2.0+)
+
+**Breaking Change**: Performance profiling is now **enabled by default** (`profile_training: true`).
+
+### What Changed
+
+- **Before v2.0**: Profiling was opt-in (`profile_training: false` by default)
+- **After v2.0**: Profiling is opt-out (`profile_training: true` by default)
+
+### Why This Changed
+
+- Most users benefit from profiling insights during development
+- Overhead is minimal (< 2% even with GPU synchronization)
+- Profiling metrics are automatically throttled to prevent log spam
+
+### How to Disable
+
+If you don't need profiling metrics (e.g., for production runs):
+
+```yaml
+# In your config.yaml
+profile_training: false
+```
+
+Or programmatically:
+
+```python
+config = GenericTrainerConfig(
+    profile_training=False,  # Explicitly disable
+    # ... other config
+)
+```
+
+### What Gets Profiled
+
+When enabled, the following metrics are tracked:
+
+- Data loading time (`profile/*/dl_*/time_data_ms`)
+- Forward pass time (`profile/*/dl_*/time_forward_ms`)
+- Backward pass time (`profile/train/dl_*/time_backward_ms`)
+
+These metrics follow your `log_scalars_every_n_steps` frequency to prevent excessive logging.
+
 ## Need Help?
 
 - Check the [examples](../demo/example3_production/) for working code
