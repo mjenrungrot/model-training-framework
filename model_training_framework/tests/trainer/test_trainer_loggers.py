@@ -304,11 +304,15 @@ class TestWandBLogger:
         mock_run.finish.assert_called_once()
 
     @patch("model_training_framework.trainer.loggers.wandb_mod")
-    def test_wandb_logger_matplotlib_figure(self, mock_wandb):
+    @patch("model_training_framework.trainer.loggers.Image")
+    def test_wandb_logger_matplotlib_figure(self, mock_pil_image, mock_wandb):
         """Test WandB logger logs matplotlib figures."""
         mock_run = MagicMock()
         mock_wandb.init.return_value = mock_run
         mock_wandb.Image = MagicMock(return_value="mock_image")
+
+        # Mock PIL Image.open
+        mock_pil_image.open.return_value = "mock_pil_image"
 
         logger = WandBLogger(project="test_project")
 
@@ -324,6 +328,12 @@ class TestWandBLogger:
         assert call_args[1]["format"] == "jpeg"  # Default is jpg
         assert call_args[1]["dpi"] == 100
         assert call_args[1]["bbox_inches"] == "tight"
+
+        # Check that PIL Image.open was called
+        mock_pil_image.open.assert_called_once()
+
+        # Check that wandb.Image was called with the PIL image
+        mock_wandb.Image.assert_called_with("mock_pil_image")
 
         # Check that log was called
         mock_run.log.assert_called_once()

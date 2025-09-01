@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from PIL import Image
 import torch
 
 if TYPE_CHECKING:
@@ -204,10 +205,7 @@ class WandBLogger:
     def log_text(self, key: str, text: str, step: int | None = None) -> None:
         """Log text to WandB."""
         log_dict: dict[str, Any] = {key: self.wandb.Html(f"<pre>{text}</pre>")}
-        if step is not None:
-            self.run.log(log_dict, step=step)
-        else:
-            self.run.log(log_dict)
+        self.run.log(log_dict, step=step)
 
     def log_matplotlib_figure(
         self,
@@ -218,18 +216,18 @@ class WandBLogger:
         image_format: str = "jpg",
     ) -> None:
         """Log matplotlib figure to WandB."""
-        buf = io.BytesIO()
-        # Use jpeg for jpg format
-        save_format = "jpeg" if image_format.lower() == "jpg" else image_format.lower()
-        figure.savefig(buf, format=save_format, dpi=dpi, bbox_inches="tight")
-        buf.seek(0)
-        image = self.wandb.Image(buf)
+        with io.BytesIO() as buf:
+            # Use jpeg for jpg format
+            save_format = (
+                "jpeg" if image_format.lower() == "jpg" else image_format.lower()
+            )
+            figure.savefig(buf, format=save_format, dpi=dpi, bbox_inches="tight")
+            buf.seek(0)
+            # Load buffer into PIL Image
+            pil_image = Image.open(buf)
+            image = self.wandb.Image(pil_image)
         log_dict: dict[str, Any] = {key: image}
-        if step is not None:
-            self.run.log(log_dict, step=step)
-        else:
-            self.run.log(log_dict)
-        buf.close()
+        self.run.log(log_dict, step=step)
 
     def log_image(
         self,
@@ -264,10 +262,7 @@ class WandBLogger:
             image_np, mode="RGB" if image.shape[0] == 3 else None
         )
         log_dict: dict[str, Any] = {key: wandb_image}
-        if step is not None:
-            self.run.log(log_dict, step=step)
-        else:
-            self.run.log(log_dict)
+        self.run.log(log_dict, step=step)
 
     def close(self) -> None:
         """Finish the WandB run."""
