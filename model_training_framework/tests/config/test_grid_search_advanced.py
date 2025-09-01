@@ -10,6 +10,33 @@ from model_training_framework.config import ParameterGrid, ParameterGridSearch
 class TestLinkedParameters:
     """Test linked/grouped parameter functionality."""
 
+    def test_multiple_linked_groups_count(self):
+        """Test that multiple linked groups are counted correctly."""
+        grid = ParameterGrid("test")
+
+        # Add first linked group with 2 value sets
+        grid.add_linked_parameters(["param1", "param2"], [(1, 2), (3, 4)])
+
+        # Add second linked group with 2 value sets
+        grid.add_linked_parameters(["param3", "param4"], [(5, 6), (7, 8)])
+
+        # Should be 4 total (2 + 2), not 2 (max(2, 2))
+        assert grid.get_parameter_count() == 4
+
+        # Verify generation matches count
+        combinations = list(grid.generate_permutations())
+        assert len(combinations) == 4
+
+        # Verify all expected combinations exist
+        expected = [
+            {"param1": 1, "param2": 2},
+            {"param1": 3, "param2": 4},
+            {"param3": 5, "param4": 6},
+            {"param3": 7, "param4": 8},
+        ]
+        for exp in expected:
+            assert exp in combinations
+
     def test_add_linked_parameters_tuples(self):
         """Test adding linked parameters with tuples."""
         grid = ParameterGrid("test")

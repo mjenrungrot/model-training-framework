@@ -171,7 +171,15 @@ class DistributionParameterSpec(ParameterSpec):
             self.values = list(rng.normal(mean, std, self.n_samples))
         elif self.distribution == "choice":
             choices = self.params.get("choices", [])
+            if not choices:
+                raise ValueError(
+                    "Choice distribution requires non-empty 'choices' parameter"
+                )
             weights = self.params.get("weights")
+            if weights is not None and len(weights) != len(choices):
+                raise ValueError(
+                    f"Length of 'weights' ({len(weights)}) must match length of 'choices' ({len(choices)})"
+                )
             self.values = list(
                 rng.choice(choices, size=self.n_samples, p=weights, replace=True)
             )
@@ -475,8 +483,8 @@ class ParameterGrid:
 
         for spec in self.parameter_specs:
             if spec.param_type == ParameterType.LINKED:
-                # Linked parameters represent alternative sets
-                linked_count = max(linked_count, len(spec.values))
+                # Linked parameters are unioned (summed), not maxed
+                linked_count += len(spec.values)
             elif spec.param_type == ParameterType.DISTRIBUTION:
                 # Distribution parameters multiply with each other
                 dist_count *= len(spec.values)
@@ -492,7 +500,8 @@ class ParameterGrid:
                 return dist_count
             return 0
         # Traditional parameters multiply with specs
-        spec_multiplier = max(linked_count, 1) * dist_count
+        # If we have linked specs, use their count; otherwise 1
+        spec_multiplier = (linked_count if linked_count > 0 else 1) * dist_count
         return traditional_count * spec_multiplier
 
     def get_parameter_names(self) -> set[str]:
@@ -558,29 +567,17 @@ class ParameterGrid:
                     dist_combinations.append(dict(zip(dist_keys, combination)))
 
         # Combine all types of parameters
-        if linked_combinations and dist_combinations:
-            # Combine linked and distribution
-            for linked in linked_combinations:
-                for dist in dist_combinations:
-                    for base in base_combinations:
-                        combined = {**base, **linked, **dist}
-                        yield from self._process_combination(combined)
-        elif linked_combinations:
-            # Only linked
-            for base in base_combinations:
-                for linked in linked_combinations:
-                    combined = {**base, **linked}
+        # Treat empty lists as identity element [{}] for cleaner logic
+        effective_linked = linked_combinations or [{}]
+        effective_dist = dist_combinations or [{}]
+
+        # Generate all combinations with clear precedence order
+        for base in base_combinations:
+            for linked in effective_linked:
+                for dist in effective_dist:
+                    # Order determines precedence: base < linked < dist
+                    combined = {**base, **linked, **dist}
                     yield from self._process_combination(combined)
-        elif dist_combinations:
-            # Only distribution
-            for base in base_combinations:
-                for dist in dist_combinations:
-                    combined = {**base, **dist}
-                    yield from self._process_combination(combined)
-        else:
-            # Only traditional
-            for base in base_combinations:
-                yield from self._process_combination(base)
 
     def _process_combination(self, params: dict[str, Any]) -> Iterator[dict[str, Any]]:
         """Process a single parameter combination with conditionals, computed, constraints."""
@@ -650,7 +647,7 @@ class ParameterGrid:
         # Serialize parameter specs
         specs_data = []
         for spec in self.parameter_specs:
-            spec_dict = {
+            spec_dict: dict[str, Any] = {
                 "type": spec.param_type.value,
                 "keys": spec.keys,
                 "values": spec.values,
@@ -705,22 +702,24 @@ class ParameterGrid:
 
             if spec_type == ParameterType.LINKED:
                 # Reconstruct linked spec
-                spec = LinkedParameterSpec(spec_data["keys"], spec_data["values"])
-                grid.parameter_specs.append(spec)
+                linked_spec = LinkedParameterSpec(
+                    spec_data["keys"], spec_data["values"]
+                )
+                grid.parameter_specs.append(linked_spec)
             elif spec_type == ParameterType.CONDITIONAL:
                 # Reconstruct conditional spec (without function)
-                spec = ConditionalParameterSpec(
-                    spec_data.get("keys", [""])[0] if spec_data.get("keys") else "",
+                cond_spec = ConditionalParameterSpec(
+                    (spec_data.get("keys") or [""])[0],
                     spec_data.get("values", []),
                     when=spec_data.get("condition", {}),
                 )
-                grid.parameter_specs.append(spec)
+                grid.parameter_specs.append(cond_spec)
             elif spec_type == ParameterType.DISTRIBUTION:
                 # Reconstruct distribution spec
-                key = spec_data.get("keys", [""])[0] if spec_data.get("keys") else ""
+                key = (spec_data.get("keys") or [""])[0]
                 if "values" in spec_data:
                     # Use persisted values for reproducibility
-                    spec = DistributionParameterSpec(
+                    dist_spec = DistributionParameterSpec(
                         key,
                         spec_data.get("distribution", "uniform"),
                         spec_data.get("n_samples", 10),
@@ -728,17 +727,18 @@ class ParameterGrid:
                         **spec_data.get("params", {}),
                     )
                     # Override with persisted values
-                    spec.values = spec_data["values"]
+                    dist_spec.values = spec_data["values"]
+                    grid.parameter_specs.append(dist_spec)
                 else:
                     # Re-generate if no values persisted
-                    spec = DistributionParameterSpec(
+                    dist_spec = DistributionParameterSpec(
                         key,
                         spec_data.get("distribution", "uniform"),
                         spec_data.get("n_samples", 10),
                         spec_data.get("seed"),
                         **spec_data.get("params", {}),
                     )
-                grid.parameter_specs.append(spec)
+                    grid.parameter_specs.append(dist_spec)
             # Note: Computed specs can't be fully restored without the function
 
         # Log warnings about non-serializable features
