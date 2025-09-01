@@ -654,6 +654,91 @@ class TestEdgeCases:
         grid = ParameterGrid.from_dict(data)
         assert len(grid.parameter_specs) == 0  # Invalid spec was skipped
 
+    def test_counting_with_constraints(self):
+        """Test that get_parameter_count accounts for constraints."""
+        grid = ParameterGrid("test")
+        grid.add_parameter("lr", [0.1, 0.01, 0.001])
+        grid.add_parameter("batch_size", [16, 32, 64])
+
+        # Without constraint: 3 * 3 = 9 combinations
+        assert grid.get_parameter_count() == 9
+
+        # Add constraint that filters out high lr with small batch
+        grid.add_constraint(lambda p: not (p["lr"] > 0.01 and p["batch_size"] < 32))
+
+        # This filters out: (0.1, 16) -> 8 remaining
+        assert grid.get_parameter_count() == 8
+
+        # Verify by generating
+        combos = list(grid.generate_permutations())
+        assert len(combos) == 8
+
+    def test_counting_with_exclusions(self):
+        """Test that get_parameter_count accounts for exclusion patterns."""
+        grid = ParameterGrid("test")
+        grid.add_parameter("model", ["small", "medium", "large"])
+        grid.add_parameter("batch_size", [8, 16, 32])
+
+        # Without exclusions: 3 * 3 = 9
+        assert grid.get_parameter_count() == 9
+
+        # Exclude specific combinations
+        grid.exclude_combinations(
+            [
+                {"model": "large", "batch_size": 32},  # Too much memory
+                {"model": "small", "batch_size": 8},  # Too slow
+            ]
+        )
+
+        # Should have 9 - 2 = 7 combinations
+        assert grid.get_parameter_count() == 7
+
+        # Verify by generating
+        combos = list(grid.generate_permutations())
+        assert len(combos) == 7
+
+    def test_counting_with_both_constraints_and_exclusions(self):
+        """Test counting with both constraints and exclusions."""
+        grid = ParameterGrid("test")
+        grid.add_parameter("lr", [0.1, 0.01, 0.001])
+        grid.add_parameter("optimizer", ["sgd", "adam"])
+
+        # Without filters: 3 * 2 = 6
+        assert grid.get_parameter_count() == 6
+
+        # Add constraint: SGD needs higher learning rates
+        grid.add_constraint(lambda p: p["optimizer"] != "sgd" or p["lr"] >= 0.01)
+
+        # This filters out: (0.001, sgd) -> 5 remaining
+
+        # Also exclude a specific combination
+        grid.exclude_combinations([{"lr": 0.1, "optimizer": "adam"}])
+
+        # Should have 5 - 1 = 4 combinations
+        assert grid.get_parameter_count() == 4
+
+        # Verify
+        combos = list(grid.generate_permutations())
+        assert len(combos) == 4
+
+    def test_computed_only_grid_with_constraint(self):
+        """Test computed-only grid filtered by constraint."""
+        grid = ParameterGrid("test")
+        grid.add_computed_parameter("value", lambda p: 42)
+
+        # Without constraint: 1 combination
+        assert grid.get_parameter_count() == 1
+
+        # Add constraint that rejects value=42
+        grid.add_constraint(lambda p: p.get("value", 0) != 42)
+
+        # Should have 0 combinations now
+        assert grid.get_parameter_count() == 0
+
+        # Verify
+        combos = list(grid.generate_permutations())
+        assert len(combos) == 0
+
 
 class TestBackwardCompatibility:
     """Ensure new features don't break existing functionality."""

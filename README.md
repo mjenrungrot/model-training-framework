@@ -43,6 +43,33 @@ experiments = list(gs.generate_experiments())
 print(f"Generated {len(experiments)} experiments")
 ```
 
+#### Advanced Grid Search
+
+The framework supports sophisticated parameter specification methods:
+
+```python
+# Linked parameters - vary together as groups
+grid.add_linked_parameters(
+    ["model.size", "batch_size"],
+    [("small", 64), ("medium", 32), ("large", 16)]
+)
+
+# Conditional parameters - apply only when conditions are met
+grid.add_conditional_parameter(
+    "optimizer.momentum",
+    values=[0.9, 0.95],
+    when={"optimizer.type": "sgd"}  # Only for SGD optimizer
+)
+
+# Computed parameters - derive from other parameters
+grid.add_computed_parameter(
+    "effective_batch_size",
+    compute_func=lambda p: p["batch_size"] * p.get("gradient_accumulation_steps", 1)
+)
+```
+
+See [Advanced ParameterGrid API](docs/API.md#advanced-parametergrid) for complete documentation.
+
 ## 🚀 Quick Start Example
 
 For a complete, production-ready example that demonstrates all features:

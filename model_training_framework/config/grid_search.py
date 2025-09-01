@@ -24,7 +24,7 @@ import itertools
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -254,17 +254,25 @@ class ParameterGrid:
     def add_linked_parameters(
         self, keys: list[str], value_sets: Sequence[tuple[Any, ...] | dict[str, Any]]
     ) -> ParameterGrid:
-        """Add parameters that vary together (inspired by pytest.mark.parametrize).
+        """Add parameters that vary together as alternative configurations.
+
+        Multiple linked parameter groups are UNIONED (not multiplied). Each value set
+        represents an alternative configuration. To create a cross-product with
+        traditional parameters, use add_parameter() separately.
 
         Args:
-            keys: Parameter keys that vary together
+            keys: Parameter keys that vary together (supports dot-notation paths)
             value_sets: List of value tuples or dicts for the parameters
 
         Example:
+            # Creates 3 alternative configurations (not 9)
             grid.add_linked_parameters(
-                ["lr", "weight_decay"],
-                [(0.1, 0.1), (0.01, 0.01), (0.001, 0.001)]
+                ["model.size", "batch_size"],
+                [("small", 64), ("medium", 32), ("large", 16)]
             )
+
+            # To multiply with other parameters, add them separately:
+            grid.add_parameter("lr", [0.01, 0.001])  # Now 6 total combinations
 
         Returns:
             Self for method chaining
@@ -482,18 +490,28 @@ class ParameterGrid:
             logger.debug(f"Removed parameter '{key}' from grid '{self.name}'")
         return self
 
-    def get_parameter_count(self) -> int:
-        """Get total number of parameter combinations.
+    def get_parameter_count(self) -> int:  # noqa: PLR0911
+        """Get total number of parameter combinations after applying filters.
+
+        Note: When conditionals with conditions exist, this method enumerates all
+        permutations to accurately count which conditions apply. This may have
+        performance implications for large grids with complex conditions.
+
+        Special cases:
+        - Empty grid: Returns 0
+        - Computed-only grid: Returns 1 (unless filtered by constraints)
+        - With constraints/exclusions: Enumerates to count filtered results
 
         Returns:
-            Number of unique parameter combinations
+            Number of unique parameter combinations after all filters
         """
         # Handle empty grid case
         if not self.parameters and not self.parameter_specs:
             return 0
 
-        # For accurate counting with conditional parameters that depend on base values,
-        # we need to actually generate and count the combinations
+        # If we have constraints, exclusions, or conditional parameters with conditions,
+        # we need to actually generate and count the filtered combinations
+        has_filters = bool(self.constraints or self.exclude_patterns)
         has_conditional_with_condition = any(
             spec.param_type == ParameterType.CONDITIONAL
             and isinstance(spec, ConditionalParameterSpec)
@@ -501,17 +519,38 @@ class ParameterGrid:
             for spec in self.parameter_specs
         )
 
-        if has_conditional_with_condition:
-            # Need to generate to count accurately
+        if has_filters or has_conditional_with_condition:
+            # Need to generate to count accurately with filters
             count = sum(1 for _ in self.generate_permutations())
             # Handle computed-only case
             if count == 0 and any(
                 spec.param_type == ParameterType.COMPUTED
                 for spec in self.parameter_specs
             ):
+                # Even computed-only grids can be filtered out by constraints
+                # Only return 1 if we would actually generate it
+                test_combo = {}
+                # Apply computed parameters
+                for spec in self.parameter_specs:
+                    if spec.param_type == ParameterType.COMPUTED:
+                        computed_spec = cast("ComputedParameterSpec", spec)
+                        try:
+                            for key in computed_spec.keys:
+                                test_combo[key] = computed_spec.compute_func(test_combo)
+                        except Exception:
+                            return 0  # Can't compute, no valid combinations
+                # Check constraints
+                if self.constraints and not all(
+                    c(test_combo) for c in self.constraints
+                ):
+                    return 0  # Filtered by constraints
+                # Check exclusions
+                if self._is_excluded(test_combo):
+                    return 0  # Filtered by exclusions
                 return 1
             return count
 
+        # Fast path for grids without filters or conditional parameters
         # Handle traditional parameters
         traditional_count = 1
         if self.parameters:
@@ -523,9 +562,6 @@ class ParameterGrid:
         # Handle advanced parameter specs
         linked_count = 0
         dist_count = 1
-
-        # Count unconditional conditional parameters
-        # These always apply and should be counted
         unconditional_cond_count = 1
 
         for spec in self.parameter_specs:
@@ -592,10 +628,23 @@ class ParameterGrid:
         return names
 
     def generate_permutations(self) -> Iterator[dict[str, Any]]:
-        """Generate all parameter combinations.
+        """Generate all parameter combinations with filters applied.
+
+        Generation precedence:
+        1. Base parameters (traditional grid) - forms initial combinations
+        2. Linked parameters - unioned as alternatives (not multiplied)
+        3. Distribution parameters - multiplied with existing combinations
+        4. Conditional parameters - expanded only where conditions match
+        5. Computed parameters - applied to each combination
+        6. Constraints and exclusions - filter out invalid combinations
+
+        Linked groups interact with traditional parameters by multiplication.
+        Example: 2 linked sets x 3 traditional values = 6 total combinations
+
+        Empty grid behavior: Yields nothing (no combinations)
 
         Yields:
-            Dictionary mapping parameter keys to values
+            Dictionary mapping parameter keys to values for each valid combination
         """
         # Check for empty grid
         if not self.parameters and not self.parameter_specs:
@@ -687,6 +736,25 @@ class ParameterGrid:
             # No conditional parameters apply
             yield from self._finalize_combination(params)
 
+    def _is_excluded(self, params: dict[str, Any]) -> bool:
+        """Check if a parameter combination is excluded.
+
+        Args:
+            params: Parameter combination to check
+
+        Returns:
+            True if the combination should be excluded
+        """
+        for pattern in self.exclude_patterns:
+            if callable(pattern):
+                if pattern(params):
+                    return True
+            elif isinstance(pattern, dict) and all(
+                params.get(k) == v for k, v in pattern.items()
+            ):
+                return True
+        return False
+
     def _finalize_combination(self, params: dict[str, Any]) -> Iterator[dict[str, Any]]:
         """Apply computed parameters, constraints, and exclusions."""
         # Apply computed parameters
@@ -704,22 +772,24 @@ class ParameterGrid:
                 return  # Skip this combination
 
         # Check exclusion patterns
-        for pattern in self.exclude_patterns:
-            if callable(pattern):
-                if pattern(params):
-                    return  # Skip this combination
-            elif isinstance(pattern, dict) and all(
-                params.get(k) == v for k, v in pattern.items()
-            ):
-                return  # Skip this combination
+        if self._is_excluded(params):
+            return  # Skip this combination
 
         yield params
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization.
 
+        Non-serializable fields:
+        - condition_func in conditional parameters (only dict conditions preserved)
+        - compute_func in computed parameters (marked as non-serializable)
+        - constraint functions (only count preserved)
+        - exclusion pattern functions (only dict patterns preserved)
+
+        Distribution values are persisted to ensure reproducibility when restored.
+
         Returns:
-            Dictionary representation
+            Dictionary representation suitable for JSON/YAML serialization
         """
         # Serialize parameter specs
         specs_data = []
@@ -759,13 +829,19 @@ class ParameterGrid:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ParameterGrid:
-        """Create from dictionary.
+        """Create from dictionary representation.
+
+        Warning behavior on restore:
+        - Logs warnings for non-restorable fields (functions)
+        - Skips invalid parameter specs with warnings
+        - Preserves distribution values for reproducibility
+        - Cannot restore constraint/exclusion functions (only indicates presence)
 
         Args:
             data: Dictionary containing grid configuration
 
         Returns:
-            ParameterGrid instance
+            ParameterGrid instance with restored configuration
         """
         grid = cls(
             name=data["name"],
