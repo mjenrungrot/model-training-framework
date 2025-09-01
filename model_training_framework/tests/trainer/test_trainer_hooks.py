@@ -25,7 +25,7 @@ from model_training_framework.trainer.hooks import (
 )
 
 
-class TestHook(TrainerHooks):
+class SimpleHook(TrainerHooks):
     """Test hook implementation for testing."""
 
     def __init__(self):
@@ -67,7 +67,7 @@ class TestHookManager:
     def test_hook_registration(self):
         """Test registering hooks."""
         manager = HookManager()
-        hook = TestHook()
+        hook = SimpleHook()
 
         manager.register_hook(hook)
 
@@ -77,8 +77,8 @@ class TestHookManager:
     def test_register_multiple_hooks(self):
         """Test registering multiple hooks."""
         manager = HookManager()
-        hook1 = TestHook()
-        hook2 = TestHook()
+        hook1 = SimpleHook()
+        hook2 = SimpleHook()
 
         manager.register_hooks([hook1, hook2])
 
@@ -96,7 +96,7 @@ class TestHookManager:
     def test_call_hook(self):
         """Test calling hooks."""
         manager = HookManager()
-        hook = TestHook()
+        hook = SimpleHook()
         manager.register_hook(hook)
 
         trainer = MagicMock()
@@ -108,8 +108,8 @@ class TestHookManager:
     def test_call_hook_with_multiple_hooks(self):
         """Test calling multiple hooks in order."""
         manager = HookManager()
-        hook1 = TestHook()
-        hook2 = TestHook()
+        hook1 = SimpleHook()
+        hook2 = SimpleHook()
         manager.register_hooks([hook1, hook2])
 
         trainer = MagicMock()
@@ -126,7 +126,7 @@ class TestHookManager:
     def test_call_nonexistent_hook_method(self):
         """Test calling non-existent hook method is safe."""
         manager = HookManager()
-        hook = TestHook()
+        hook = SimpleHook()
         manager.register_hook(hook)
 
         # Should not raise
@@ -139,7 +139,7 @@ class TestHookManager:
         """Test error handling when hook raises exception."""
         manager = HookManager()
         error_hook = ErrorHook()
-        good_hook = TestHook()
+        good_hook = SimpleHook()
 
         manager.register_hooks([error_hook, good_hook])
 
@@ -156,7 +156,7 @@ class TestHookManager:
     def test_clear_hooks(self):
         """Test clearing all hooks."""
         manager = HookManager()
-        manager.register_hooks([TestHook(), TestHook()])
+        manager.register_hooks([SimpleHook(), SimpleHook()])
 
         assert len(manager.hooks) == 2
 
