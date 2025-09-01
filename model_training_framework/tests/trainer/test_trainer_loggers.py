@@ -99,8 +99,6 @@ class TestConsoleLogger:
         logger = ConsoleLogger(log_level="INFO")
 
         # Create a mock figure
-        from unittest.mock import MagicMock
-
         mock_figure = MagicMock()
         mock_figure.get_size_inches.return_value = (8.0, 6.0)
         mock_figure._suptitle = MagicMock()
@@ -191,8 +189,6 @@ class TestTensorBoardLogger:
             logger = TensorBoardLogger(log_dir=tmpdir)
 
             # Create a mock figure
-            from unittest.mock import MagicMock
-
             mock_figure = MagicMock()
 
             # Mock the writer's add_figure method
