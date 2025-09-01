@@ -14,13 +14,12 @@ from __future__ import annotations
 
 from contextlib import suppress
 import logging
-import re
 import time as _time
 from typing import TYPE_CHECKING, Any
 
 import torch
 
-from .utils import ddp_is_primary
+from .utils import ddp_is_primary, sanitize_metric_key_component
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -566,11 +565,6 @@ class RuntimeProfilingHook(TrainerHooks):
 
         return freq is None or (step % freq == 0)
 
-    def _sanitize_loader(self, name: str) -> str:
-        # Conservative sanitization for metric keys
-        sanitized = re.sub(r"[^A-Za-z0-9_\-]+", "_", name).strip("_")
-        return sanitized or "loader"
-
     def on_before_optimizer_step(
         self, trainer: GenericTrainer, optimizer_idx: int
     ) -> None:
@@ -602,7 +596,7 @@ class RuntimeProfilingHook(TrainerHooks):
             return
 
         loader_name = getattr(trainer, "current_dataloader_name", None) or "unknown"
-        key = f"profile/train/dl_{self._sanitize_loader(loader_name)}/time_optimizer_ms"
+        key = f"profile/train/dl_{sanitize_metric_key_component(loader_name)}/time_optimizer_ms"
 
         logger_inst = getattr(trainer, "logger", None)
         if logger_inst is not None:
@@ -621,7 +615,8 @@ class RuntimeProfilingHook(TrainerHooks):
     ) -> None:
         if not self.enable_batch_wait:
             return
-        self._last_batch_end_time = _time.perf_counter()
+        sanitized = sanitize_metric_key_component(loader_name)
+        self._last_batch_end_time[sanitized] = _time.perf_counter()
 
     def on_train_batch_start(
         self,
@@ -630,23 +625,25 @@ class RuntimeProfilingHook(TrainerHooks):
         loader_idx: int,
         loader_name: str,
     ) -> None:
-        if not self.enable_batch_wait or self._last_batch_end_time is None:
+        if not self.enable_batch_wait:
+            return
+        sanitized = sanitize_metric_key_component(loader_name)
+        last_end = self._last_batch_end_time.get(sanitized)
+        if last_end is None:
             return
         now = _time.perf_counter()
-        wait_ms = (now - self._last_batch_end_time) * 1000.0
+        wait_ms = (now - last_end) * 1000.0
 
-        # Gate to one log per optimizer step (global_step) and by frequency
+        # Gate to one log per loader per optimizer step
         step = getattr(trainer, "global_step", 0)
-        if self._last_logged_batch_wait_step == step:
+        if self._last_logged_batch_wait_step.get(sanitized) == step:
             return
         if not self._should_log(trainer, step):
             return
 
-        self._last_logged_batch_wait_step = step
+        self._last_logged_batch_wait_step[sanitized] = step
 
-        key = (
-            f"profile/train/dl_{self._sanitize_loader(loader_name)}/time_batch_wait_ms"
-        )
+        key = f"profile/train/dl_{sanitize_metric_key_component(loader_name)}/time_batch_wait_ms"
         logger_inst = getattr(trainer, "logger", None)
         if logger_inst is not None:
             try:

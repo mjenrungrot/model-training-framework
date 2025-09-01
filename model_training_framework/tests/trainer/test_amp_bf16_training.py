@@ -60,7 +60,7 @@ except Exception:  # ImportError or environments without CUDA AMP
 from model_training_framework.config.schemas import PerformanceConfig
 
 
-class TestModel(nn.Module):
+class AmpTestModel(nn.Module):
     """Test model for mixed precision training."""
 
     def __init__(self, input_size=10, hidden_size=20, output_size=3):
@@ -97,7 +97,7 @@ class TestAMPTraining:
 
     def test_amp_basic_training(self):
         """Test basic AMP training."""
-        model = TestModel().to(self.device)
+        model = AmpTestModel().to(self.device)
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
         scaler = GradScaler()
 
@@ -159,7 +159,7 @@ class TestAMPTraining:
 
     def test_amp_gradient_clipping(self):
         """Test gradient clipping with AMP."""
-        model = TestModel().to(self.device)
+        model = AmpTestModel().to(self.device)
         optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
         scaler = GradScaler()
 
@@ -222,7 +222,7 @@ class TestAMPTraining:
 
     def test_amp_loss_scaling(self):
         """Test dynamic loss scaling in AMP."""
-        model = TestModel().to(self.device)
+        model = AmpTestModel().to(self.device)
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
         # Create scaler with specific config
@@ -266,7 +266,7 @@ class TestAMPTraining:
 
     def test_amp_checkpoint_resume(self):
         """Test checkpoint/resume with AMP."""
-        model = TestModel().to(self.device)
+        model = AmpTestModel().to(self.device)
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
         scaler = GradScaler()
 
@@ -301,7 +301,7 @@ class TestAMPTraining:
         torch.save(checkpoint, checkpoint_path)
 
         # Create new model and load checkpoint
-        new_model = TestModel().to(self.device)
+        new_model = AmpTestModel().to(self.device)
         new_optimizer = torch.optim.Adam(new_model.parameters(), lr=0.001)
         new_scaler = GradScaler()
 
@@ -346,7 +346,7 @@ class TestBF16Training:
 
     def test_bf16_basic_training(self):
         """Test basic BF16 training."""
-        model = TestModel().to(self.device).to(torch.bfloat16)
+        model = AmpTestModel().to(self.device).to(torch.bfloat16)
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
         # Create BF16 dataset
@@ -384,8 +384,8 @@ class TestBF16Training:
         torch.manual_seed(42)
 
         # Create identical models
-        model_fp32 = TestModel().to(self.device)
-        model_bf16 = TestModel().to(self.device).to(torch.bfloat16)
+        model_fp32 = AmpTestModel().to(self.device)
+        model_bf16 = AmpTestModel().to(self.device).to(torch.bfloat16)
 
         # Copy weights
         with torch.no_grad():
@@ -440,7 +440,7 @@ class TestMixedPrecisionUtils:
             pytest.skip("CUDA not available")
 
         device = torch.device("cuda")
-        model = TestModel().to(device)
+        model = AmpTestModel().to(device)
 
         # Test with autocast
         inputs = torch.randn(10, 10).to(device)

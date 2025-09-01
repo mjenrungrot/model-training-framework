@@ -19,7 +19,6 @@ import importlib
 import logging
 import os
 from pathlib import Path
-import re
 import subprocess
 import time
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -63,6 +62,7 @@ from .utils import (
     ddp_barrier,
     ddp_broadcast_object,
     ddp_is_primary,
+    sanitize_metric_key_component,
     seed_all,
 )
 
@@ -402,7 +402,7 @@ class GenericTrainer:
             )
 
         # Auto-register runtime profiling hook if enabled
-        if getattr(config, "profile_training", False):
+        if config.profile_training:
             try:
                 self.hook_manager.register_hook(RuntimeProfilingHook())
             except Exception:
@@ -943,7 +943,7 @@ class GenericTrainer:
                 if fetch_ms is not None and self._should_log_this_step(
                     accumulation_counter
                 ):
-                    key = f"profile/train/dl_{self._sanitize_loader_name(loader_name)}/time_data_ms"
+                    key = f"profile/train/dl_{sanitize_metric_key_component(loader_name)}/time_data_ms"
                     try:
                         self.logger.log_metrics(
                             {key: float(fetch_ms)}, self.global_step
@@ -1198,7 +1198,7 @@ class GenericTrainer:
                 ):
                     fetch_ms = getattr(iterator, "last_batch_fetch_ms", None)
                     if fetch_ms is not None:
-                        key = f"profile/val/dl_{self._sanitize_loader_name(loader_name)}/time_data_ms"
+                        key = f"profile/val/dl_{sanitize_metric_key_component(loader_name)}/time_data_ms"
                         try:
                             self.logger.log_metrics(
                                 {key: float(fetch_ms)}, self.global_step
@@ -1236,7 +1236,7 @@ class GenericTrainer:
                     and self.logger
                     and ddp_is_primary(self.fabric)
                 ):
-                    key = f"profile/val/dl_{self._sanitize_loader_name(loader_name)}/time_forward_ms"
+                    key = f"profile/val/dl_{sanitize_metric_key_component(loader_name)}/time_forward_ms"
                     try:
                         self.logger.log_metrics(
                             {key: float(forward_dt_ms)}, self.global_step
@@ -1318,7 +1318,7 @@ class GenericTrainer:
             and ddp_is_primary(self.fabric)
             and self._should_log_this_step(accumulation_step)
         ):
-            key = f"profile/train/dl_{self._sanitize_loader_name(loader_name)}/time_forward_ms"
+            key = f"profile/train/dl_{sanitize_metric_key_component(loader_name)}/time_forward_ms"
             try:
                 self.logger.log_metrics({key: float(forward_dt_ms)}, self.global_step)
             except Exception:
@@ -1385,7 +1385,7 @@ class GenericTrainer:
             and ddp_is_primary(self.fabric)
             and self._should_log_this_step(accumulation_step)
         ):
-            key = f"profile/train/dl_{self._sanitize_loader_name(loader_name)}/time_backward_ms"
+            key = f"profile/train/dl_{sanitize_metric_key_component(loader_name)}/time_backward_ms"
             try:
                 self.logger.log_metrics({key: float(bwd_dt_ms)}, self.global_step)
             except Exception:
@@ -1393,13 +1393,9 @@ class GenericTrainer:
 
         return step_metrics
 
-    def _sanitize_loader_name(self, name: str) -> str:
-        sanitized = re.sub(r"[^A-Za-z0-9_\-]+", "_", str(name)).strip("_")
-        return sanitized or "loader"
-
     def _is_cuda_model(self) -> bool:
         try:
-            return next(self.model.parameters()).is_cuda
+            return bool(next(self.model.parameters()).is_cuda)
         except Exception:
             return False
 
@@ -1409,17 +1405,14 @@ class GenericTrainer:
         Uses (global_step + 1) for gating since optimizer step increments afterward.
         """
         # Only log at accumulation boundary
-        try:
-            gas = self.config.performance.gradient_accumulation_steps
-        except Exception:
-            gas = 1
+        gas = self.config.performance.gradient_accumulation_steps
         if gas <= 0:
             gas = 1
         if (accumulation_counter + 1) % gas != 0:
             return False
 
         # Respect scalar logging frequency
-        freq = getattr(self.config.logging, "log_scalars_every_n_steps", None)
+        freq = self.config.logging.log_scalars_every_n_steps
         next_step = self.global_step + 1
         return freq is None or (next_step % freq == 0)
 

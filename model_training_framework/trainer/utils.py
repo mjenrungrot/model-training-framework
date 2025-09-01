@@ -15,6 +15,7 @@ import contextlib
 import importlib
 import logging
 import random
+import re
 import signal
 import time
 from typing import TYPE_CHECKING, Any
@@ -874,6 +875,18 @@ def get_memory_usage() -> dict[str, float]:
         stats["cpu_available_gb"] = vm.available / (1024**3)
 
     return stats
+
+
+def sanitize_metric_key_component(name: str) -> str:
+    """
+    Sanitize a string component for safe use in metric keys.
+
+    Replaces non-alphanumeric/underscore/dash with underscores and trims.
+    Returns 'loader' if the sanitized result is empty.
+    """
+
+    sanitized = re.sub(r"[^A-Za-z0-9_\-]+", "_", str(name)).strip("_")
+    return sanitized or "loader"
 
 
 class EarlyStopping:

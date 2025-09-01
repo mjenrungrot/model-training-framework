@@ -714,7 +714,7 @@ class GenericTrainerConfig:
 
     # Debugging and development
     debug_mode: bool = False  # Enable debug mode with additional checks and logging
-    profile_training: bool = False  # Enable profiling of training loop
+    profile_training: bool = True  # Enable profiling of training loop by default
     dry_run: bool = False  # Run training loop without actual training (for debugging)
 
     def __post_init__(self) -> None:

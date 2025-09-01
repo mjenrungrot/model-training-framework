@@ -144,7 +144,9 @@ class MultiDataLoaderIterator:
         self.prefetched_batches = 0
 
         # Lightweight profiling state (exposed to trainer when profiling enabled)
+        # Last fetch duration in milliseconds for the most recent next(iterator)
         self.last_batch_fetch_ms: float | None = None
+        # Loader name used for the most recent batch fetch
         self.last_loader_name: str | None = None
 
     def _create_loader_iterator(self, loader_idx: int) -> Iterator:
