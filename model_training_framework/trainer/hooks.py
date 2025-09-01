@@ -548,8 +548,8 @@ class RuntimeProfilingHook(TrainerHooks):
         self.enable_batch_wait = enable_batch_wait
 
         self._optim_t0: float | None = None
-        self._last_batch_end_time: float | None = None
-        self._last_logged_batch_wait_step: int | None = None
+        self._last_batch_end_time: dict[str, float] = {}
+        self._last_logged_batch_wait_step: dict[str, int] = {}
 
     def _should_log(self, trainer: GenericTrainer, step: int) -> bool:
         # Only primary rank logs
@@ -558,10 +558,7 @@ class RuntimeProfilingHook(TrainerHooks):
 
         freq = self.log_frequency
         if freq is None:
-            try:
-                freq = trainer.config.logging.log_scalars_every_n_steps
-            except Exception:
-                freq = None
+            freq = trainer.config.logging.log_scalars_every_n_steps
 
         return freq is None or (step % freq == 0)
 
