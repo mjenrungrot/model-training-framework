@@ -1,6 +1,6 @@
 # Runtime Profiling Overview
 
-This framework provides a lightweight, opt-in runtime profiler to surface key timing metrics with minimal overhead. Profiling is off by default and can be enabled via `GenericTrainerConfig.profile_training = True`.
+This framework provides a lightweight runtime profiler to surface key timing metrics with minimal overhead. Profiling is **enabled by default** (`profile_training = True`) and can be disabled by setting `GenericTrainerConfig.profile_training = False`.
 
 What It Measures
 
@@ -36,14 +36,17 @@ CUDA Synchronization
 
 Usage
 
-- Set `GenericTrainerConfig.profile_training = True`.
+- Profiling is enabled by default. To disable, set `GenericTrainerConfig.profile_training = False`.
 - Optionally provide explicit dataloader names via `MultiDataLoaderConfig.dataloader_names` to produce clean metric keys.
 
 Example YAML Snippet
 
 ```yaml
+# Profiling is enabled by default, but can be disabled:
 training:
-  profile_training: true
+  profile_training: false  # Set to false to disable profiling
+
+# With profiling enabled (default):
 logging:
   log_scalars_every_n_steps: 50
 data:
@@ -64,8 +67,8 @@ Overhead And Accuracy Notes
 
 - Overhead is designed to be minimal: timers and occasional CUDA syncs. Forward/backward/optimizer timings include optional `torch.cuda.synchronize()` which improves accuracy but adds a small barrier cost. Data fetch timing measures `next(iterator)` wall time (CPU‑side) and typically doesn’t require CUDA sync.
 - To quantify overhead in your environment:
-  1) Run a short training job with `profile_training=False` and capture steps/sec.
-  2) Repeat with `profile_training=True` and identical seeds, batch sizes and loaders.
+  1) Run a short training job with `profile_training=True` (default) and capture steps/sec.
+  2) Repeat with `profile_training=False` and identical seeds, batch sizes and loaders.
   3) Compare steps/sec or avg step time in your logs.
 
 Tips
