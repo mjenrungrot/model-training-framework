@@ -10,11 +10,15 @@ This module provides a unified logging interface with multiple backend support:
 
 from __future__ import annotations
 
+import io
 import logging
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import torch
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +87,46 @@ class LoggerProtocol(Protocol):
             key: Identifier for the text
             text: Text content to log
             step: Optional step number
+        """
+        ...
+
+    def log_matplotlib_figure(
+        self,
+        key: str,
+        figure: Figure,
+        step: int | None = None,
+        dpi: int = 100,
+        image_format: str = "jpg",
+    ) -> None:
+        """
+        Log a matplotlib figure.
+
+        Args:
+            key: Identifier for the figure
+            figure: Matplotlib Figure object
+            step: Optional step number
+            dpi: DPI for saving the figure (default: 100 for space efficiency)
+            image_format: Image format to use ("jpg" or "png")
+        """
+        ...
+
+    def log_image(
+        self,
+        key: str,
+        image: torch.Tensor,
+        step: int | None = None,
+        channels_last: bool = True,
+        image_format: str = "jpg",
+    ) -> None:
+        """
+        Log an image tensor.
+
+        Args:
+            key: Identifier for the image
+            image: Image tensor (HW, HWC, or CHW format)
+            step: Optional step number
+            channels_last: If True, assumes HWC format for 3D tensors; if False, assumes CHW
+            image_format: Image format to use ("jpg" or "png")
         """
         ...
 
@@ -165,6 +209,66 @@ class WandBLogger:
         else:
             self.run.log(log_dict)
 
+    def log_matplotlib_figure(
+        self,
+        key: str,
+        figure: Figure,
+        step: int | None = None,
+        dpi: int = 100,
+        image_format: str = "jpg",
+    ) -> None:
+        """Log matplotlib figure to WandB."""
+        buf = io.BytesIO()
+        # Use jpeg for jpg format
+        save_format = "jpeg" if image_format.lower() == "jpg" else image_format.lower()
+        figure.savefig(buf, format=save_format, dpi=dpi, bbox_inches="tight")
+        buf.seek(0)
+        image = self.wandb.Image(buf)
+        log_dict: dict[str, Any] = {key: image}
+        if step is not None:
+            self.run.log(log_dict, step=step)
+        else:
+            self.run.log(log_dict)
+        buf.close()
+
+    def log_image(
+        self,
+        key: str,
+        image: torch.Tensor,
+        step: int | None = None,
+        channels_last: bool = True,
+        image_format: str = "jpg",
+    ) -> None:
+        """Log image tensor to WandB."""
+        # Handle different tensor formats
+        if image.dim() == 2:
+            # HW format - add channel dimension
+            image = image.unsqueeze(0)  # CHW
+        elif image.dim() == 3:
+            # CHW or HWC format
+            if channels_last:
+                # Assume HWC, convert to CHW
+                image = image.permute(2, 0, 1)
+            # else: already in CHW format
+        else:
+            raise ValueError(f"Expected 2D or 3D tensor, got {image.dim()}D")
+
+        # Ensure values are in [0, 1] range
+        if image.dtype != torch.uint8:
+            image = torch.clamp(image, 0, 1)
+
+        # Convert to numpy and log
+        image_np = image.detach().cpu().numpy()
+        # WandB Image class handles the format internally
+        wandb_image = self.wandb.Image(
+            image_np, mode="RGB" if image.shape[0] == 3 else None
+        )
+        log_dict: dict[str, Any] = {key: wandb_image}
+        if step is not None:
+            self.run.log(log_dict, step=step)
+        else:
+            self.run.log(log_dict)
+
     def close(self) -> None:
         """Finish the WandB run."""
         self.run.finish()
@@ -224,6 +328,48 @@ class TensorBoardLogger:
         """Log text to TensorBoard."""
         global_step = step if step is not None else 0
         self.writer.add_text(key, text, global_step)
+
+    def log_matplotlib_figure(
+        self,
+        key: str,
+        figure: Figure,
+        step: int | None = None,
+        dpi: int = 100,
+        image_format: str = "jpg",
+    ) -> None:
+        """Log matplotlib figure to TensorBoard."""
+        global_step = step if step is not None else 0
+        self.writer.add_figure(key, figure, global_step, close=False)
+
+    def log_image(
+        self,
+        key: str,
+        image: torch.Tensor,
+        step: int | None = None,
+        channels_last: bool = True,
+        image_format: str = "jpg",
+    ) -> None:
+        """Log image tensor to TensorBoard."""
+        # Handle different tensor formats
+        if image.dim() == 2:
+            # HW format - add channel dimension
+            image = image.unsqueeze(0)  # CHW
+        elif image.dim() == 3:
+            # CHW or HWC format
+            if channels_last:
+                # Assume HWC, convert to CHW
+                image = image.permute(2, 0, 1)
+            # else: already in CHW format
+        else:
+            raise ValueError(f"Expected 2D or 3D tensor, got {image.dim()}D")
+
+        # Ensure values are in [0, 1] range
+        if image.dtype != torch.uint8:
+            image = torch.clamp(image, 0, 1)
+
+        global_step = step if step is not None else 0
+        # TensorBoard expects CHW format
+        self.writer.add_image(key, image, global_step, dataformats="CHW")
 
     def close(self) -> None:
         """Close the TensorBoard writer."""
@@ -301,6 +447,46 @@ class ConsoleLogger:
         step_str = f"[Step {step}] " if step is not None else ""
         self.logger.info(f"{step_str}{key}: {text}")
 
+    def log_matplotlib_figure(
+        self,
+        key: str,
+        figure: Figure,
+        step: int | None = None,
+        dpi: int = 100,
+        image_format: str = "jpg",
+    ) -> None:
+        """Log matplotlib figure info to console."""
+        step_str = f"[Step {step}] " if step is not None else ""
+        # Just log that a figure was generated - console can't display images
+        fig_size = figure.get_size_inches()
+        # Try to get figure title if available
+        title = (
+            figure._suptitle.get_text()
+            if hasattr(figure, "_suptitle") and figure._suptitle
+            else "untitled"
+        )
+        self.logger.info(
+            f"{step_str}Figure '{key}': title='{title}', size={fig_size[0]:.1f}x{fig_size[1]:.1f} inches"
+        )
+
+    def log_image(
+        self,
+        key: str,
+        image: torch.Tensor,
+        step: int | None = None,
+        channels_last: bool = True,
+        image_format: str = "jpg",
+    ) -> None:
+        """Log image tensor info to console."""
+        step_str = f"[Step {step}] " if step is not None else ""
+        # Just log image dimensions - console can't display images
+        shape_str = "x".join(str(s) for s in image.shape)
+        min_val = image.min().item() if image.numel() > 0 else 0
+        max_val = image.max().item() if image.numel() > 0 else 0
+        self.logger.info(
+            f"{step_str}Image '{key}': shape={shape_str}, range=[{min_val:.3f}, {max_val:.3f}]"
+        )
+
     def close(self) -> None:
         """No cleanup needed for console logger."""
 
@@ -356,6 +542,38 @@ class CompositeLogger:
                 logger_inst.log_text(key, text, step)
             except Exception:
                 logger.exception(f"Error in {logger_inst.__class__.__name__}.log_text")
+
+    def log_matplotlib_figure(
+        self,
+        key: str,
+        figure: Figure,
+        step: int | None = None,
+        dpi: int = 100,
+        image_format: str = "jpg",
+    ) -> None:
+        """Forward matplotlib figure to all loggers."""
+        for logger_inst in self.loggers:
+            try:
+                logger_inst.log_matplotlib_figure(key, figure, step, dpi, image_format)
+            except Exception:
+                logger.exception(
+                    f"Error in {logger_inst.__class__.__name__}.log_matplotlib_figure"
+                )
+
+    def log_image(
+        self,
+        key: str,
+        image: torch.Tensor,
+        step: int | None = None,
+        channels_last: bool = True,
+        image_format: str = "jpg",
+    ) -> None:
+        """Forward image tensor to all loggers."""
+        for logger_inst in self.loggers:
+            try:
+                logger_inst.log_image(key, image, step, channels_last, image_format)
+            except Exception:
+                logger.exception(f"Error in {logger_inst.__class__.__name__}.log_image")
 
     def close(self) -> None:
         """Close all loggers."""
