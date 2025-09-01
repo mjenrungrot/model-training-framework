@@ -518,6 +518,21 @@ class TestEdgeCases:
         combinations = list(grid.generate_permutations())
         assert len(combinations) == 0
 
+    def test_computed_only_grid_count(self):
+        """Test that grid with only computed parameters returns 1."""
+        grid = ParameterGrid("test")
+
+        # Add only a computed parameter
+        grid.add_computed_parameter("value", lambda p: 42)
+
+        # Should count as 1 combination
+        assert grid.get_parameter_count() == 1
+
+        # Verify generation matches count
+        combinations = list(grid.generate_permutations())
+        assert len(combinations) == 1
+        assert combinations[0] == {"value": 42}
+
     def test_unconditional_conditional_parameter_count(self):
         """Test that unconditional conditional parameters are counted correctly."""
         grid = ParameterGrid("test")
@@ -579,6 +594,44 @@ class TestEdgeCases:
         # Should skip invalid spec with warning
         grid = ParameterGrid.from_dict(data)
         assert len(grid.parameter_specs) == 0  # Invalid spec was skipped
+
+    def test_inconsistent_parameter_sets(self):
+        """Test that add_parameter_sets validates key consistency."""
+        grid = ParameterGrid("test")
+
+        # Try to add parameter sets with inconsistent keys
+        with pytest.raises(ValueError, match="inconsistent keys"):
+            grid.add_parameter_sets(
+                [
+                    {"lr": 0.1, "weight_decay": 0.1},
+                    {"lr": 0.01, "weight_decay": 0.01, "warmup": 500},  # Extra key
+                    {"lr": 0.001},  # Missing key
+                ]
+            )
+
+    def test_parameter_sets_missing_keys(self):
+        """Test that add_parameter_sets reports missing keys."""
+        grid = ParameterGrid("test")
+
+        with pytest.raises(ValueError, match="Missing: {'weight_decay'}"):
+            grid.add_parameter_sets(
+                [
+                    {"lr": 0.1, "weight_decay": 0.1},
+                    {"lr": 0.01},  # Missing weight_decay
+                ]
+            )
+
+    def test_parameter_sets_extra_keys(self):
+        """Test that add_parameter_sets reports extra keys."""
+        grid = ParameterGrid("test")
+
+        with pytest.raises(ValueError, match="Extra: {'warmup'}"):
+            grid.add_parameter_sets(
+                [
+                    {"lr": 0.1, "weight_decay": 0.1},
+                    {"lr": 0.01, "weight_decay": 0.01, "warmup": 500},  # Extra warmup
+                ]
+            )
 
     def test_deserialization_with_multiple_keys(self):
         """Test that deserialization rejects specs with multiple keys."""

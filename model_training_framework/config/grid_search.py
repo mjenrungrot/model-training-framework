@@ -290,12 +290,31 @@ class ParameterGrid:
 
         Returns:
             Self for method chaining
+
+        Raises:
+            ValueError: If parameter sets are empty or have inconsistent keys
         """
         if not parameter_sets:
             raise ValueError("Parameter sets cannot be empty")
 
         # Extract keys from first set
-        keys = list(parameter_sets[0].keys())
+        first_keys = set(parameter_sets[0].keys())
+
+        # Validate all sets have the same keys
+        for i, param_set in enumerate(parameter_sets[1:], start=1):
+            current_keys = set(param_set.keys())
+            if current_keys != first_keys:
+                missing = first_keys - current_keys
+                extra = current_keys - first_keys
+                msg = f"Parameter set at index {i} has inconsistent keys. "
+                if missing:
+                    msg += f"Missing: {missing}. "
+                if extra:
+                    msg += f"Extra: {extra}."
+                raise ValueError(msg)
+
+        # Convert to consistent order
+        keys = sorted(first_keys)  # Use sorted for deterministic order
         # Pass dictionaries directly since LinkedParameterSpec accepts them
         return self.add_linked_parameters(keys, parameter_sets)
 
@@ -473,6 +492,26 @@ class ParameterGrid:
         if not self.parameters and not self.parameter_specs:
             return 0
 
+        # For accurate counting with conditional parameters that depend on base values,
+        # we need to actually generate and count the combinations
+        has_conditional_with_condition = any(
+            spec.param_type == ParameterType.CONDITIONAL
+            and isinstance(spec, ConditionalParameterSpec)
+            and (spec.condition or spec.condition_func)
+            for spec in self.parameter_specs
+        )
+
+        if has_conditional_with_condition:
+            # Need to generate to count accurately
+            count = sum(1 for _ in self.generate_permutations())
+            # Handle computed-only case
+            if count == 0 and any(
+                spec.param_type == ParameterType.COMPUTED
+                for spec in self.parameter_specs
+            ):
+                return 1
+            return count
+
         # Handle traditional parameters
         traditional_count = 1
         if self.parameters:
@@ -522,13 +561,19 @@ class ParameterGrid:
         total = base_count * dist_count * unconditional_cond_count
 
         # Special case: if we only have traditional params set to 0 and nothing else
+        # But computed parameters still produce one combination
         if (
             traditional_count == 0
             and linked_count == 0
             and dist_count == 1
             and unconditional_cond_count == 1
         ):
-            return 0
+            # Check if we have computed parameters
+            has_computed = any(
+                spec.param_type == ParameterType.COMPUTED
+                for spec in self.parameter_specs
+            )
+            return 1 if has_computed else 0
 
         return total
 
