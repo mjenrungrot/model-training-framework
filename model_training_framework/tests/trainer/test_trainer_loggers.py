@@ -94,6 +94,42 @@ class TestConsoleLogger:
         assert "Model has 1M parameters" in caplog.text
         assert "Step 50" in caplog.text
 
+    def test_console_logger_matplotlib_figure(self, caplog):
+        """Test console logger logs matplotlib figure info."""
+        logger = ConsoleLogger(log_level="INFO")
+
+        # Create a mock figure
+        mock_figure = MagicMock()
+        mock_figure.get_size_inches.return_value = (8.0, 6.0)
+        mock_figure._suptitle = MagicMock()
+        mock_figure._suptitle.get_text.return_value = "Test Figure"
+
+        logger.log_matplotlib_figure("test_plot", mock_figure, step=100)
+
+        assert "Figure 'test_plot'" in caplog.text
+        assert "title='Test Figure'" in caplog.text
+        assert "8.0x6.0" in caplog.text
+        assert "Step 100" in caplog.text
+
+    def test_console_logger_image(self, caplog):
+        """Test console logger logs image tensor info."""
+        logger = ConsoleLogger(log_level="INFO")
+
+        # Test 2D tensor (HW)
+        image_2d = torch.randn(100, 100)
+        logger.log_image("test_image_2d", image_2d, step=50)
+
+        assert "Image 'test_image_2d'" in caplog.text
+        assert "shape=100x100" in caplog.text
+        assert "Step 50" in caplog.text
+
+        # Test 3D tensor (HWC)
+        image_3d = torch.randn(100, 100, 3)
+        logger.log_image("test_image_3d", image_3d, step=60, channels_last=True)
+
+        assert "Image 'test_image_3d'" in caplog.text
+        assert "shape=100x100x3" in caplog.text
+
 
 class TestTensorBoardLogger:
     """Test TensorBoard logger implementation."""
@@ -144,6 +180,53 @@ class TestTensorBoardLogger:
             logger.log_loader_proportions(
                 epoch=3, proportions=proportions, counts=counts
             )
+
+            logger.close()
+
+    def test_tensorboard_logger_matplotlib_figure(self):
+        """Test TensorBoard logger logs matplotlib figures."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            logger = TensorBoardLogger(log_dir=tmpdir)
+
+            # Create a mock figure
+            mock_figure = MagicMock()
+
+            # Mock the writer's add_figure method
+            with patch.object(logger.writer, "add_figure") as mock_add_figure:
+                logger.log_matplotlib_figure("test_plot", mock_figure, step=100)
+                mock_add_figure.assert_called_once_with(
+                    "test_plot", mock_figure, 100, close=False
+                )
+
+            logger.close()
+
+    def test_tensorboard_logger_image(self):
+        """Test TensorBoard logger logs image tensors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            logger = TensorBoardLogger(log_dir=tmpdir)
+
+            # Test 2D tensor (HW)
+            image_2d = torch.randn(100, 100)
+
+            with patch.object(logger.writer, "add_image") as mock_add_image:
+                logger.log_image("test_image_2d", image_2d, step=50)
+                # Should add channel dimension and call add_image
+                assert mock_add_image.called
+                call_args = mock_add_image.call_args
+                assert call_args[0][0] == "test_image_2d"
+                assert call_args[0][2] == 50
+                assert call_args[1]["dataformats"] == "CHW"
+
+            # Test 3D tensor (HWC)
+            image_3d = torch.randn(100, 100, 3)
+
+            with patch.object(logger.writer, "add_image") as mock_add_image:
+                logger.log_image("test_image_3d", image_3d, step=60, channels_last=True)
+                assert mock_add_image.called
+                call_args = mock_add_image.call_args
+                # Should have been converted to CHW
+                logged_image = call_args[0][1]
+                assert logged_image.shape == (3, 100, 100)
 
             logger.close()
 
@@ -216,6 +299,69 @@ class TestWandBLogger:
 
         mock_run.finish.assert_called_once()
 
+    @patch("model_training_framework.trainer.loggers.wandb_mod")
+    @patch("model_training_framework.trainer.loggers.Image")
+    def test_wandb_logger_matplotlib_figure(self, mock_pil_image, mock_wandb):
+        """Test WandB logger logs matplotlib figures."""
+        mock_run = MagicMock()
+        mock_wandb.init.return_value = mock_run
+        mock_wandb.Image = MagicMock(return_value="mock_image")
+
+        # Mock PIL Image.open
+        mock_pil_image.open.return_value = "mock_pil_image"
+
+        logger = WandBLogger(project="test_project")
+
+        # Create a mock figure
+        mock_figure = MagicMock()
+        mock_figure.savefig = MagicMock()
+
+        logger.log_matplotlib_figure("test_plot", mock_figure, step=100, dpi=100)
+
+        # Check that savefig was called with correct parameters
+        mock_figure.savefig.assert_called_once()
+        call_args = mock_figure.savefig.call_args
+        assert call_args[1]["format"] == "jpeg"  # Default is jpg
+        assert call_args[1]["dpi"] == 100
+        assert call_args[1]["bbox_inches"] == "tight"
+
+        # Check that PIL Image.open was called
+        mock_pil_image.open.assert_called_once()
+
+        # Check that wandb.Image was called with the PIL image
+        mock_wandb.Image.assert_called_with("mock_pil_image")
+
+        # Check that log was called
+        mock_run.log.assert_called_once()
+        assert mock_run.log.call_args[1]["step"] == 100
+
+    @patch("model_training_framework.trainer.loggers.wandb_mod")
+    def test_wandb_logger_image(self, mock_wandb):
+        """Test WandB logger logs image tensors."""
+        mock_run = MagicMock()
+        mock_wandb.init.return_value = mock_run
+        mock_wandb.Image = MagicMock(return_value="mock_image")
+
+        logger = WandBLogger(project="test_project")
+
+        # Test 2D tensor (HW)
+        image_2d = torch.randn(100, 100)
+        logger.log_image("test_image_2d", image_2d, step=50)
+
+        # Check Image was created and logged
+        assert mock_wandb.Image.called
+        mock_run.log.assert_called()
+
+        # Test 3D tensor (HWC)
+        image_3d = torch.randn(100, 100, 3).clamp(0, 1)
+        logger.log_image("test_image_3d", image_3d, step=60, channels_last=True)
+
+        # Check that image was processed correctly
+        assert mock_wandb.Image.called
+        # Get the numpy array that was passed to wandb.Image
+        image_np = mock_wandb.Image.call_args[0][0]
+        assert image_np.shape == (3, 100, 100)  # Should be CHW format
+
 
 class TestCompositeLogger:
     """Test composite logger implementation."""
@@ -269,6 +415,44 @@ class TestCompositeLogger:
 
         mock_logger1.close.assert_called_once()
         mock_logger2.close.assert_called_once()
+
+    def test_composite_logger_matplotlib_figure(self):
+        """Test composite logger forwards matplotlib figures to all loggers."""
+        mock_logger1 = MagicMock()
+        mock_logger2 = MagicMock()
+
+        composite = CompositeLogger([mock_logger1, mock_logger2])
+
+        # Create a mock figure
+        mock_figure = MagicMock()
+
+        composite.log_matplotlib_figure("test_plot", mock_figure, step=100, dpi=100)
+
+        # Check both loggers received the call
+        mock_logger1.log_matplotlib_figure.assert_called_once_with(
+            "test_plot", mock_figure, 100, 100, "jpg"
+        )
+        mock_logger2.log_matplotlib_figure.assert_called_once_with(
+            "test_plot", mock_figure, 100, 100, "jpg"
+        )
+
+    def test_composite_logger_image(self):
+        """Test composite logger forwards image tensors to all loggers."""
+        mock_logger1 = MagicMock()
+        mock_logger2 = MagicMock()
+
+        composite = CompositeLogger([mock_logger1, mock_logger2])
+
+        image = torch.randn(100, 100, 3)
+        composite.log_image("test_image", image, step=50, channels_last=True)
+
+        # Check both loggers received the call
+        mock_logger1.log_image.assert_called_once_with(
+            "test_image", image, 50, True, "jpg"
+        )
+        mock_logger2.log_image.assert_called_once_with(
+            "test_image", image, 50, True, "jpg"
+        )
 
 
 class TestCreateLogger:
