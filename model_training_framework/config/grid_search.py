@@ -2,7 +2,12 @@
 Parameter Grid Search Engine
 
 This module provides sophisticated parameter grid search capabilities:
-- Definition of parameter search spaces
+- Definition of parameter search spaces with multiple specification methods
+- Linked parameters that vary together (inspired by pytest.mark.parametrize)
+- Conditional parameters based on other parameter values
+- Computed parameters derived from other parameters
+- Parameter sampling from distributions
+- Constraints and exclusion patterns for filtering combinations
 - Generation of all parameter permutations
 - Experiment naming and organization
 - Grid search execution and management
@@ -10,14 +15,18 @@ This module provides sophisticated parameter grid search capabilities:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from contextlib import suppress
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
+from enum import Enum
 import itertools
 import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from .naming import ExperimentNaming
 from .schemas import (
@@ -45,6 +54,131 @@ logger = logging.getLogger(__name__)
 MAX_GRID_COMBINATIONS = 10000
 
 
+class ParameterType(Enum):
+    """Types of parameter specifications."""
+
+    SINGLE = "single"  # Traditional single parameter
+    LINKED = "linked"  # Parameters that vary together
+    CONDITIONAL = "conditional"  # Parameters that depend on conditions
+    COMPUTED = "computed"  # Parameters computed from others
+    DISTRIBUTION = "distribution"  # Parameters sampled from distribution
+
+
+@dataclass
+class ParameterSpec:
+    """Base class for parameter specifications."""
+
+    param_type: ParameterType
+    keys: list[str] = field(default_factory=list)
+    values: list[Any] = field(default_factory=list)
+
+
+@dataclass
+class LinkedParameterSpec(ParameterSpec):
+    """Specification for linked parameters that vary together."""
+
+    def __init__(
+        self, keys: list[str], value_sets: Sequence[tuple[Any, ...] | dict[str, Any]]
+    ):
+        super().__init__(param_type=ParameterType.LINKED, keys=keys)
+        # Convert tuples to dicts for consistent handling
+        self.values = []
+        for vs in value_sets:
+            if isinstance(vs, dict):
+                self.values.append(vs)
+            else:
+                self.values.append(dict(zip(keys, vs)))
+
+
+@dataclass
+class ConditionalParameterSpec(ParameterSpec):
+    """Specification for conditional parameters."""
+
+    condition: dict[str, Any] = field(default_factory=dict)
+    condition_func: Callable[[dict[str, Any]], bool] | None = None
+
+    def __init__(
+        self,
+        key: str,
+        values: list[Any],
+        when: dict[str, Any] | None = None,
+        when_func: Callable[[dict[str, Any]], bool] | None = None,
+    ):
+        super().__init__(
+            param_type=ParameterType.CONDITIONAL, keys=[key], values=values
+        )
+        self.condition = when or {}
+        self.condition_func = when_func
+
+    def applies_to(self, params: dict[str, Any]) -> bool:
+        """Check if this conditional parameter applies to given parameters."""
+        if self.condition_func:
+            return self.condition_func(params)
+        return all(params.get(k) == v for k, v in self.condition.items())
+
+
+@dataclass
+class ComputedParameterSpec(ParameterSpec):
+    """Specification for computed parameters."""
+
+    compute_func: Callable[[dict[str, Any]], Any] = field(default=lambda x: None)
+
+    def __init__(self, key: str, compute_func: Callable[[dict[str, Any]], Any]):
+        super().__init__(param_type=ParameterType.COMPUTED, keys=[key])
+        self.compute_func = compute_func
+
+
+@dataclass
+class DistributionParameterSpec(ParameterSpec):
+    """Specification for parameters sampled from distributions."""
+
+    distribution: str = ""
+    params: dict[str, Any] = field(default_factory=dict)
+    n_samples: int = 10
+    seed: int | None = None
+
+    def __init__(
+        self,
+        key: str,
+        distribution: str,
+        n_samples: int = 10,
+        seed: int | None = None,
+        **dist_params: Any,
+    ):
+        super().__init__(param_type=ParameterType.DISTRIBUTION, keys=[key])
+        self.distribution = distribution
+        self.params = dist_params
+        self.n_samples = n_samples
+        self.seed = seed
+        self._generate_samples()
+
+    def _generate_samples(self) -> None:
+        """Generate samples from the distribution."""
+        # Set seed if provided for reproducibility
+        rng = np.random.RandomState(self.seed) if self.seed is not None else np.random
+
+        if self.distribution == "uniform":
+            low = self.params.get("low", 0)
+            high = self.params.get("high", 1)
+            self.values = list(rng.uniform(low, high, self.n_samples))
+        elif self.distribution == "loguniform":
+            low = np.log10(self.params.get("low", 1e-5))
+            high = np.log10(self.params.get("high", 1e-1))
+            self.values = list(10 ** rng.uniform(low, high, self.n_samples))
+        elif self.distribution == "normal":
+            mean = self.params.get("mean", 0)
+            std = self.params.get("std", 1)
+            self.values = list(rng.normal(mean, std, self.n_samples))
+        elif self.distribution == "choice":
+            choices = self.params.get("choices", [])
+            weights = self.params.get("weights")
+            self.values = list(
+                rng.choice(choices, size=self.n_samples, p=weights, replace=True)
+            )
+        else:
+            raise ValueError(f"Unknown distribution: {self.distribution}")
+
+
 @dataclass
 class ParameterGrid:
     """Defines a parameter search space with improved API.
@@ -53,11 +187,19 @@ class ParameterGrid:
         name: Name of the parameter grid
         description: Optional description of what this grid explores
         parameters: Dictionary mapping parameter paths to lists of values
+        parameter_specs: List of advanced parameter specifications
+        constraints: List of constraint functions
+        exclude_patterns: List of patterns to exclude
     """
 
     name: str
     description: str = ""
     parameters: dict[str, list[Any]] = field(default_factory=dict)
+    parameter_specs: list[ParameterSpec] = field(default_factory=list)
+    constraints: list[Callable[[dict[str, Any]], bool]] = field(default_factory=list)
+    exclude_patterns: list[dict[str, Any] | Callable[[dict[str, Any]], bool]] = field(
+        default_factory=list
+    )
 
     def add_parameter(
         self, key: str, values: list[Any], validate: Callable[[Any], bool] | None = None
@@ -101,6 +243,204 @@ class ParameterGrid:
         """
         return self.add_parameter(key_path, values)
 
+    def add_linked_parameters(
+        self, keys: list[str], value_sets: Sequence[tuple[Any, ...] | dict[str, Any]]
+    ) -> ParameterGrid:
+        """Add parameters that vary together (inspired by pytest.mark.parametrize).
+
+        Args:
+            keys: Parameter keys that vary together
+            value_sets: List of value tuples or dicts for the parameters
+
+        Example:
+            grid.add_linked_parameters(
+                ["lr", "weight_decay"],
+                [(0.1, 0.1), (0.01, 0.01), (0.001, 0.001)]
+            )
+
+        Returns:
+            Self for method chaining
+        """
+        spec = LinkedParameterSpec(keys, value_sets)
+        self.parameter_specs.append(spec)
+        logger.debug(
+            f"Added linked parameters {keys} with {len(value_sets)} value sets to grid '{self.name}'"
+        )
+        return self
+
+    def add_parameter_sets(self, parameter_sets: list[dict[str, Any]]) -> ParameterGrid:
+        """Add complete parameter sets that vary together.
+
+        Args:
+            parameter_sets: List of parameter dictionaries
+
+        Example:
+            grid.add_parameter_sets([
+                {"lr": 0.1, "weight_decay": 0.1, "warmup": 100},
+                {"lr": 0.01, "weight_decay": 0.01, "warmup": 500}
+            ])
+
+        Returns:
+            Self for method chaining
+        """
+        if not parameter_sets:
+            raise ValueError("Parameter sets cannot be empty")
+
+        # Extract keys from first set
+        keys = list(parameter_sets[0].keys())
+        # Pass dictionaries directly since LinkedParameterSpec accepts them
+        return self.add_linked_parameters(keys, parameter_sets)
+
+    def add_conditional_parameter(
+        self,
+        key: str,
+        values: list[Any],
+        when: dict[str, Any] | None = None,
+        when_func: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> ParameterGrid:
+        """Add a parameter that only applies under certain conditions.
+
+        Args:
+            key: Parameter key
+            values: Possible values for this parameter
+            when: Dictionary of conditions (all must match)
+            when_func: Function that returns True when parameter should apply
+
+        Example:
+            grid.add_conditional_parameter(
+                "momentum", [0.9, 0.95],
+                when={"optimizer": "sgd"}
+            )
+
+        Returns:
+            Self for method chaining
+        """
+        spec = ConditionalParameterSpec(key, values, when, when_func)
+        self.parameter_specs.append(spec)
+        logger.debug(
+            f"Added conditional parameter '{key}' with {len(values)} values to grid '{self.name}'"
+        )
+        return self
+
+    def add_computed_parameter(
+        self, key: str, compute_func: Callable[[dict[str, Any]], Any]
+    ) -> ParameterGrid:
+        """Add a parameter computed from other parameters.
+
+        Args:
+            key: Parameter key
+            compute_func: Function to compute value from other parameters
+
+        Example:
+            grid.add_computed_parameter(
+                "warmup_steps",
+                lambda params: int(params["num_epochs"] * 0.1)
+            )
+
+        Returns:
+            Self for method chaining
+        """
+        spec = ComputedParameterSpec(key, compute_func)
+        self.parameter_specs.append(spec)
+        logger.debug(f"Added computed parameter '{key}' to grid '{self.name}'")
+        return self
+
+    def add_parameter_from_function(
+        self, key: str, generator_func: Callable[[], list[Any]]
+    ) -> ParameterGrid:
+        """Add parameter values generated by a function.
+
+        Args:
+            key: Parameter key
+            generator_func: Function that returns list of values
+
+        Example:
+            grid.add_parameter_from_function(
+                "lr",
+                lambda: np.logspace(-4, -1, num=10).tolist()
+            )
+
+        Returns:
+            Self for method chaining
+        """
+        values = generator_func()
+        return self.add_parameter(key, values)
+
+    def add_parameter_distribution(
+        self,
+        key: str,
+        distribution: str,
+        n_samples: int = 10,
+        seed: int | None = None,
+        **dist_params: Any,
+    ) -> ParameterGrid:
+        """Add parameter values sampled from a distribution.
+
+        Args:
+            key: Parameter key
+            distribution: Distribution name ("uniform", "loguniform", "normal", "choice")
+            n_samples: Number of samples to generate
+            seed: Optional random seed for reproducibility
+            **dist_params: Distribution parameters
+
+        Example:
+            grid.add_parameter_distribution(
+                "lr", "loguniform", n_samples=20, seed=42, low=1e-5, high=1e-1
+            )
+
+        Returns:
+            Self for method chaining
+        """
+        spec = DistributionParameterSpec(
+            key, distribution, n_samples, seed, **dist_params
+        )
+        self.parameter_specs.append(spec)
+        logger.debug(
+            f"Added distribution parameter '{key}' with {n_samples} samples to grid '{self.name}'"
+        )
+        return self
+
+    def add_constraint(
+        self, constraint_func: Callable[[dict[str, Any]], bool]
+    ) -> ParameterGrid:
+        """Add a constraint function to filter valid parameter combinations.
+
+        Args:
+            constraint_func: Function that returns True for valid combinations
+
+        Example:
+            grid.add_constraint(
+                lambda p: p["batch_size"] * p["accumulation_steps"] <= 64
+            )
+
+        Returns:
+            Self for method chaining
+        """
+        self.constraints.append(constraint_func)
+        logger.debug(f"Added constraint to grid '{self.name}'")
+        return self
+
+    def exclude_combinations(
+        self, patterns: list[dict[str, Any] | Callable[[dict[str, Any]], bool]]
+    ) -> ParameterGrid:
+        """Exclude specific parameter combinations.
+
+        Args:
+            patterns: List of patterns to exclude (dicts or functions)
+
+        Example:
+            grid.exclude_combinations([
+                {"lr": 0.1, "batch_size": 64},  # Exclude specific combo
+                lambda p: p["lr"] > 0.01 and p["batch_size"] < 32  # Exclude pattern
+            ])
+
+        Returns:
+            Self for method chaining
+        """
+        self.exclude_patterns.extend(patterns)
+        logger.debug(f"Added {len(patterns)} exclusion patterns to grid '{self.name}'")
+        return self
+
     def remove_parameter(self, key: str) -> ParameterGrid:
         """Remove a parameter from the grid.
 
@@ -121,13 +461,39 @@ class ParameterGrid:
         Returns:
             Number of unique parameter combinations
         """
-        if not self.parameters:
-            return 0
+        # Handle traditional parameters
+        traditional_count = 1
+        if self.parameters:
+            for values in self.parameters.values():
+                traditional_count *= len(values)
+        else:
+            traditional_count = 0
 
-        count = 1
-        for values in self.parameters.values():
-            count *= len(values)
-        return count
+        # Handle advanced parameter specs
+        linked_count = 0
+        dist_count = 1
+
+        for spec in self.parameter_specs:
+            if spec.param_type == ParameterType.LINKED:
+                # Linked parameters represent alternative sets
+                linked_count = max(linked_count, len(spec.values))
+            elif spec.param_type == ParameterType.DISTRIBUTION:
+                # Distribution parameters multiply with each other
+                dist_count *= len(spec.values)
+            # Conditional and computed don't add to base count directly
+
+        # Calculate total based on what we have
+        if traditional_count == 0:
+            if linked_count > 0 and dist_count > 1:
+                return linked_count * dist_count
+            if linked_count > 0:
+                return linked_count
+            if dist_count >= 1:  # Changed from > 1 to >= 1
+                return dist_count
+            return 0
+        # Traditional parameters multiply with specs
+        spec_multiplier = max(linked_count, 1) * dist_count
+        return traditional_count * spec_multiplier
 
     def get_parameter_names(self) -> set[str]:
         """Get set of all parameter names.
@@ -135,7 +501,13 @@ class ParameterGrid:
         Returns:
             Set of parameter keys
         """
-        return set(self.parameters.keys())
+        names = set(self.parameters.keys())
+
+        # Add keys from parameter specs
+        for spec in self.parameter_specs:
+            names.update(spec.keys)
+
+        return names
 
     def generate_permutations(self) -> Iterator[dict[str, Any]]:
         """Generate all parameter combinations.
@@ -143,15 +515,131 @@ class ParameterGrid:
         Yields:
             Dictionary mapping parameter keys to values
         """
-        if not self.parameters:
-            yield {}
-            return
+        # Generate base combinations from traditional parameters
+        base_combinations = []
+        if self.parameters:
+            keys = list(self.parameters.keys())
+            value_lists = [self.parameters[key] for key in keys]
+            for combination in itertools.product(*value_lists):
+                base_combinations.append(dict(zip(keys, combination)))
+        else:
+            base_combinations = [{}]
 
-        keys = list(self.parameters.keys())
-        value_lists = [self.parameters[key] for key in keys]
+        # Collect special parameter specs
+        linked_specs = []
+        distribution_specs = []
+        for spec in self.parameter_specs:
+            if spec.param_type == ParameterType.LINKED:
+                linked_specs.append(spec)
+            elif spec.param_type == ParameterType.DISTRIBUTION:
+                distribution_specs.append(spec)
 
-        for combination in itertools.product(*value_lists):
-            yield dict(zip(keys, combination))
+        # Handle linked parameters
+        if linked_specs:
+            linked_combinations = []
+            for spec in linked_specs:
+                linked_combinations.extend(spec.values)
+        else:
+            linked_combinations = []
+
+        # Handle distribution parameters (treat them like traditional parameters)
+        dist_combinations = []
+        if distribution_specs:
+            # Each distribution spec has a key and values
+            dist_keys = []
+            dist_value_lists = []
+            for spec in distribution_specs:
+                if spec.keys:  # Should have one key
+                    dist_keys.append(spec.keys[0])
+                    dist_value_lists.append(spec.values)
+
+            if dist_keys and dist_value_lists:
+                for combination in itertools.product(*dist_value_lists):
+                    dist_combinations.append(dict(zip(dist_keys, combination)))
+
+        # Combine all types of parameters
+        if linked_combinations and dist_combinations:
+            # Combine linked and distribution
+            for linked in linked_combinations:
+                for dist in dist_combinations:
+                    for base in base_combinations:
+                        combined = {**base, **linked, **dist}
+                        yield from self._process_combination(combined)
+        elif linked_combinations:
+            # Only linked
+            for base in base_combinations:
+                for linked in linked_combinations:
+                    combined = {**base, **linked}
+                    yield from self._process_combination(combined)
+        elif dist_combinations:
+            # Only distribution
+            for base in base_combinations:
+                for dist in dist_combinations:
+                    combined = {**base, **dist}
+                    yield from self._process_combination(combined)
+        else:
+            # Only traditional
+            for base in base_combinations:
+                yield from self._process_combination(base)
+
+    def _process_combination(self, params: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Process a single parameter combination with conditionals, computed, constraints."""
+        # Collect all applicable conditional parameters
+        applicable_conditionals = []
+        for spec in self.parameter_specs:
+            if (
+                spec.param_type == ParameterType.CONDITIONAL
+                and isinstance(spec, ConditionalParameterSpec)
+                and spec.applies_to(params)
+            ):
+                applicable_conditionals.append(spec)
+
+        if applicable_conditionals:
+            # Generate all combinations of applicable conditional parameters
+            cond_keys = []
+            cond_value_lists = []
+            for spec in applicable_conditionals:
+                if spec.keys:
+                    cond_keys.append(spec.keys[0])
+                    cond_value_lists.append(spec.values)
+
+            # Generate all combinations
+            for combination in itertools.product(*cond_value_lists):
+                extended_params = {**params}
+                for key, value in zip(cond_keys, combination):
+                    extended_params[key] = value
+                yield from self._finalize_combination(extended_params)
+        else:
+            # No conditional parameters apply
+            yield from self._finalize_combination(params)
+
+    def _finalize_combination(self, params: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Apply computed parameters, constraints, and exclusions."""
+        # Apply computed parameters
+        for spec in self.parameter_specs:
+            if spec.param_type == ParameterType.COMPUTED and isinstance(
+                spec, ComputedParameterSpec
+            ):
+                with suppress(KeyError, TypeError, ValueError):
+                    # Skip if computation fails (dependent params might not exist)
+                    params[spec.keys[0]] = spec.compute_func(params)
+
+        # Check constraints
+        for constraint in self.constraints:
+            if not constraint(params):
+                return  # Skip this combination
+
+        # Check exclusion patterns
+        for pattern in self.exclude_patterns:
+            if callable(pattern):
+                if pattern(params):
+                    return  # Skip this combination
+            elif isinstance(pattern, dict) and all(
+                params.get(k) == v for k, v in pattern.items()
+            ):
+                return  # Skip this combination
+
+        yield params
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization.
@@ -159,10 +647,40 @@ class ParameterGrid:
         Returns:
             Dictionary representation
         """
+        # Serialize parameter specs
+        specs_data = []
+        for spec in self.parameter_specs:
+            spec_dict = {
+                "type": spec.param_type.value,
+                "keys": spec.keys,
+                "values": spec.values,
+            }
+
+            # Add type-specific fields
+            if isinstance(spec, ConditionalParameterSpec):
+                spec_dict["condition"] = spec.condition
+                # Note: Can't serialize condition_func
+            elif isinstance(spec, ComputedParameterSpec):
+                # Note: Can't serialize compute_func - will need to be re-added manually
+                spec_dict["compute_func_str"] = "# Function not serializable"
+            elif isinstance(spec, DistributionParameterSpec):
+                spec_dict["distribution"] = spec.distribution
+                spec_dict["params"] = spec.params
+                spec_dict["n_samples"] = spec.n_samples
+                spec_dict["seed"] = spec.seed
+                # Store actual values for reproducibility
+                spec_dict["values"] = spec.values
+
+            specs_data.append(spec_dict)
+
         return {
             "name": self.name,
             "description": self.description,
             "parameters": self.parameters,
+            "parameter_specs": specs_data,
+            # Note: Constraints and exclude_patterns with functions can't be serialized
+            "has_constraints": len(self.constraints) > 0,
+            "has_exclusions": len(self.exclude_patterns) > 0,
         }
 
     @classmethod
@@ -175,11 +693,65 @@ class ParameterGrid:
         Returns:
             ParameterGrid instance
         """
-        return cls(
+        grid = cls(
             name=data["name"],
             description=data.get("description", ""),
             parameters=data.get("parameters", {}),
         )
+
+        # Restore parameter specs
+        for spec_data in data.get("parameter_specs", []):
+            spec_type = ParameterType(spec_data["type"])
+
+            if spec_type == ParameterType.LINKED:
+                # Reconstruct linked spec
+                spec = LinkedParameterSpec(spec_data["keys"], spec_data["values"])
+                grid.parameter_specs.append(spec)
+            elif spec_type == ParameterType.CONDITIONAL:
+                # Reconstruct conditional spec (without function)
+                spec = ConditionalParameterSpec(
+                    spec_data.get("keys", [""])[0] if spec_data.get("keys") else "",
+                    spec_data.get("values", []),
+                    when=spec_data.get("condition", {}),
+                )
+                grid.parameter_specs.append(spec)
+            elif spec_type == ParameterType.DISTRIBUTION:
+                # Reconstruct distribution spec
+                key = spec_data.get("keys", [""])[0] if spec_data.get("keys") else ""
+                if "values" in spec_data:
+                    # Use persisted values for reproducibility
+                    spec = DistributionParameterSpec(
+                        key,
+                        spec_data.get("distribution", "uniform"),
+                        spec_data.get("n_samples", 10),
+                        spec_data.get("seed"),
+                        **spec_data.get("params", {}),
+                    )
+                    # Override with persisted values
+                    spec.values = spec_data["values"]
+                else:
+                    # Re-generate if no values persisted
+                    spec = DistributionParameterSpec(
+                        key,
+                        spec_data.get("distribution", "uniform"),
+                        spec_data.get("n_samples", 10),
+                        spec_data.get("seed"),
+                        **spec_data.get("params", {}),
+                    )
+                grid.parameter_specs.append(spec)
+            # Note: Computed specs can't be fully restored without the function
+
+        # Log warnings about non-serializable features
+        if data.get("has_constraints"):
+            logger.warning(
+                f"Grid '{data['name']}' had constraints that could not be restored"
+            )
+        if data.get("has_exclusions"):
+            logger.warning(
+                f"Grid '{data['name']}' had exclusion patterns that could not be restored"
+            )
+
+        return grid
 
     def validate(self) -> list[str]:
         """Validate the parameter grid.
@@ -198,6 +770,34 @@ class ParameterGrid:
             issues.append(
                 f"Grid '{self.name}' has too many combinations: {self.get_parameter_count()}"
             )
+
+        # Check for duplicate keys across different parameter sources
+        all_keys = list(self.parameters.keys())
+        seen_keys = set(all_keys)
+
+        # Check for duplicates in traditional parameters
+        if len(all_keys) != len(seen_keys):
+            issues.append(f"Grid '{self.name}' has duplicate parameter keys")
+
+        # Check specs for duplicate keys
+        for spec in self.parameter_specs:
+            for key in spec.keys:
+                if key in seen_keys:
+                    issues.append(
+                        f"Grid '{self.name}': Parameter '{key}' defined in multiple places"
+                    )
+                seen_keys.add(key)
+
+        # Warn about overlapping conditional parameters
+        conditional_keys = {}
+        for spec in self.parameter_specs:
+            if spec.param_type == ParameterType.CONDITIONAL:
+                for key in spec.keys:
+                    if key in conditional_keys:
+                        issues.append(
+                            f"Grid '{self.name}': Multiple conditional specs target key '{key}'"
+                        )
+                    conditional_keys[key] = True
 
         return issues
 
