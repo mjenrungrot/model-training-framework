@@ -778,8 +778,11 @@ class ParameterGrid:
         yield params
 
     @staticmethod
-    def _to_python_primitive(value: Any) -> Any:
+    def _to_python_primitive(value: Any) -> Any:  # noqa: PLR0911
         """Convert numpy types to Python primitives for JSON serialization."""
+        # Check for numpy boolean types
+        if isinstance(value, np.bool_):
+            return bool(value)
         # Check for numpy integer types (can't use | with numpy types)
         if isinstance(value, (np.integer, np.int64, np.int32)):  # noqa: UP038
             return int(value)
