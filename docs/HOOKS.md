@@ -243,6 +243,34 @@ class TrainerHooks:
         """Called after processing a validation batch."""
         pass
 
+    # Forward pass
+    def on_before_forward(self, trainer):
+        """Called before forward pass during training or validation.
+
+        Args:
+            trainer: The GenericTrainer instance
+
+        Purpose:
+            - Set up timing measurements
+            - Prepare model state
+            - Enable profiling tools
+        """
+        pass
+
+    def on_after_forward(self, trainer, forward_time_ms):
+        """Called after forward pass during training or validation.
+
+        Args:
+            trainer: The GenericTrainer instance
+            forward_time_ms: Time taken for forward pass in milliseconds
+
+        Purpose:
+            - Log forward pass timing
+            - Analyze model outputs
+            - Track computational performance
+        """
+        pass
+
     # Gradient computation
     def on_before_backward(self, trainer, loss):
         """Called before backward pass."""
@@ -323,6 +351,38 @@ class StatefulHook(TrainerHooks):
             recent_losses = self.epoch_losses[-5:]
             if max(recent_losses) - min(recent_losses) < 0.001:
                 print("Training plateau detected!")
+```
+
+### Forward Pass Profiling Hook
+
+Example using the forward pass hooks for custom profiling:
+
+```python
+class ForwardProfilingHook(TrainerHooks):
+    def __init__(self):
+        super().__init__()
+        self.forward_times = []
+        self.slow_forward_threshold_ms = 100  # Flag slow forwards
+
+    def on_before_forward(self, trainer):
+        """Prepare for forward pass timing."""
+        # Could enable CUDA profiling tools here
+        pass
+
+    def on_after_forward(self, trainer, forward_time_ms):
+        """Track and analyze forward pass performance."""
+        self.forward_times.append(forward_time_ms)
+
+        # Alert on slow forward passes
+        if forward_time_ms > self.slow_forward_threshold_ms:
+            loader_name = trainer.current_dataloader_name or "unknown"
+            print(f"⚠️  Slow forward pass in {loader_name}: {forward_time_ms:.2f}ms")
+
+        # Log statistics every 100 forward passes
+        if len(self.forward_times) % 100 == 0:
+            avg_time = sum(self.forward_times[-100:]) / 100
+            max_time = max(self.forward_times[-100:])
+            print(f"Forward stats (last 100): avg={avg_time:.2f}ms, max={max_time:.2f}ms")
 ```
 
 ### Hook Communication

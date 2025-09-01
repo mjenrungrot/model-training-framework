@@ -12,6 +12,7 @@ This module provides the GenericTrainer class - the main training engine with:
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from enum import Enum
 import importlib
@@ -39,6 +40,7 @@ from .hooks import (
     HookManager,
     LoggingHook,
     ModelCheckpointHook,
+    RuntimeProfilingHook,
 )
 from .loggers import LoggerProtocol, create_logger
 from .metrics import AggregationStrategy, MetricsManager
@@ -60,6 +62,7 @@ from .utils import (
     ddp_barrier,
     ddp_broadcast_object,
     ddp_is_primary,
+    sanitize_metric_key_component,
     seed_all,
 )
 
@@ -323,6 +326,10 @@ class GenericTrainer:
         # Validation step counter
         self.steps_since_validation = 0
 
+        # Track current dataloader context (updated during iteration)
+        self.current_dataloader_name: str | None = None
+        self.current_dataloader_idx: int | None = None
+
         # Initialize logger based on configuration
         self.logger: LoggerProtocol | None = None
         if ddp_is_primary(fabric):  # Only create logger on primary rank
@@ -393,6 +400,13 @@ class GenericTrainer:
             self.hook_manager.register_hook(
                 EarlyStoppingHook(**config.hooks.early_stopping_config)
             )
+
+        # Auto-register runtime profiling hook if enabled
+        if config.profile_training:
+            try:
+                self.hook_manager.register_hook(RuntimeProfilingHook())
+            except Exception:
+                logger.debug("Failed to register RuntimeProfilingHook", exc_info=True)
 
         logger.info(f"Initialized GenericTrainer with {len(optimizers)} optimizer(s)")
 
@@ -915,6 +929,27 @@ class GenericTrainer:
             assert self.dataloader_manager is not None
             loader_name = self.dataloader_manager.train_names[loader_idx]
 
+            # Track current loader in trainer state
+            self.current_dataloader_idx = loader_idx
+            self.current_dataloader_name = loader_name
+
+            # Log data fetch timing from iterator (exact timing)
+            if (
+                self.config.profile_training
+                and self.logger
+                and ddp_is_primary(self.fabric)
+                and self._should_log_this_step(accumulation_counter)
+            ):
+                fetch_ms = getattr(iterator, "last_batch_fetch_ms", None)
+                if fetch_ms is not None:
+                    key = f"profile/train/dl_{sanitize_metric_key_component(loader_name)}/time_data_ms"
+                    try:
+                        self.logger.log_metrics(
+                            {key: float(fetch_ms)}, self.global_step
+                        )
+                    except Exception:
+                        logger.debug("Data fetch timing log failed", exc_info=True)
+
             # Call on_train_batch_start hook
             self.hook_manager.call_hook(
                 "on_train_batch_start", self, batch, loader_idx, loader_name
@@ -1131,6 +1166,10 @@ class GenericTrainer:
                 assert self.dataloader_manager is not None
                 loader_name = self.dataloader_manager.val_names[loader_idx]
 
+                # Track current loader in trainer state
+                self.current_dataloader_idx = loader_idx
+                self.current_dataloader_name = loader_name
+
                 # Call on_validation_batch_start hook
                 self.hook_manager.call_hook(
                     "on_validation_batch_start", self, batch, loader_idx, loader_name
@@ -1150,7 +1189,26 @@ class GenericTrainer:
                     save_rng=self.config.checkpoint.save_rng,
                 )
 
-                # Validation step
+                # Log data fetch timing from iterator (exact timing)
+                if (
+                    self.config.profile_training
+                    and self.logger
+                    and ddp_is_primary(self.fabric)
+                    and self._should_log_validation_profiling()
+                ):
+                    fetch_ms = getattr(iterator, "last_batch_fetch_ms", None)
+                    if fetch_ms is not None:
+                        key = f"profile/val/dl_{sanitize_metric_key_component(loader_name)}/time_data_ms"
+                        try:
+                            self.logger.log_metrics(
+                                {key: float(fetch_ms)}, self.global_step
+                            )
+                        except Exception:
+                            logger.debug(
+                                "Val data fetch timing log failed", exc_info=True
+                            )
+
+                # Validation step (with forward timing when profiling)
                 assert self.validation_step_fn is not None
                 try:
                     state_for_loader = loader_states[loader_idx]
@@ -1158,9 +1216,34 @@ class GenericTrainer:
                 except Exception:
                     current_batch_idx = 0
 
+                # Forward timing hooks and measurement
+                self.hook_manager.call_hook("on_before_forward", self)
+                forward_t0 = time.perf_counter()
+                if self.config.profile_training and self._is_cuda_model():
+                    with suppress(Exception):
+                        torch.cuda.synchronize()
                 step_metrics = self.validation_step_fn(
                     self, batch, current_batch_idx, loader_idx, loader_name
                 )
+                if self.config.profile_training and self._is_cuda_model():
+                    with suppress(Exception):
+                        torch.cuda.synchronize()
+                forward_dt_ms = (time.perf_counter() - forward_t0) * 1000.0
+                self.hook_manager.call_hook("on_after_forward", self, forward_dt_ms)
+
+                if (
+                    self.config.profile_training
+                    and self.logger
+                    and ddp_is_primary(self.fabric)
+                    and self._should_log_validation_profiling()
+                ):
+                    key = f"profile/val/dl_{sanitize_metric_key_component(loader_name)}/time_forward_ms"
+                    try:
+                        self.logger.log_metrics(
+                            {key: float(forward_dt_ms)}, self.global_step
+                        )
+                    except Exception:
+                        logger.debug("Val forward timing log failed", exc_info=True)
 
                 # Get batch size for metrics tracking
                 batch_size = self._get_batch_size(batch)
@@ -1203,6 +1286,13 @@ class GenericTrainer:
             save_rng=self.config.checkpoint.save_rng,
         )
 
+        # Timing around forward
+        self.hook_manager.call_hook("on_before_forward", self)
+        forward_t0 = time.perf_counter()
+        if self.config.profile_training and self._is_cuda_model():
+            with suppress(Exception):
+                torch.cuda.synchronize()
+
         # Execute training step with AMP if configured and CUDA is available
         if self.config.performance.use_amp and torch.cuda.is_available():
             with autocast("cuda"):
@@ -1215,6 +1305,25 @@ class GenericTrainer:
             step_metrics = self.training_step_fn(
                 self, batch, batch_idx, loader_idx, loader_name
             )
+
+        if self.config.profile_training and self._is_cuda_model():
+            with suppress(Exception):
+                torch.cuda.synchronize()
+        forward_dt_ms = (time.perf_counter() - forward_t0) * 1000.0
+        self.hook_manager.call_hook("on_after_forward", self, forward_dt_ms)
+
+        # Log forward timing (respect frequency and accumulation boundary)
+        if (
+            self.config.profile_training
+            and self.logger
+            and ddp_is_primary(self.fabric)
+            and self._should_log_this_step(accumulation_step)
+        ):
+            key = f"profile/train/dl_{sanitize_metric_key_component(loader_name)}/time_forward_ms"
+            try:
+                self.logger.log_metrics({key: float(forward_dt_ms)}, self.global_step)
+            except Exception:
+                logger.debug("Forward timing log failed", exc_info=True)
 
         loss = step_metrics["loss"]
         # Coerce numeric losses to tensors and ensure requires_grad for backward
@@ -1242,6 +1351,12 @@ class GenericTrainer:
             save_rng=self.config.checkpoint.save_rng,
         )
 
+        # Timing backward
+        bwd_t0 = time.perf_counter()
+        if self.config.profile_training and self._is_cuda_model():
+            with suppress(Exception):
+                torch.cuda.synchronize()
+
         # Use scaler for backward pass if available
         if self.scaler is not None:
             # Scale loss and backward
@@ -1259,7 +1374,56 @@ class GenericTrainer:
         # Call on_after_backward hook
         self.hook_manager.call_hook("on_after_backward", self)
 
+        if self.config.profile_training and self._is_cuda_model():
+            with suppress(Exception):
+                torch.cuda.synchronize()
+        bwd_dt_ms = (time.perf_counter() - bwd_t0) * 1000.0
+
+        # Log backward timing (respect frequency and accumulation boundary)
+        if (
+            self.config.profile_training
+            and self.logger
+            and ddp_is_primary(self.fabric)
+            and self._should_log_this_step(accumulation_step)
+        ):
+            key = f"profile/train/dl_{sanitize_metric_key_component(loader_name)}/time_backward_ms"
+            try:
+                self.logger.log_metrics({key: float(bwd_dt_ms)}, self.global_step)
+            except Exception:
+                logger.debug("Backward timing log failed", exc_info=True)
+
         return step_metrics
+
+    def _is_cuda_model(self) -> bool:
+        try:
+            return bool(next(self.model.parameters()).is_cuda)
+        except Exception:
+            return False
+
+    def _should_log_this_step(self, accumulation_counter: int) -> bool:
+        """Log only at optimizer boundaries and respect scalar log frequency.
+
+        Uses (global_step + 1) for gating since optimizer step increments afterward.
+        """
+        # Only log at accumulation boundary
+        gas = self.config.performance.gradient_accumulation_steps
+        if gas <= 0:
+            gas = 1
+        if (accumulation_counter + 1) % gas != 0:
+            return False
+
+        # Respect scalar logging frequency
+        freq = self.config.logging.log_scalars_every_n_steps
+        next_step = self.global_step + 1
+        return freq is None or (next_step % freq == 0)
+
+    def _should_log_validation_profiling(self) -> bool:
+        """Check if validation profiling metrics should be logged at current step.
+
+        Respects scalar logging frequency for consistency with training profiling.
+        """
+        freq = self.config.logging.log_scalars_every_n_steps
+        return freq is None or (self.global_step % freq == 0)
 
     def _optimizer_step(self, loader_idx: int) -> None:
         """Execute optimizer step for the specified loader."""

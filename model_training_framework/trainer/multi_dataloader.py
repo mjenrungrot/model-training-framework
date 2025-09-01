@@ -39,6 +39,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 import logging
 import math
+import time as _time
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
@@ -142,6 +143,12 @@ class MultiDataLoaderIterator:
         # Prefetch tracking
         self.prefetched_batches = 0
 
+        # Lightweight profiling state (exposed to trainer when profiling enabled)
+        # Last fetch duration in milliseconds for the most recent next(iterator)
+        self.last_batch_fetch_ms: float | None = None
+        # Loader name used for the most recent batch fetch
+        self.last_loader_name: str | None = None
+
     def _create_loader_iterator(self, loader_idx: int) -> Iterator:
         """Create iterator for a specific loader, restoring state if needed."""
         loader = self.loaders[loader_idx]
@@ -236,7 +243,15 @@ class MultiDataLoaderIterator:
 
         try:
             assert iterator is not None
+            t0 = _time.perf_counter()
             batch = next(iterator)
+            dt_ms = (_time.perf_counter() - t0) * 1000.0
+            # Store last fetch timing and loader name for external logging
+            self.last_batch_fetch_ms = float(dt_ms)
+            try:
+                self.last_loader_name = self.names[loader_idx]
+            except Exception:
+                self.last_loader_name = str(loader_idx)
             state.batch_idx += 1
             return batch
         except StopIteration:
