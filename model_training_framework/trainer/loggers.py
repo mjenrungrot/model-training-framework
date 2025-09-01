@@ -108,6 +108,17 @@ class LoggerProtocol(Protocol):
             step: Optional step number
             dpi: DPI for saving the figure (default: 100 for space efficiency)
             image_format: Image format to use ("jpg" or "png")
+
+        Backend Behavior:
+            - WandB: Saves to buffer, converts to PIL Image, uploads to WandB
+            - TensorBoard: Uses native add_figure() method
+            - Console: Logs figure title and dimensions only
+
+        Example:
+            >>> import matplotlib.pyplot as plt
+            >>> fig, ax = plt.subplots()
+            >>> ax.plot([1, 2, 3], [4, 5, 6])
+            >>> logger.log_matplotlib_figure("training/loss_curve", fig, step=100)
         """
         ...
 
@@ -124,10 +135,40 @@ class LoggerProtocol(Protocol):
 
         Args:
             key: Identifier for the image
-            image: Image tensor (HW, HWC, or CHW format)
+            image: Image tensor with shape:
+                - 2D: (H, W) - grayscale image
+                - 3D: (H, W, C) if channels_last=True, (C, H, W) if False
+                - Values: float [0, 1] or uint8 [0, 255]
             step: Optional step number
             channels_last: If True, assumes HWC format for 3D tensors; if False, assumes CHW
             image_format: Image format to use ("jpg" or "png")
+
+        Backend Behavior:
+            - WandB: Converts to uint8 numpy array, uploads as image
+            - TensorBoard: Converts to uint8, uses add_image()
+            - Console: Logs shape and value range only
+
+        Performance Notes:
+            - Images are detached and moved to CPU automatically
+            - Float tensors are scaled to [0, 255] uint8 for efficiency
+            - Memory layout is made contiguous for fast numpy conversion
+
+        Examples:
+            >>> # Grayscale image
+            >>> gray_img = torch.rand(256, 256)  # HW
+            >>> logger.log_image("samples/gray", gray_img, step=10)
+
+            >>> # RGB image (channels last)
+            >>> rgb_img = torch.rand(256, 256, 3)  # HWC
+            >>> logger.log_image("samples/rgb", rgb_img, channels_last=True)
+
+            >>> # RGB image (channels first)
+            >>> rgb_img = torch.rand(3, 256, 256)  # CHW
+            >>> logger.log_image("samples/rgb", rgb_img, channels_last=False)
+
+            >>> # Batch of images (log first image)
+            >>> batch = torch.rand(32, 3, 256, 256)  # NCHW
+            >>> logger.log_image("samples/first", batch[0], channels_last=False)
         """
         ...
 
@@ -215,7 +256,11 @@ class WandBLogger:
         dpi: int = 100,
         image_format: str = "jpg",
     ) -> None:
-        """Log matplotlib figure to WandB."""
+        """Log matplotlib figure to WandB.
+
+        Saves figure to BytesIO buffer with specified DPI and format,
+        then converts to PIL Image for WandB upload.
+        """
         with io.BytesIO() as buf:
             # Use jpeg for jpg format
             save_format = (
@@ -237,7 +282,16 @@ class WandBLogger:
         channels_last: bool = True,
         image_format: str = "jpg",
     ) -> None:
-        """Log image tensor to WandB."""
+        """Log image tensor to WandB.
+
+        Optimizations:
+        - Detaches and moves to CPU to avoid GPU sync
+        - Converts float [0,1] to uint8 [0,255] for smaller payload
+        - Ensures contiguous memory for efficient numpy conversion
+        """
+        # Detach and move to CPU to avoid GPU sync
+        image = image.detach().cpu()
+
         # Handle different tensor formats
         if image.dim() == 2:
             # HW format - add channel dimension
@@ -251,12 +305,15 @@ class WandBLogger:
         else:
             raise ValueError(f"Expected 2D or 3D tensor, got {image.dim()}D")
 
-        # Ensure values are in [0, 1] range
+        # Convert to uint8 for efficiency (0-255 range)
         if image.dtype != torch.uint8:
-            image = torch.clamp(image, 0, 1)
+            image = (torch.clamp(image, 0, 1) * 255).to(torch.uint8)
+
+        # Ensure contiguous memory layout for efficient numpy conversion
+        image = image.contiguous()
 
         # Convert to numpy and log
-        image_np = image.detach().cpu().numpy()
+        image_np = image.numpy()
         # WandB Image class handles the format internally
         wandb_image = self.wandb.Image(
             image_np, mode="RGB" if image.shape[0] == 3 else None
@@ -332,7 +389,12 @@ class TensorBoardLogger:
         dpi: int = 100,
         image_format: str = "jpg",
     ) -> None:
-        """Log matplotlib figure to TensorBoard."""
+        """Log matplotlib figure to TensorBoard.
+
+        Uses TensorBoard's native add_figure() method.
+        Note: dpi and image_format parameters are ignored as
+        TensorBoard handles figure rendering internally.
+        """
         global_step = step if step is not None else 0
         self.writer.add_figure(key, figure, global_step, close=False)
 
@@ -344,7 +406,16 @@ class TensorBoardLogger:
         channels_last: bool = True,
         image_format: str = "jpg",
     ) -> None:
-        """Log image tensor to TensorBoard."""
+        """Log image tensor to TensorBoard.
+
+        Optimizations:
+        - Detaches and moves to CPU to avoid GPU sync
+        - Converts float [0,1] to uint8 [0,255] for efficiency
+        - Ensures contiguous CHW format for TensorBoard
+        """
+        # Detach and move to CPU to avoid GPU sync
+        image = image.detach().cpu()
+
         # Handle different tensor formats
         if image.dim() == 2:
             # HW format - add channel dimension
@@ -358,9 +429,12 @@ class TensorBoardLogger:
         else:
             raise ValueError(f"Expected 2D or 3D tensor, got {image.dim()}D")
 
-        # Ensure values are in [0, 1] range
+        # Convert to uint8 for efficiency
         if image.dtype != torch.uint8:
-            image = torch.clamp(image, 0, 1)
+            image = (torch.clamp(image, 0, 1) * 255).to(torch.uint8)
+
+        # Ensure contiguous memory layout
+        image = image.contiguous()
 
         global_step = step if step is not None else 0
         # TensorBoard expects CHW format
@@ -450,7 +524,11 @@ class ConsoleLogger:
         dpi: int = 100,
         image_format: str = "jpg",
     ) -> None:
-        """Log matplotlib figure info to console."""
+        """Log matplotlib figure info to console.
+
+        Since console cannot display images, logs metadata only:
+        figure title (if available) and dimensions in inches.
+        """
         step_str = f"[Step {step}] " if step is not None else ""
         # Just log that a figure was generated - console can't display images
         fig_size = figure.get_size_inches()
@@ -472,12 +550,22 @@ class ConsoleLogger:
         channels_last: bool = True,
         image_format: str = "jpg",
     ) -> None:
-        """Log image tensor info to console."""
+        """Log image tensor info to console.
+
+        Since console cannot display images, logs metadata only:
+        tensor shape and value range [min, max].
+        Uses no_grad context to avoid autograd overhead.
+        """
         step_str = f"[Step {step}] " if step is not None else ""
         # Just log image dimensions - console can't display images
         shape_str = "x".join(str(s) for s in image.shape)
-        min_val = image.min().item() if image.numel() > 0 else 0
-        max_val = image.max().item() if image.numel() > 0 else 0
+
+        # Compute min/max on CPU tensor without autograd
+        with torch.no_grad():
+            image_cpu = image.detach().cpu()
+            min_val = image_cpu.min().item() if image.numel() > 0 else 0
+            max_val = image_cpu.max().item() if image.numel() > 0 else 0
+
         self.logger.info(
             f"{step_str}Image '{key}': shape={shape_str}, range=[{min_val:.3f}, {max_val:.3f}]"
         )
