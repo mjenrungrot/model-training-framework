@@ -469,6 +469,10 @@ class ParameterGrid:
         Returns:
             Number of unique parameter combinations
         """
+        # Handle empty grid case
+        if not self.parameters and not self.parameter_specs:
+            return 0
+
         # Handle traditional parameters
         traditional_count = 1
         if self.parameters:
@@ -481,6 +485,10 @@ class ParameterGrid:
         linked_count = 0
         dist_count = 1
 
+        # Count unconditional conditional parameters
+        # These always apply and should be counted
+        unconditional_cond_count = 1
+
         for spec in self.parameter_specs:
             if spec.param_type == ParameterType.LINKED:
                 # Linked parameters are unioned (summed), not maxed
@@ -488,21 +496,41 @@ class ParameterGrid:
             elif spec.param_type == ParameterType.DISTRIBUTION:
                 # Distribution parameters multiply with each other
                 dist_count *= len(spec.values)
-            # Conditional and computed don't add to base count directly
+            elif (
+                spec.param_type == ParameterType.CONDITIONAL
+                and isinstance(spec, ConditionalParameterSpec)
+                and not spec.condition
+                and not spec.condition_func
+            ):
+                # Unconditional conditional (always applies)
+                unconditional_cond_count *= len(spec.values)
+            # Computed parameters don't add to base count
 
         # Calculate total based on what we have
-        if traditional_count == 0:
-            if linked_count > 0 and dist_count > 1:
-                return linked_count * dist_count
-            if linked_count > 0:
-                return linked_count
-            if dist_count >= 1:  # Changed from > 1 to >= 1
-                return dist_count
+        base_count = traditional_count if traditional_count > 0 else 1
+
+        # Combine counts
+        if linked_count > 0:
+            # Linked specs define alternative base combinations
+            base_count = (
+                linked_count
+                if traditional_count == 0
+                else traditional_count * linked_count
+            )
+
+        # Apply multiplicative factors
+        total = base_count * dist_count * unconditional_cond_count
+
+        # Special case: if we only have traditional params set to 0 and nothing else
+        if (
+            traditional_count == 0
+            and linked_count == 0
+            and dist_count == 1
+            and unconditional_cond_count == 1
+        ):
             return 0
-        # Traditional parameters multiply with specs
-        # If we have linked specs, use their count; otherwise 1
-        spec_multiplier = (linked_count if linked_count > 0 else 1) * dist_count
-        return traditional_count * spec_multiplier
+
+        return total
 
     def get_parameter_names(self) -> set[str]:
         """Get set of all parameter names.
@@ -524,6 +552,10 @@ class ParameterGrid:
         Yields:
             Dictionary mapping parameter keys to values
         """
+        # Check for empty grid
+        if not self.parameters and not self.parameter_specs:
+            return  # Empty grid yields nothing
+
         # Generate base combinations from traditional parameters
         base_combinations = []
         if self.parameters:
@@ -708,15 +740,27 @@ class ParameterGrid:
                 grid.parameter_specs.append(linked_spec)
             elif spec_type == ParameterType.CONDITIONAL:
                 # Reconstruct conditional spec (without function)
+                cond_keys = spec_data.get("keys")
+                if not cond_keys or len(cond_keys) != 1:
+                    logger.warning(
+                        f"Conditional spec must have exactly one key, got {cond_keys}. Skipping."
+                    )
+                    continue
                 cond_spec = ConditionalParameterSpec(
-                    (spec_data.get("keys") or [""])[0],
+                    cond_keys[0],
                     spec_data.get("values", []),
                     when=spec_data.get("condition", {}),
                 )
                 grid.parameter_specs.append(cond_spec)
             elif spec_type == ParameterType.DISTRIBUTION:
                 # Reconstruct distribution spec
-                key = (spec_data.get("keys") or [""])[0]
+                dist_keys = spec_data.get("keys")
+                if not dist_keys or len(dist_keys) != 1:
+                    logger.warning(
+                        f"Distribution spec must have exactly one key, got {dist_keys}. Skipping."
+                    )
+                    continue
+                key = dist_keys[0]
                 if "values" in spec_data:
                     # Use persisted values for reproducibility
                     dist_spec = DistributionParameterSpec(

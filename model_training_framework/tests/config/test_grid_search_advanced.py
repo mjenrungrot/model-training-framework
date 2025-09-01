@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from model_training_framework.config import ParameterGrid, ParameterGridSearch
 
@@ -504,6 +505,101 @@ class TestComplexScenarios:
                 assert exp["optimizer"]["weight_decay"] == 0.1
             else:
                 assert exp["optimizer"]["weight_decay"] == 0.01
+
+
+class TestEdgeCases:
+    """Test edge cases and boundary conditions."""
+
+    def test_empty_grid_count(self):
+        """Test that empty grid returns 0 combinations."""
+        grid = ParameterGrid("empty")
+        assert grid.get_parameter_count() == 0
+
+        combinations = list(grid.generate_permutations())
+        assert len(combinations) == 0
+
+    def test_unconditional_conditional_parameter_count(self):
+        """Test that unconditional conditional parameters are counted correctly."""
+        grid = ParameterGrid("test")
+
+        # Add conditional parameter with no condition (always applies)
+        grid.add_conditional_parameter("color", ["red", "blue"])
+
+        # Should count as 2 combinations
+        assert grid.get_parameter_count() == 2
+
+        # Verify generation matches count
+        combinations = list(grid.generate_permutations())
+        assert len(combinations) == 2
+        assert {"color": "red"} in combinations
+        assert {"color": "blue"} in combinations
+
+    def test_empty_choice_distribution_validation(self):
+        """Test that empty choices list raises appropriate error."""
+        grid = ParameterGrid("test")
+
+        with pytest.raises(
+            ValueError, match="Choice distribution requires non-empty 'choices'"
+        ):
+            grid.add_parameter_distribution(
+                "activation", "choice", n_samples=5, choices=[]
+            )
+
+    def test_mismatched_weights_validation(self):
+        """Test that mismatched weights length raises appropriate error."""
+        grid = ParameterGrid("test")
+
+        with pytest.raises(
+            ValueError, match="Length of 'weights'.*must match length of 'choices'"
+        ):
+            grid.add_parameter_distribution(
+                "activation",
+                "choice",
+                n_samples=5,
+                choices=["relu", "gelu"],
+                weights=[0.5, 0.3, 0.2],  # 3 weights for 2 choices
+            )
+
+    def test_deserialization_with_invalid_keys(self):
+        """Test that deserialization handles invalid keys gracefully."""
+        # Test data with invalid conditional spec (no keys)
+        data = {
+            "name": "test",
+            "parameters": {},
+            "parameter_specs": [
+                {
+                    "type": "conditional",
+                    "keys": [],  # Invalid: empty keys
+                    "values": ["value1"],
+                    "condition": {},
+                }
+            ],
+        }
+
+        # Should skip invalid spec with warning
+        grid = ParameterGrid.from_dict(data)
+        assert len(grid.parameter_specs) == 0  # Invalid spec was skipped
+
+    def test_deserialization_with_multiple_keys(self):
+        """Test that deserialization rejects specs with multiple keys."""
+        # Test data with invalid distribution spec (multiple keys)
+        data = {
+            "name": "test",
+            "parameters": {},
+            "parameter_specs": [
+                {
+                    "type": "distribution",
+                    "keys": ["key1", "key2"],  # Invalid: multiple keys
+                    "values": [0.1, 0.2],
+                    "distribution": "uniform",
+                    "n_samples": 2,
+                }
+            ],
+        }
+
+        # Should skip invalid spec with warning
+        grid = ParameterGrid.from_dict(data)
+        assert len(grid.parameter_specs) == 0  # Invalid spec was skipped
 
 
 class TestBackwardCompatibility:
