@@ -354,24 +354,106 @@ for exp in experiments:
 
 ### Advanced Grid Search Features
 
-#### Custom Parameter Combinations
+#### Linked Parameters
 
 ```python
-# Create grid with custom combinations
+# Create grid with linked parameters that vary together
 grid = ParameterGrid("custom_combinations")
 
-# Add linked parameters (will be varied together)
-grid.add_linked_parameters([
-    ("model.hidden_size", [256, 512, 1024]),
-    ("model.num_heads", [8, 16, 32])  # Scales with hidden_size
+# Method 1: Using add_parameter_sets (recommended for dict-like specification)
+grid.add_parameter_sets([
+    {"model.hidden_size": 256, "model.num_heads": 8, "model.ff_size": 1024},
+    {"model.hidden_size": 512, "model.num_heads": 16, "model.ff_size": 2048},
+    {"model.hidden_size": 1024, "model.num_heads": 32, "model.ff_size": 4096}
 ])
 
-# Add conditional parameters
-grid.add_parameter_with_condition(
-    "optimizer.lr",
-    values=[1e-3, 5e-4, 1e-4],
-    condition=lambda cfg: cfg["model"]["hidden_size"] <= 512
+# Method 2: Using add_linked_parameters with keys and value sets
+grid.add_linked_parameters(
+    ["model.hidden_size", "model.num_heads"],
+    [(256, 8), (512, 16), (1024, 32)]  # Tuples of values
 )
+
+# Method 3: Dictionary-based value sets
+grid.add_linked_parameters(
+    ["optimizer.lr", "optimizer.warmup_steps"],
+    [
+        {"optimizer.lr": 1e-3, "optimizer.warmup_steps": 100},
+        {"optimizer.lr": 5e-4, "optimizer.warmup_steps": 500},
+        {"optimizer.lr": 1e-4, "optimizer.warmup_steps": 1000}
+    ]
+)
+```
+
+#### Conditional Parameters
+
+```python
+# Add parameters that only apply under certain conditions
+grid.add_conditional_parameter(
+    "optimizer.lr_scheduler",
+    values=["cosine", "linear", "constant"],
+    when={"optimizer.type": "adamw"}  # Only when using AdamW
+)
+
+# Use a function for complex conditions
+grid.add_conditional_parameter(
+    "model.use_flash_attention",
+    values=[True, False],
+    when_func=lambda p: p.get("model.hidden_size", 0) >= 512
+)
+```
+
+#### Computed Parameters
+
+```python
+# Add parameters computed from other parameters
+grid.add_computed_parameter(
+    "training.total_steps",
+    compute_func=lambda p: p["training.max_epochs"] * p.get("steps_per_epoch", 1000)
+)
+
+# Compute effective batch size
+grid.add_computed_parameter(
+    "training.effective_batch_size",
+    compute_func=lambda p: p["data.batch_size"] * p.get("training.gradient_accumulation_steps", 1)
+)
+```
+
+#### Distribution-Based Sampling
+
+```python
+# Sample parameters from distributions
+grid.add_parameter_distribution(
+    "optimizer.lr",
+    distribution="loguniform",
+    n_samples=10,
+    seed=42,
+    low=1e-5,
+    high=1e-2
+)
+
+# Sample from choices with weights
+grid.add_parameter_distribution(
+    "model.activation",
+    distribution="choice",
+    n_samples=5,
+    choices=["relu", "gelu", "swish"],
+    weights=[0.2, 0.5, 0.3]
+)
+```
+
+#### Constraints and Exclusions
+
+```python
+# Add constraints to filter valid combinations
+grid.add_constraint(
+    lambda p: p["model.hidden_size"] * p["model.num_layers"] <= 10000
+)
+
+# Exclude specific combinations
+grid.exclude_combinations([
+    {"model.type": "large", "data.batch_size": 128},  # Too much memory
+    lambda p: p["optimizer.lr"] > 1e-3 and p["model.dropout"] < 0.1  # Unstable
+])
 ```
 
 #### Using Typed Configurations

@@ -126,6 +126,166 @@ for params in grid.generate_permutations():
     print(params)  # {"optimizer.lr": 1e-3, "model.hidden_size": 128}
 ```
 
+### Advanced ParameterGrid
+
+The ParameterGrid class supports advanced parameter specification methods beyond simple grid search.
+
+#### Linked Parameters
+
+Define parameters that vary together as a group (alternative configurations).
+
+##### `add_linked_parameters(keys: List[str], value_sets: Sequence[Union[Tuple, Dict]]) -> ParameterGrid`
+
+Add linked parameters that vary together. Multiple linked groups are **unioned** (not multiplied).
+
+```python
+# Link model size parameters - creates 3 configurations
+grid.add_linked_parameters(
+    ["model.hidden_size", "model.num_heads"],
+    [(256, 8), (512, 16), (1024, 32)]
+)
+
+# Using dictionaries for clarity
+grid.add_linked_parameters(
+    ["optimizer.lr", "optimizer.warmup"],
+    [
+        {"optimizer.lr": 1e-3, "optimizer.warmup": 100},
+        {"optimizer.lr": 5e-4, "optimizer.warmup": 500}
+    ]
+)
+```
+
+##### `add_parameter_sets(parameter_sets: List[Dict[str, Any]]) -> ParameterGrid`
+
+Convenience method for adding linked parameters as dictionaries.
+
+```python
+grid.add_parameter_sets([
+    {"model.size": "small", "batch_size": 64, "lr": 1e-3},
+    {"model.size": "large", "batch_size": 16, "lr": 5e-4}
+])
+```
+
+#### Conditional Parameters
+
+Add parameters that only apply under certain conditions.
+
+##### `add_conditional_parameter(key: str, values: List[Any], when: Dict = None, when_func: Callable = None) -> ParameterGrid`
+
+```python
+# Simple condition using dict
+grid.add_conditional_parameter(
+    "optimizer.momentum",
+    values=[0.9, 0.95],
+    when={"optimizer.type": "sgd"}
+)
+
+# Complex condition using function
+grid.add_conditional_parameter(
+    "model.use_flash_attn",
+    values=[True, False],
+    when_func=lambda p: p.get("model.hidden_size", 0) >= 512
+)
+```
+
+#### Computed Parameters
+
+Define parameters computed from other parameters.
+
+##### `add_computed_parameter(key: str, compute_func: Callable[[Dict], Any]) -> ParameterGrid`
+
+```python
+grid.add_computed_parameter(
+    "training.total_steps",
+    compute_func=lambda p: p["epochs"] * p.get("steps_per_epoch", 1000)
+)
+```
+
+#### Distribution-Based Sampling
+
+Sample parameters from statistical distributions.
+
+##### `add_parameter_distribution(key: str, distribution: str, n_samples: int, seed: int = None, **dist_params) -> ParameterGrid`
+
+```python
+# Log-uniform sampling for learning rate
+grid.add_parameter_distribution(
+    "optimizer.lr",
+    distribution="loguniform",
+    n_samples=10,
+    seed=42,
+    low=1e-5,
+    high=1e-2
+)
+
+# Weighted choice sampling
+grid.add_parameter_distribution(
+    "model.activation",
+    distribution="choice",
+    n_samples=5,
+    choices=["relu", "gelu", "swish"],
+    weights=[0.2, 0.5, 0.3]  # Must sum to 1.0
+)
+```
+
+Supported distributions:
+
+- `uniform`: Uniform distribution (params: `low`, `high`)
+- `loguniform`: Log-uniform distribution (params: `low`, `high`)
+- `normal`: Normal distribution (params: `mean`, `std`)
+- `choice`: Discrete choice with optional weights (params: `choices`, `weights`)
+
+#### Constraints and Exclusions
+
+Filter valid parameter combinations.
+
+##### `add_constraint(constraint_func: Callable[[Dict], bool]) -> ParameterGrid`
+
+Add a constraint that must be satisfied by all combinations.
+
+```python
+# Memory constraint
+grid.add_constraint(
+    lambda p: p["model.hidden_size"] * p["batch_size"] <= 8192
+)
+```
+
+##### `exclude_combinations(patterns: List[Union[Dict, Callable]]) -> ParameterGrid`
+
+Exclude specific combinations or patterns.
+
+```python
+grid.exclude_combinations([
+    # Exclude specific combination
+    {"model.type": "large", "batch_size": 128},
+    # Exclude pattern using function
+    lambda p: p["lr"] > 1e-3 and p["dropout"] < 0.1
+])
+```
+
+#### Semantics and Behavior
+
+**Generation Order:**
+
+1. Base parameters (traditional grid)
+2. Linked parameters (unioned as alternatives)
+3. Distribution samples (multiplied)
+4. Conditional parameters (expanded if conditions met)
+5. Computed parameters (applied to each combination)
+6. Constraints and exclusions (filter final combinations)
+
+**Counting Behavior:**
+
+- With constraints/exclusions: Enumerates all combinations for accurate count
+- With conditionals: May enumerate to handle dependent conditions
+- Performance: Consider using smaller grids when many filters are applied
+
+**Serialization:**
+
+- Functions (compute_func, when_func, constraints) cannot be serialized
+- Distribution values are persisted for reproducibility
+- Deserialization warns about non-restorable fields
+
 ### ExperimentConfig
 
 Configuration schema for experiments.
