@@ -243,11 +243,9 @@ class TestParameterDistributions:
 
     def test_uniform_distribution(self):
         """Test uniform distribution sampling."""
-        np.random.seed(42)  # For reproducibility
-
         grid = ParameterGrid("test")
         grid.add_parameter_distribution(
-            "dropout", "uniform", n_samples=5, low=0.1, high=0.5
+            "dropout", "uniform", n_samples=5, seed=42, low=0.1, high=0.5
         )
 
         combinations = list(grid.generate_permutations())
@@ -259,11 +257,9 @@ class TestParameterDistributions:
 
     def test_loguniform_distribution(self):
         """Test log-uniform distribution sampling."""
-        np.random.seed(42)
-
         grid = ParameterGrid("test")
         grid.add_parameter_distribution(
-            "lr", "loguniform", n_samples=10, low=1e-5, high=1e-1
+            "lr", "loguniform", n_samples=10, seed=42, low=1e-5, high=1e-1
         )
 
         combinations = list(grid.generate_permutations())
@@ -275,11 +271,9 @@ class TestParameterDistributions:
 
     def test_normal_distribution(self):
         """Test normal distribution sampling."""
-        np.random.seed(42)
-
         grid = ParameterGrid("test")
         grid.add_parameter_distribution(
-            "weight_decay", "normal", n_samples=5, mean=0.01, std=0.005
+            "weight_decay", "normal", n_samples=5, seed=42, mean=0.01, std=0.005
         )
 
         combinations = list(grid.generate_permutations())
@@ -291,13 +285,12 @@ class TestParameterDistributions:
 
     def test_choice_distribution(self):
         """Test choice distribution with weights."""
-        np.random.seed(42)
-
         grid = ParameterGrid("test")
         grid.add_parameter_distribution(
             "activation",
             "choice",
             n_samples=100,
+            seed=42,
             choices=["relu", "gelu", "silu"],
             weights=[0.5, 0.3, 0.2],
         )
@@ -315,6 +308,52 @@ class TestParameterDistributions:
         assert 35 <= relu_count <= 65  # Allow some variance
         assert 20 <= gelu_count <= 40
         assert 10 <= silu_count <= 30
+
+    def test_distribution_reproducibility(self):
+        """Test that seeding ensures reproducibility."""
+        # Create two grids with the same seed
+        grid1 = ParameterGrid("test1")
+        grid1.add_parameter_distribution(
+            "lr", "loguniform", n_samples=5, seed=123, low=1e-5, high=1e-1
+        )
+
+        grid2 = ParameterGrid("test2")
+        grid2.add_parameter_distribution(
+            "lr", "loguniform", n_samples=5, seed=123, low=1e-5, high=1e-1
+        )
+
+        # Generate combinations
+        combos1 = list(grid1.generate_permutations())
+        combos2 = list(grid2.generate_permutations())
+
+        # Should produce identical values
+        assert len(combos1) == len(combos2) == 5
+        for c1, c2 in zip(combos1, combos2):
+            assert c1["lr"] == c2["lr"]
+
+    def test_distribution_different_seeds(self):
+        """Test that different seeds produce different values."""
+        # Create two grids with different seeds
+        grid1 = ParameterGrid("test1")
+        grid1.add_parameter_distribution(
+            "dropout", "uniform", n_samples=5, seed=100, low=0.1, high=0.5
+        )
+
+        grid2 = ParameterGrid("test2")
+        grid2.add_parameter_distribution(
+            "dropout", "uniform", n_samples=5, seed=200, low=0.1, high=0.5
+        )
+
+        # Generate combinations
+        combos1 = list(grid1.generate_permutations())
+        combos2 = list(grid2.generate_permutations())
+
+        # Should produce different values (with high probability)
+        values1 = [c["dropout"] for c in combos1]
+        values2 = [c["dropout"] for c in combos2]
+
+        # At least one value should be different
+        assert values1 != values2
 
 
 class TestParameterConstraints:

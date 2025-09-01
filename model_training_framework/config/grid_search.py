@@ -529,7 +529,7 @@ class ParameterGrid:
             ):
                 # Even computed-only grids can be filtered out by constraints
                 # Only return 1 if we would actually generate it
-                test_combo = {}
+                test_combo: dict[str, Any] = {}
                 # Apply computed parameters
                 for spec in self.parameter_specs:
                     if spec.param_type == ParameterType.COMPUTED:
@@ -777,6 +777,26 @@ class ParameterGrid:
 
         yield params
 
+    @staticmethod
+    def _to_python_primitive(value: Any) -> Any:
+        """Convert numpy types to Python primitives for JSON serialization."""
+        # Check for numpy integer types (can't use | with numpy types)
+        if isinstance(value, (np.integer, np.int64, np.int32)):  # noqa: UP038
+            return int(value)
+        # Check for numpy float types
+        if isinstance(value, (np.floating, np.float64, np.float32)):  # noqa: UP038
+            return float(value)
+        # Check for numpy arrays
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        # Recursively handle lists and tuples
+        if isinstance(value, (list, tuple)):  # noqa: UP038
+            return [ParameterGrid._to_python_primitive(v) for v in value]
+        # Recursively handle dicts
+        if isinstance(value, dict):
+            return {k: ParameterGrid._to_python_primitive(v) for k, v in value.items()}
+        return value
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization.
 
@@ -797,7 +817,7 @@ class ParameterGrid:
             spec_dict: dict[str, Any] = {
                 "type": spec.param_type.value,
                 "keys": spec.keys,
-                "values": spec.values,
+                "values": self._to_python_primitive(spec.values),
             }
 
             # Add type-specific fields
@@ -809,22 +829,33 @@ class ParameterGrid:
                 spec_dict["compute_func_str"] = "# Function not serializable"
             elif isinstance(spec, DistributionParameterSpec):
                 spec_dict["distribution"] = spec.distribution
-                spec_dict["params"] = spec.params
+                spec_dict["params"] = self._to_python_primitive(spec.params)
                 spec_dict["n_samples"] = spec.n_samples
                 spec_dict["seed"] = spec.seed
-                # Store actual values for reproducibility
-                spec_dict["values"] = spec.values
+                # Store actual values for reproducibility (converted to primitives)
+                spec_dict["values"] = self._to_python_primitive(spec.values)
 
             specs_data.append(spec_dict)
+
+        # Serialize exclusion patterns (dict patterns only)
+        exclude_dict_patterns = []
+        exclude_func_count = 0
+        for pattern in self.exclude_patterns:
+            if isinstance(pattern, dict):
+                exclude_dict_patterns.append(pattern)
+            elif callable(pattern):
+                exclude_func_count += 1
 
         return {
             "name": self.name,
             "description": self.description,
-            "parameters": self.parameters,
+            "parameters": self._to_python_primitive(self.parameters),
             "parameter_specs": specs_data,
-            # Note: Constraints and exclude_patterns with functions can't be serialized
+            # Persist dict-based exclusion patterns
+            "exclude_patterns": exclude_dict_patterns,
+            "exclude_func_count": exclude_func_count,
+            # Note: Constraints with functions can't be serialized
             "has_constraints": len(self.constraints) > 0,
-            "has_exclusions": len(self.exclude_patterns) > 0,
         }
 
     @classmethod
@@ -906,14 +937,20 @@ class ParameterGrid:
                     grid.parameter_specs.append(dist_spec)
             # Note: Computed specs can't be fully restored without the function
 
+        # Restore exclusion patterns (dict patterns only)
+        for pattern in data.get("exclude_patterns", []):
+            grid.exclude_patterns.append(pattern)
+
         # Log warnings about non-serializable features
         if data.get("has_constraints"):
             logger.warning(
                 f"Grid '{data['name']}' had constraints that could not be restored"
             )
-        if data.get("has_exclusions"):
+
+        func_exclusion_count = data.get("exclude_func_count", 0)
+        if func_exclusion_count > 0:
             logger.warning(
-                f"Grid '{data['name']}' had exclusion patterns that could not be restored"
+                f"Grid '{data['name']}' had {func_exclusion_count} function-based exclusion patterns that could not be restored"
             )
 
         return grid
