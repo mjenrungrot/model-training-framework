@@ -191,6 +191,12 @@ class TestAcceptanceMidEpochResume:
             schedulers=schedulers,
         )
 
+        # Initialize optimizer state to avoid PyTorch scheduler warnings
+        # PyTorch warns if scheduler.step() is called before any optimizer.step()
+        for optimizer in optimizers:
+            optimizer.step()
+            optimizer.zero_grad()
+
         return trainer
 
     def test_mid_epoch_resume_basic(self):

@@ -149,7 +149,10 @@ class TestOptimizerStepCounting:
 
         # Step scheduler multiple times
         for _ in range(5):
+            # Simulate optimizer step before scheduler step
+            optimizer.step()
             scheduler.step()
+            optimizer.zero_grad()
 
         # LR should have decreased
         new_lr = optimizer.param_groups[0]["lr"]
@@ -237,6 +240,10 @@ class TestOptimizerStepCounting:
 
         for step in range(10):
             lr_history.append(optimizer.param_groups[0]["lr"])
+
+            # Simulate optimizer step
+            optimizer.step()
+            optimizer.zero_grad()
 
             # Step first scheduler every 3 steps
             if (step + 1) % 3 == 0:
