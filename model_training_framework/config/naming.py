@@ -21,8 +21,9 @@ from .schemas import NamingStrategy
 class ExperimentNaming:
     """Standardized experiment naming system."""
 
-    # Maximum length for experiment names to avoid filesystem issues
-    MAX_NAME_LENGTH = 200
+    # Maximum length for experiment names. W&B limits run names to 128 chars,
+    # so we keep a small safety buffer to avoid hitting the limit downstream.
+    MAX_NAME_LENGTH = 120
 
     # Characters to sanitize in experiment names
     INVALID_CHARS = r'[<>:"/\\|?*\s]'
@@ -70,8 +71,11 @@ class ExperimentNaming:
         """
         sanitized_base = ExperimentNaming._sanitize_name(base_name)
 
+        # Allow flat dicts with dot-separated keys by converting them to nested dicts
+        parameters = ExperimentNaming._unflatten_dict(parameters)
+
         # Create parameter string from key parameters
-        param_parts = []
+        param_parts: list[str] = []
 
         # Sort parameters for consistency
         sorted_params = sorted(parameters.items())
@@ -83,14 +87,111 @@ class ExperimentNaming:
             # Use bracket format for better readability
             param_parts.append(f"[{short_key}_{short_value}]")
 
-        if param_parts:
-            # Join with no separator for cleaner look
-            param_str = "".join(param_parts)
-            name = f"{sanitized_base}_{param_str}"
-        else:
-            name = sanitized_base
+        if not param_parts:
+            return ExperimentNaming._ensure_valid_length(sanitized_base)
 
-        return ExperimentNaming._ensure_valid_length(name)
+        # Build full name and check length before truncation
+        param_str = "".join(param_parts)
+        full_name = f"{sanitized_base}_{param_str}"
+        if len(full_name) <= ExperimentNaming.MAX_NAME_LENGTH:
+            return full_name
+
+        # Name is too long; truncate at parameter boundaries and append hash for uniqueness
+        name_hash = hashlib.sha256(full_name.encode()).hexdigest()[:8]
+        max_prefix_len = (
+            ExperimentNaming.MAX_NAME_LENGTH - len(name_hash) - 1
+        )  # underscore before hash
+
+        prefix = f"{sanitized_base}_"
+        if len(prefix) > max_prefix_len:
+            # Base name alone is too long; need to include parameters in hash for uniqueness
+            # Use the full name (base + params) to generate a unique hash
+            truncated_base = sanitized_base[
+                : max_prefix_len - 9
+            ]  # Leave room for underscore and hash
+            full_name_hash = hashlib.sha256(full_name.encode()).hexdigest()[:8]
+            return f"{truncated_base}_{full_name_hash}"
+
+        truncated = prefix
+        for part in param_parts:
+            if len(truncated) + len(part) <= max_prefix_len:
+                truncated += part
+            else:
+                break
+
+        if truncated.endswith("_"):
+            return f"{truncated}{name_hash}"
+        return f"{truncated}_{name_hash}"
+
+    @staticmethod
+    def _unflatten_dict(flat_params: dict[str, Any]) -> dict[str, Any]:
+        """Convert flat dict with dot-separated keys into nested dictionaries.
+
+        Raises:
+            ValueError: If there are conflicting keys where a key is used both as
+                       a scalar value and as a prefix for nested keys.
+        """
+        nested: dict[str, Any] = {}
+
+        # First pass: Check for conflicts between scalar and nested keys
+        all_keys = set(flat_params.keys())
+        for key in all_keys:
+            if "." in key:
+                parts = key.split(".")
+                # Check if any prefix of this key exists as a scalar
+                for i in range(1, len(parts)):
+                    prefix = ".".join(parts[:i])
+                    if prefix in all_keys:
+                        # Check if the prefix key maps to a non-dict value
+                        # (We need to handle it before unflattening to detect conflicts)
+                        prefix_parts = prefix.split(".")
+                        if len(prefix_parts) == 1:
+                            # Direct conflict at root level
+                            raise ValueError(
+                                f"Conflicting key: '{prefix}' is used both as a scalar value "
+                                f"and as a prefix for nested key '{key}'. This would result in "
+                                f"data loss. Please rename one of these parameters."
+                            )
+
+        # Second pass: Build the nested structure
+        for key, value in flat_params.items():
+            if "." not in key:
+                if (
+                    key in nested
+                    and isinstance(nested[key], dict)
+                    and isinstance(value, dict)
+                ):
+                    nested[key].update(value)
+                else:
+                    nested[key] = value
+                continue
+
+            parts = key.split(".")
+            current = nested
+            for i, part in enumerate(parts[:-1]):
+                if part in current:
+                    if not isinstance(current[part], dict):
+                        # Found a conflict during construction
+                        partial_key = ".".join(parts[: i + 1])
+                        raise ValueError(
+                            f"Conflicting key: '{partial_key}' has a scalar value but "
+                            f"'{key}' requires it to be a nested structure. This would "
+                            f"result in data loss. Please rename one of these parameters."
+                        )
+                else:
+                    current[part] = {}
+                current = current[part]
+
+            last = parts[-1]
+            if (
+                last in current
+                and isinstance(current[last], dict)
+                and isinstance(value, dict)
+            ):
+                current[last].update(value)
+            else:
+                current[last] = value
+        return nested
 
     @staticmethod
     def _generate_timestamp_based_name(
