@@ -135,6 +135,26 @@ class TestImprovedNaming:
         assert "mlp_dim.512" in name
         assert "num_hea.8" in name  # num_heads -> num_hea
 
+    def test_flattened_parameter_keys_are_grouped(self):
+        """Flat keys like 'model.num_layers' should group under one bracket."""
+        params = {
+            "model.num_layers": 4,
+            "model.mlp_dim": 512,
+            "optimizer.lr": 0.001,
+        }
+
+        name = ExperimentNaming.generate_name(
+            "sweep", params, NamingStrategy.PARAMETER_BASED
+        )
+
+        # Only one model bracket should appear
+        assert name.count("[model_") == 1
+        assert "[model_{" in name
+        assert "layers.4" in name
+        assert "mlp_dim.512" in name
+        # Ensure flattened keys are not emitted separately
+        assert "[model." not in name
+
     def test_boolean_value_formatting(self):
         """Test boolean values are formatted as T/F."""
         params = {
@@ -212,10 +232,13 @@ class TestImprovedNaming:
 
         # Check name doesn't exceed max length
         assert len(name) <= ExperimentNaming.MAX_NAME_LENGTH
+        # Brackets should remain balanced after truncation
+        assert name.count("[") == name.count("]")
         # Check hash is added for uniqueness when truncated
         if len(name) == ExperimentNaming.MAX_NAME_LENGTH:
-            # Should end with underscore and 8-char hash
-            assert "_" in name[-9:]
+            # Should end with underscore and 8-char hex hash
+            suffix = name[-9:]
+            assert suffix[0] == "_" and all(c in "0123456789abcdef" for c in suffix[1:])
 
     def test_special_parameter_handling(self):
         """Test special handling of specific parameter types."""

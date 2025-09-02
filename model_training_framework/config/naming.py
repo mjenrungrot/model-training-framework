@@ -21,8 +21,9 @@ from .schemas import NamingStrategy
 class ExperimentNaming:
     """Standardized experiment naming system."""
 
-    # Maximum length for experiment names to avoid filesystem issues
-    MAX_NAME_LENGTH = 200
+    # Maximum length for experiment names. W&B limits run names to 128 chars,
+    # so we keep a small safety buffer to avoid hitting the limit downstream.
+    MAX_NAME_LENGTH = 120
 
     # Characters to sanitize in experiment names
     INVALID_CHARS = r'[<>:"/\\|?*\s]'
@@ -70,8 +71,11 @@ class ExperimentNaming:
         """
         sanitized_base = ExperimentNaming._sanitize_name(base_name)
 
+        # Allow flat dicts with dot-separated keys by converting them to nested dicts
+        parameters = ExperimentNaming._unflatten_dict(parameters)
+
         # Create parameter string from key parameters
-        param_parts = []
+        param_parts: list[str] = []
 
         # Sort parameters for consistency
         sorted_params = sorted(parameters.items())
@@ -83,14 +87,67 @@ class ExperimentNaming:
             # Use bracket format for better readability
             param_parts.append(f"[{short_key}_{short_value}]")
 
-        if param_parts:
-            # Join with no separator for cleaner look
-            param_str = "".join(param_parts)
-            name = f"{sanitized_base}_{param_str}"
-        else:
-            name = sanitized_base
+        if not param_parts:
+            return ExperimentNaming._ensure_valid_length(sanitized_base)
 
-        return ExperimentNaming._ensure_valid_length(name)
+        # Build full name and check length before truncation
+        param_str = "".join(param_parts)
+        full_name = f"{sanitized_base}_{param_str}"
+        if len(full_name) <= ExperimentNaming.MAX_NAME_LENGTH:
+            return full_name
+
+        # Name is too long; truncate at parameter boundaries and append hash for uniqueness
+        name_hash = hashlib.sha256(full_name.encode()).hexdigest()[:8]
+        max_prefix_len = ExperimentNaming.MAX_NAME_LENGTH - len(name_hash) - 1  # underscore before hash
+
+        prefix = f"{sanitized_base}_"
+        if len(prefix) > max_prefix_len:
+            # Base name alone is too long; fallback to generic truncation
+            return ExperimentNaming._ensure_valid_length(sanitized_base)
+
+        truncated = prefix
+        for part in param_parts:
+            if len(truncated) + len(part) <= max_prefix_len:
+                truncated += part
+            else:
+                break
+
+        if truncated.endswith("_"):
+            return f"{truncated}{name_hash}"
+        return f"{truncated}_{name_hash}"
+
+    @staticmethod
+    def _unflatten_dict(flat_params: dict[str, Any]) -> dict[str, Any]:
+        """Convert flat dict with dot-separated keys into nested dictionaries."""
+        nested: dict[str, Any] = {}
+        for key, value in flat_params.items():
+            if "." not in key:
+                if (
+                    key in nested
+                    and isinstance(nested[key], dict)
+                    and isinstance(value, dict)
+                ):
+                    nested[key].update(value)
+                else:
+                    nested[key] = value
+                continue
+
+            parts = key.split(".")
+            current = nested
+            for part in parts[:-1]:
+                if part not in current or not isinstance(current[part], dict):
+                    current[part] = {}
+                current = current[part]
+            last = parts[-1]
+            if (
+                last in current
+                and isinstance(current[last], dict)
+                and isinstance(value, dict)
+            ):
+                current[last].update(value)
+            else:
+                current[last] = value
+        return nested
 
     @staticmethod
     def _generate_timestamp_based_name(
