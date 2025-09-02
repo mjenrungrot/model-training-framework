@@ -316,7 +316,7 @@ class ModelTrainingFramework:
                 description="Grid search placeholder",
                 base_config=base_config_dict,
                 parameter_grids=[],
-                naming_strategy=NamingStrategy.HASH_BASED,
+                naming_strategy=NamingStrategy.PARAMETER_BASED,
                 max_concurrent_jobs=max_concurrent_jobs,
                 execution_mode=execution_mode,
                 output_dir=str(output_dir) if output_dir else None,

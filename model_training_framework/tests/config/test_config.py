@@ -275,9 +275,9 @@ class TestExperimentNaming:
         )
 
         assert "experiment" in name
-        assert "lr_0.01" in name
-        # batch_size is shortened to bs in the implementation
-        assert "bs_32" in name
+        assert "[lr_0.01]" in name
+        # batch_size is shortened to batch in the implementation with bracket format
+        assert "[batch_32]" in name
 
     def test_timestamp_based_naming(self):
         """Test timestamp-based experiment naming."""

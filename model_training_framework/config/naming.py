@@ -31,7 +31,7 @@ class ExperimentNaming:
     def generate_name(
         base_name: str,
         parameters: dict[str, Any],
-        naming_strategy: NamingStrategy = NamingStrategy.HASH_BASED,
+        naming_strategy: NamingStrategy = NamingStrategy.PARAMETER_BASED,
     ) -> str:
         """Generate experiment name based on parameters."""
 
@@ -64,7 +64,10 @@ class ExperimentNaming:
     def _generate_parameter_based_name(
         base_name: str, parameters: dict[str, Any]
     ) -> str:
-        """Generate parameter-based experiment name."""
+        """Generate parameter-based experiment name with bracket formatting.
+
+        Format: exp_[param1_val1][param2_val2]...
+        """
         sanitized_base = ExperimentNaming._sanitize_name(base_name)
 
         # Create parameter string from key parameters
@@ -77,10 +80,12 @@ class ExperimentNaming:
             # Shorten common parameter names
             short_key = ExperimentNaming._shorten_parameter_name(key)
             short_value = ExperimentNaming._format_parameter_value(value)
-            param_parts.append(f"{short_key}_{short_value}")
+            # Use bracket format for better readability
+            param_parts.append(f"[{short_key}_{short_value}]")
 
         if param_parts:
-            param_str = "_".join(param_parts)
+            # Join with no separator for cleaner look
+            param_str = "".join(param_parts)
             name = f"{sanitized_base}_{param_str}"
         else:
             name = sanitized_base
@@ -125,36 +130,226 @@ class ExperimentNaming:
 
     @staticmethod
     def _shorten_parameter_name(param_name: str) -> str:
-        """Shorten common parameter names."""
-        # Common abbreviations
+        """Shorten common parameter names.
+
+        For known parameters, use predefined abbreviations.
+        For unknown parameters, split by underscore and take first 3 chars of each part.
+        """
+        # Common abbreviations - prioritizing readability
         abbreviations = {
+            # Training parameters
             "learning_rate": "lr",
-            "batch_size": "bs",
-            "weight_decay": "wd",
-            "dropout": "drop",
-            "hidden_size": "hs",
-            "num_layers": "nl",
-            "max_epochs": "ep",
-            "optimizer": "opt",
+            "batch_size": "batch",
+            "weight_decay": "wdecay",
+            "dropout": "dropout",
+            "hidden_size": "hidden",
+            "num_layers": "layers",
+            "max_epochs": "epochs",
+            "max_steps": "steps",
+            "optimizer": "optim",
             "scheduler": "sched",
-            "gradient_accumulation_steps": "gas",
+            "gradient_accumulation_steps": "grad_accum",  # 10 chars
+            "gradient_as_bucket_view": "grad_bkt",  # 8 chars
+            "clip_grad_norm": "clip_grad",  # 9 chars
+            "max_grad_norm": "max_grad",  # 8 chars
+            # Model/architecture parameters
+            "model": "model",
+            "type": "typ",
+            "compile_model": "compile",
+            # Data parameters
+            "dataset_name": "dataset",
+            "dataloader_num_workers": "workers",
+            "dataloader_names": "dl_names",  # 8 chars
+            "dataloader_weights": "dl_weights",  # 10 chars
+            "prefetch_factor": "prefetch",  # 8 chars
+            "pin_memory": "pin_mem",
+            "persistent_workers": "persist_w",  # 9 chars
+            # Validation parameters
+            "validation_frequency": "val_freq",
+            "validate_every_n_epochs": "val_epochs",
+            "early_stopping_patience": "es_pat",  # 6 chars
+            "early_stopping_metric": "es_metric",  # 9 chars
+            "early_stopping_mode": "es_mode",  # 7 chars
+            "early_stopping_source": "es_src",  # 6 chars
+            # Checkpointing parameters
+            "checkpoint": "ckpt",
+            "save_frequency": "save_freq",
+            "save_every_n_steps": "save_steps",  # 10 chars
+            "save_every_n_epochs": "save_epoch",
+            "save_every_n_minutes": "save_mins",
+            "max_checkpoints": "max_ckpts",
+            "save_optimizer": "save_opt",
+            "save_scheduler": "save_sched",
+            "save_rng": "save_rng",
+            "save_best": "save_best",
+            "save_dataset_state": "save_dset",  # 9 chars
+            "save_sampler_state": "save_sampl",  # 10 chars
+            "monitor_metric": "mon_metric",  # 10 chars
+            "monitor_mode": "mon_mode",  # 8 chars
+            "root_dir": "root_dir",
+            # Logging parameters
+            "log_frequency": "log_freq",
+            "log_loss_every_n_steps": "log_loss_n",  # 10 chars
+            "log_scalars_every_n_steps": "log_scal_n",  # 10 chars
+            "log_images_every_n_steps": "log_img_n",  # 9 chars
+            "log_gradients": "log_grads",
+            "log_model_parameters": "log_params",
+            "log_system_metrics": "log_sys",  # 7 chars
+            "log_per_loader_metrics": "log_per_dl",  # 10 chars
+            "log_global_metrics": "log_global",  # 10 chars
+            "log_loader_proportions": "log_props",  # 9 chars
+            "logger_type": "logger",
+            "use_wandb": "wandb",
+            "use_tensorboard": "tboard",
+            "use_csv": "csv",
+            "wandb_project": "wandb_proj",
+            "wandb_entity": "wandb_ent",  # 9 chars
+            "wandb_name": "wandb_name",
+            "wandb_mode": "wandb_mode",
+            "wandb_tags": "wandb_tags",
+            "tensorboard_dir": "tboard_dir",
+            "csv_log_dir": "csv_dir",
+            # Performance parameters
+            "use_amp": "amp",
+            "benchmark": "benchmark",
+            "deterministic": "determ",  # 6 chars
+            "profile_training": "profile",
+            "debug_mode": "debug",
+            "dry_run": "dry_run",
+            # Multi-dataloader parameters
+            "sampling_strategy": "sampling",
+            "epoch_length_policy": "epoch_pol",  # 9 chars
+            "steps_per_epoch": "steps_ep",  # 8 chars
+            "alternating_pattern": "alt_patt",  # 8 chars
+            "burst_size": "burst",
+            "cycle_short_loaders": "cycle_shrt",  # 10 chars
+            "choice_rng_seed": "rng_seed",
+            "prefetch_cap_total_batches": "pref_cap",  # 8 chars
+            # DDP parameters
+            "backend": "backend",
+            "find_unused_parameters": "find_unus",  # 9 chars
+            "broadcast_buffers": "bcast_buf",  # 9 chars
+            "bucket_cap_mb": "bucket_mb",
+            "sync_schedules_across_ranks": "sync_ranks",
+            "validate_schedule_consistency": "val_sched",  # 9 chars
+            # Preemption parameters
+            "preemption": "preempt",
+            "signal": "signal",
+            "max_checkpoint_sec": "max_ckpt_s",  # 10 chars
+            "requeue_job": "req_job",  # 7 chars
+            "resume_from_latest_symlink": "res_latest",  # 10 chars
+            "cleanup_on_exit": "cleanup",
+            "backup_checkpoints": "bkup_ckpt",  # 9 chars
+            # Hook parameters
+            "hooks": "hooks",
+            "hook_classes": "hook_cls",  # 8 chars
+            "hook_configs": "hook_cfg",  # 8 chars
+            "enable_logging_hook": "en_log_hk",  # 9 chars
+            "enable_gradient_monitor": "en_grad_mo",  # 10 chars
+            "enable_model_checkpoint_hook": "en_ckpt_hk",  # 10 chars
+            "enable_early_stopping_hook": "en_es_hk",  # 8 chars
+            "continue_on_hook_error": "cont_err",  # 8 chars
+            "log_hook_errors": "log_hk_err",  # 10 chars
+            # SLURM parameters
+            "account": "account",
+            "partition": "partition",
+            "nodes": "nodes",
+            "ntasks_per_node": "tasks_node",  # 10 chars
+            "gpus_per_node": "gpus_node",  # 9 chars
+            "cpus_per_task": "cpus_task",  # 9 chars
+            "mem": "memory",
+            "time": "time",
+            "constraint": "constraint",  # 10 chars
+            "requeue": "slurm_rq",  # 8 chars, avoid collision
+            "job_name": "job_name",
+            # Optimizer parameters
+            "betas": "betas",
+            "eps": "eps",
+            "amsgrad": "amsgrad",
+            "warmup_steps": "warmup",
+            "min_lr": "min_lr",
+            "gamma": "gamma",
+            "step_size": "step_size",
+            "milestones": "milestones",
+            # Other common parameters
+            "experiment_name": "exp",
+            "seed": "seed",
+            "frequency": "freq",
+            "aggregation": "agg",  # 3 chars
+            "per_loader_metrics": "per_dl_met",  # 10 chars
+            "global_metrics": "glob_met",  # 8 chars
+            "loss_weights_per_loader": "loss_wts",  # 8 chars
+            "per_loader_optimizer_id": "opt_per_dl",  # 10 chars
+            "strict": "strict",
+            "custom_params": "custom",
         }
 
-        # Handle nested parameters (e.g., "optimizer.lr")
+        # Handle nested parameters (e.g., "optimizer.lr" or "model.num_heads")
         if "." in param_name:
             parts = param_name.split(".")
-            shortened_parts = [abbreviations.get(part, part) for part in parts]
+            shortened_parts = []
+            for part in parts:
+                if part in abbreviations:
+                    shortened_parts.append(abbreviations[part])
+                else:
+                    # For unknown nested parts, use the 3-char algorithm
+                    shortened_parts.append(ExperimentNaming._abbreviate_unknown(part))
             return ".".join(shortened_parts)
 
-        return abbreviations.get(param_name, param_name)
+        # Check if we have a predefined abbreviation
+        if param_name in abbreviations:
+            return abbreviations[param_name]
+
+        # For unknown parameters, use the 3-character algorithm
+        return ExperimentNaming._abbreviate_unknown(param_name)
+
+    @staticmethod
+    def _abbreviate_unknown(param_name: str) -> str:
+        """Abbreviate unknown parameter names by taking first 3 chars of each underscore-separated part.
+
+        Examples:
+            disable_positional_encoding -> dis_pos_enc
+            learnable_temperature -> lea_tem
+            pairwise_rank -> pai_ran
+        """
+        if "_" not in param_name:
+            # Single word - take first 3 characters
+            return param_name[:3] if len(param_name) > 3 else param_name
+
+        # Split by underscore and take first 3 chars of each part
+        parts = param_name.split("_")
+        abbreviated_parts = []
+        for part in parts:
+            if part:  # Skip empty parts
+                # Take first 3 characters (or less if the part is shorter)
+                abbreviated_parts.append(part[:3])
+
+        return "_".join(abbreviated_parts)
 
     # Constants for value formatting
     FLOAT_SCIENTIFIC_THRESHOLD = 0.001
     STRING_TRUNCATE_LENGTH = 10
 
     @staticmethod
-    def _format_parameter_value(value: Any) -> str:
+    def _format_parameter_value(value: Any) -> str:  # noqa: PLR0911
         """Format parameter value for inclusion in name."""
+        if isinstance(value, dict):
+            # For nested dictionaries, recursively process each item with brackets
+            # This handles cases like model={'num_heads': 8, 'mlp_dim': 512}
+            formatted_parts = []
+            for k, v in sorted(value.items()):
+                short_key = ExperimentNaming._shorten_parameter_name(k)
+                formatted_value = ExperimentNaming._format_parameter_value(v)
+                # Use dot notation for nested params for clarity
+                formatted_parts.append(f"{short_key}.{formatted_value}")
+            # Join with brackets for nested structure
+            return "{" + ",".join(formatted_parts) + "}" if formatted_parts else "empty"
+        if isinstance(value, list | tuple):
+            # For lists/tuples, join with underscore
+            formatted_items = [
+                ExperimentNaming._format_parameter_value(v) for v in value
+            ]
+            return "_".join(formatted_items) if formatted_items else "empty"
         if isinstance(value, float):
             # Format floats in scientific notation if small
             if abs(value) < ExperimentNaming.FLOAT_SCIENTIFIC_THRESHOLD and value != 0:
@@ -182,35 +377,6 @@ class ExperimentNaming:
         return f"{truncated}_{name_hash}"
 
     @staticmethod
-    def parse_experiment_name(name: str) -> dict[str, Any]:
-        """Extract parameter information from experiment name."""
-        # This is a best-effort parsing - may not work for all naming strategies
-        info: dict[str, Any] = {
-            "original_name": name,
-            "base_name": None,
-            "timestamp": None,
-            "hash": None,
-            "parameters": {},
-        }
-
-        # Try to extract timestamp (YYYYMMDD_HHMMSS pattern)
-        timestamp_match = re.search(r"(\d{8}_\d{6})", name)
-        if timestamp_match:
-            info["timestamp"] = timestamp_match.group(1)
-
-        # Try to extract hash (8 character hex at end)
-        hash_match = re.search(r"_([a-f0-9]{8})$", name)
-        if hash_match:
-            info["hash"] = hash_match.group(1)
-
-        # Extract base name (everything before first underscore or parameters)
-        parts = name.split("_")
-        if parts:
-            info["base_name"] = parts[0]
-
-        return info
-
-    @staticmethod
     def validate_experiment_name(name: str) -> bool:
         """Validate experiment name format."""
         if not name:
@@ -234,8 +400,8 @@ class ExperimentNaming:
 
         # Try different naming strategies until we find a unique name
         strategies = [
-            NamingStrategy.HASH_BASED,
             NamingStrategy.PARAMETER_BASED,
+            NamingStrategy.HASH_BASED,
             NamingStrategy.TIMESTAMP_BASED,
         ]
 

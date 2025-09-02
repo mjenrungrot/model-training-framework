@@ -849,7 +849,7 @@ class GridSearchConfig:
     description: str = ""
     base_config: dict[str, Any] = field(default_factory=dict)
     parameter_grids: list[dict[str, Any]] = field(default_factory=list)
-    naming_strategy: NamingStrategy = NamingStrategy.HASH_BASED
+    naming_strategy: NamingStrategy = NamingStrategy.PARAMETER_BASED
     max_concurrent_jobs: int | None = None
     execution_mode: ExecutionMode = ExecutionMode.SLURM
     output_dir: str | None = None

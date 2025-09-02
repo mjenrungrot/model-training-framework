@@ -1120,7 +1120,7 @@ class ParameterGridSearch:
             self._base_experiment_config = None
 
         self.parameter_grids: list[ParameterGrid] = []
-        self.naming_strategy = NamingStrategy.HASH_BASED
+        self.naming_strategy = NamingStrategy.PARAMETER_BASED
 
     def add_grid(self, grid: ParameterGrid) -> ParameterGridSearch:
         """Add a parameter grid for exploration.
