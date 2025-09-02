@@ -98,7 +98,9 @@ class ExperimentNaming:
 
         # Name is too long; truncate at parameter boundaries and append hash for uniqueness
         name_hash = hashlib.sha256(full_name.encode()).hexdigest()[:8]
-        max_prefix_len = ExperimentNaming.MAX_NAME_LENGTH - len(name_hash) - 1  # underscore before hash
+        max_prefix_len = (
+            ExperimentNaming.MAX_NAME_LENGTH - len(name_hash) - 1
+        )  # underscore before hash
 
         prefix = f"{sanitized_base}_"
         if len(prefix) > max_prefix_len:
