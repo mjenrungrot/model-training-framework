@@ -717,6 +717,9 @@ class GenericTrainerConfig:
     profile_training: bool = True  # Enable profiling of training loop by default
     dry_run: bool = False  # Run training loop without actual training (for debugging)
 
+    # Optional full experiment configuration for comprehensive logging
+    experiment_config: ExperimentConfig | None = None
+
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
         # Validate early stopping configuration

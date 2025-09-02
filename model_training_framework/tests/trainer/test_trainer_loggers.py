@@ -52,6 +52,17 @@ class TestConsoleLogger:
         assert len(caplog.records) > 0
         assert "Step 100" in caplog.text
 
+    def test_console_logger_ignores_config(self):
+        """Test Console logger safely ignores config parameter."""
+        # This should not raise an error even with config passed
+        config_dict = {"experiment": "test", "model": {"layers": 4}}
+        logger = ConsoleLogger(
+            log_level="INFO",
+            config=config_dict,  # Should be ignored via **_ in __init__
+        )
+        assert logger is not None
+        logger.close()
+
     def test_console_logger_epoch_summary(self, caplog):
         """Test console logger logs epoch summary."""
         logger = ConsoleLogger(log_level="INFO")
@@ -159,6 +170,18 @@ class TestTensorBoardLogger:
 
             logger.close()
 
+    def test_tensorboard_logger_ignores_config(self):
+        """Test TensorBoard logger safely ignores config parameter."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # This should not raise an error even with config passed
+            config_dict = {"some": "config", "nested": {"value": 123}}
+            logger = TensorBoardLogger(
+                log_dir=tmpdir,
+                config=config_dict,  # Should be ignored via **_ in __init__
+            )
+            assert logger is not None
+            logger.close()
+
     def test_tensorboard_logger_epoch_summary(self):
         """Test TensorBoard logger logs epoch summary."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -249,6 +272,39 @@ class TestWandBLogger:
             entity="test_entity",
             name=None,
             config=None,
+        )
+
+    @patch("model_training_framework.trainer.loggers.wandb_mod")
+    def test_wandb_logger_with_config(self, mock_wandb):
+        """Test WandB logger receives and passes config to wandb.init."""
+        mock_run = MagicMock()
+        mock_wandb.init.return_value = mock_run
+
+        config_dict = {
+            "experiment_name": "test_exp",
+            "seed": 42,
+            "training": {
+                "max_epochs": 100,
+                "batch_size": 32,
+            },
+            "model": {
+                "type": "transformer",
+                "hidden_size": 256,
+            },
+        }
+
+        logger = WandBLogger(
+            project="test_project",
+            entity="test_entity",
+            config=config_dict,
+        )
+
+        assert logger is not None
+        mock_wandb.init.assert_called_once_with(
+            project="test_project",
+            entity="test_entity",
+            name=None,
+            config=config_dict,
         )
 
     @patch("model_training_framework.trainer.loggers.wandb_mod")
@@ -495,3 +551,138 @@ class TestCreateLogger:
         """Test creating unknown logger raises error."""
         with pytest.raises(ValueError, match="Unknown logger type"):
             create_logger("unknown_logger")
+
+
+class TestExperimentConfigIntegration:
+    """Test integration of ExperimentConfig with loggers via GenericTrainer."""
+
+    @pytest.mark.skipif(not WANDB_AVAILABLE, reason="wandb not installed")
+    @patch("model_training_framework.trainer.loggers.wandb_mod")
+    def test_trainer_with_experiment_config(self, mock_wandb):
+        """Test that GenericTrainer logs ExperimentConfig when present."""
+        from torch import nn
+
+        from model_training_framework.config.schemas import (
+            DataConfig,
+            ExperimentConfig,
+            GenericTrainerConfig,
+            LoggingConfig,
+            ModelConfig,
+            OptimizerConfig,
+            TrainingConfig,
+        )
+        from model_training_framework.trainer.core import GenericTrainer
+
+        # Setup mock
+        mock_run = MagicMock()
+        mock_wandb.init.return_value = mock_run
+
+        # Create ExperimentConfig
+        experiment_config = ExperimentConfig(
+            experiment_name="test_exp",
+            model=ModelConfig(type="transformer", hidden_size=256),
+            data=DataConfig(dataset_name="test_dataset", batch_size=32),
+            training=TrainingConfig(max_epochs=10),
+            optimizer=OptimizerConfig(type="adam", lr=0.001),
+            description="Test experiment",
+            tags=["test", "integration"],
+        )
+
+        # Create GenericTrainerConfig with ExperimentConfig
+        trainer_config = GenericTrainerConfig(
+            experiment_name="trainer_test",
+            seed=42,
+            experiment_config=experiment_config,
+            logging=LoggingConfig(
+                logger_type="wandb",
+                wandb_project="test_project",
+            ),
+        )
+
+        # Create simple model and optimizer
+        class SimpleModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear = nn.Linear(10, 1)
+
+        model = SimpleModel()
+        optimizer = torch.optim.Adam(model.parameters())
+
+        # Create trainer
+        GenericTrainer(
+            config=trainer_config,
+            model=model,
+            optimizers=[optimizer],
+        )
+
+        # Verify wandb.init was called with config including ExperimentConfig
+        mock_wandb.init.assert_called_once()
+        call_kwargs = mock_wandb.init.call_args.kwargs
+        assert "config" in call_kwargs
+
+        config_passed = call_kwargs["config"]
+        # Verify ExperimentConfig is included
+        assert "experiment_config" in config_passed
+        assert config_passed["experiment_config"] is not None
+        assert config_passed["experiment_config"]["experiment_name"] == "test_exp"
+        assert config_passed["experiment_config"]["model"]["type"] == "transformer"
+        assert (
+            config_passed["experiment_config"]["data"]["dataset_name"] == "test_dataset"
+        )
+        assert config_passed["experiment_config"]["tags"] == ["test", "integration"]
+
+    @pytest.mark.skipif(not WANDB_AVAILABLE, reason="wandb not installed")
+    @patch("model_training_framework.trainer.loggers.wandb_mod")
+    def test_trainer_without_experiment_config(self, mock_wandb):
+        """Test that GenericTrainer works without ExperimentConfig."""
+        from torch import nn
+
+        from model_training_framework.config.schemas import (
+            GenericTrainerConfig,
+            LoggingConfig,
+        )
+        from model_training_framework.trainer.core import GenericTrainer
+
+        # Setup mock
+        mock_run = MagicMock()
+        mock_wandb.init.return_value = mock_run
+
+        # Create GenericTrainerConfig WITHOUT ExperimentConfig
+        trainer_config = GenericTrainerConfig(
+            experiment_name="simple_trainer",
+            seed=123,
+            logging=LoggingConfig(
+                logger_type="wandb",
+                wandb_project="test_project",
+            ),
+        )
+
+        # Create simple model and optimizer
+        class SimpleModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear = nn.Linear(10, 1)
+
+        model = SimpleModel()
+        optimizer = torch.optim.Adam(model.parameters())
+
+        # Create trainer
+        GenericTrainer(
+            config=trainer_config,
+            model=model,
+            optimizers=[optimizer],
+        )
+
+        # Verify wandb.init was called
+        mock_wandb.init.assert_called_once()
+        call_kwargs = mock_wandb.init.call_args.kwargs
+        assert "config" in call_kwargs
+
+        config_passed = call_kwargs["config"]
+        # Verify basic trainer config is present
+        assert config_passed["experiment_name"] == "simple_trainer"
+        assert config_passed["seed"] == 123
+
+        # Verify experiment_config field exists but is None
+        assert "experiment_config" in config_passed
+        assert config_passed["experiment_config"] is None
