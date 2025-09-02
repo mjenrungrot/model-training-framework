@@ -104,8 +104,13 @@ class ExperimentNaming:
 
         prefix = f"{sanitized_base}_"
         if len(prefix) > max_prefix_len:
-            # Base name alone is too long; fallback to generic truncation
-            return ExperimentNaming._ensure_valid_length(sanitized_base)
+            # Base name alone is too long; need to include parameters in hash for uniqueness
+            # Use the full name (base + params) to generate a unique hash
+            truncated_base = sanitized_base[
+                : max_prefix_len - 9
+            ]  # Leave room for underscore and hash
+            full_name_hash = hashlib.sha256(full_name.encode()).hexdigest()[:8]
+            return f"{truncated_base}_{full_name_hash}"
 
         truncated = prefix
         for part in param_parts:
@@ -120,8 +125,35 @@ class ExperimentNaming:
 
     @staticmethod
     def _unflatten_dict(flat_params: dict[str, Any]) -> dict[str, Any]:
-        """Convert flat dict with dot-separated keys into nested dictionaries."""
+        """Convert flat dict with dot-separated keys into nested dictionaries.
+
+        Raises:
+            ValueError: If there are conflicting keys where a key is used both as
+                       a scalar value and as a prefix for nested keys.
+        """
         nested: dict[str, Any] = {}
+
+        # First pass: Check for conflicts between scalar and nested keys
+        all_keys = set(flat_params.keys())
+        for key in all_keys:
+            if "." in key:
+                parts = key.split(".")
+                # Check if any prefix of this key exists as a scalar
+                for i in range(1, len(parts)):
+                    prefix = ".".join(parts[:i])
+                    if prefix in all_keys:
+                        # Check if the prefix key maps to a non-dict value
+                        # (We need to handle it before unflattening to detect conflicts)
+                        prefix_parts = prefix.split(".")
+                        if len(prefix_parts) == 1:
+                            # Direct conflict at root level
+                            raise ValueError(
+                                f"Conflicting key: '{prefix}' is used both as a scalar value "
+                                f"and as a prefix for nested key '{key}'. This would result in "
+                                f"data loss. Please rename one of these parameters."
+                            )
+
+        # Second pass: Build the nested structure
         for key, value in flat_params.items():
             if "." not in key:
                 if (
@@ -136,10 +168,20 @@ class ExperimentNaming:
 
             parts = key.split(".")
             current = nested
-            for part in parts[:-1]:
-                if part not in current or not isinstance(current[part], dict):
+            for i, part in enumerate(parts[:-1]):
+                if part in current:
+                    if not isinstance(current[part], dict):
+                        # Found a conflict during construction
+                        partial_key = ".".join(parts[: i + 1])
+                        raise ValueError(
+                            f"Conflicting key: '{partial_key}' has a scalar value but "
+                            f"'{key}' requires it to be a nested structure. This would "
+                            f"result in data loss. Please rename one of these parameters."
+                        )
+                else:
                     current[part] = {}
                 current = current[part]
+
             last = parts[-1]
             if (
                 last in current

@@ -365,3 +365,84 @@ class TestNamingEdgeCases:
             "test", params, NamingStrategy.PARAMETER_BASED
         )
         assert len(name) <= ExperimentNaming.MAX_NAME_LENGTH
+
+    def test_conflicting_keys_data_loss(self):
+        """Test that conflicting keys (scalar vs nested) are handled properly.
+
+        This tests the case where a key is used both as a scalar value and as a
+        prefix for nested keys, which can lead to silent data loss.
+        """
+        # Case 1: Direct conflict - 'a' is both a scalar and a parent key
+        params = {
+            "a": 1,
+            "a.b": 2,
+        }
+
+        # This should either preserve both values or raise an error
+        # Currently it silently loses the scalar value "a": 1
+        with pytest.raises(ValueError, match="Conflicting key"):
+            ExperimentNaming.generate_name(
+                "test", params, NamingStrategy.PARAMETER_BASED
+            )
+
+    def test_conflicting_keys_complex(self):
+        """Test more complex conflicting key scenarios."""
+        # Case 2: Multiple levels of conflict
+        params = {
+            "model": "transformer",  # Scalar value
+            "model.layers": 4,  # Nested value with same prefix
+            "model.hidden": 256,  # Another nested value
+        }
+
+        # Should detect the conflict between scalar "model" and nested "model.*"
+        with pytest.raises(ValueError, match="Conflicting key"):
+            ExperimentNaming.generate_name(
+                "test", params, NamingStrategy.PARAMETER_BASED
+            )
+
+    def test_long_base_name_uniqueness(self):
+        """Test that experiments with long base names but different parameters get unique names.
+
+        When the base name is too long (≥112 chars), the naming system should still
+        ensure uniqueness by including parameter information in the hash.
+        """
+        # Create a base name that is exactly 112 characters (will exceed limit with underscore)
+        long_base = "a" * 112
+
+        # Two different parameter sets
+        params1 = {"learning_rate": 0.001, "batch_size": 32}
+        params2 = {"learning_rate": 0.01, "batch_size": 64}
+
+        name1 = ExperimentNaming.generate_name(
+            long_base, params1, NamingStrategy.PARAMETER_BASED
+        )
+        name2 = ExperimentNaming.generate_name(
+            long_base, params2, NamingStrategy.PARAMETER_BASED
+        )
+
+        # Both should respect the max length
+        assert len(name1) <= ExperimentNaming.MAX_NAME_LENGTH
+        assert len(name2) <= ExperimentNaming.MAX_NAME_LENGTH
+
+        # Extract the base and hash portions
+        # When base is too long, format should be: truncated_base_hash
+        base1 = name1[:-9]  # Everything except underscore and 8-char hash
+        hash1 = name1[-8:]  # Last 8 chars (the hash)
+        base2 = name2[:-9]
+        hash2 = name2[-8:]
+
+        # The base portions should be IDENTICAL (same truncation of the long base name)
+        assert base1 == base2, (
+            f"Base portions should be identical for same long base name.\n"
+            f"Got base1: {base1}\nGot base2: {base2}"
+        )
+
+        # The hash portions should be DIFFERENT (because parameters differ)
+        assert hash1 != hash2, (
+            f"Hash portions should differ for different parameters.\n"
+            f"Got hash1: {hash1}\nGot hash2: {hash2}"
+        )
+
+        # Verify both are valid hex strings
+        assert all(c in "0123456789abcdef" for c in hash1), f"Invalid hash1: {hash1}"
+        assert all(c in "0123456789abcdef" for c in hash2), f"Invalid hash2: {hash2}"
